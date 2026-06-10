@@ -1,6 +1,7 @@
 import os
 import zipfile
 import tempfile
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib
@@ -8,7 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import Flask, render_template, request, send_file, jsonify
-from shapely.geometry import Polygon, Point, LineString
+from shapely.geometry import Polygon, Point, LineString, box
 
 app = Flask(__name__)
 
@@ -21,12 +22,16 @@ os.makedirs(OUTPUT, exist_ok=True)
 os.makedirs(STATIC, exist_ok=True)
 
 
-# ================= CRS =================
+# =====================================================
+# CRS
+# =====================================================
 def get_crs(zone):
     return "EPSG:32644" if str(zone) == "44" else "EPSG:32645"
 
 
-# ================= ZIP SHAPEFILE LOADER =================
+# =====================================================
+# LOAD ZIP SHAPEFILE
+# =====================================================
 def load_shapefile(zip_path):
     temp_dir = tempfile.mkdtemp()
 
@@ -40,7 +45,9 @@ def load_shapefile(zip_path):
     raise Exception("No shapefile found")
 
 
-# ================= WHOLE BOUNDARY (EXACT ORDER LOGIC) =================
+# =====================================================
+# WHOLE BOUNDARY (Excel → ordered polygon)
+# =====================================================
 def build_whole_boundary(df):
     df = df.sort_values("Order")
 
@@ -48,11 +55,12 @@ def build_whole_boundary(df):
     if coords[0] != coords[-1]:
         coords.append(coords[0])
 
-    poly = Polygon(coords).buffer(0)
-    return poly
+    return Polygon(coords).buffer(0)
 
 
-# ================= SEGMENTED BOUNDARY (TKINTER-ACCURATE LOGIC) =================
+# =====================================================
+# SEGMENTED BOUNDARY (Compartment-wise)
+# =====================================================
 def build_segmented(df):
     polygons = []
 
@@ -74,37 +82,61 @@ def build_segmented(df):
 
         poly = Polygon(coords).buffer(0)
 
-        if not poly.is_valid:
-            continue
-
-        polygons.append(poly)
+        if poly.is_valid:
+            polygons.append(poly)
 
     return polygons
 
 
-# ================= SAMPLE PLOT (KEEP AS-IS SIMPLE) =================
-def build_sample(df):
-    df = df.sort_values("Order")
-    coords = list(zip(df["X"], df["Y"]))
-    coords.append(coords[0])
-    return Polygon(coords)
+# =====================================================
+# SAMPLE PLOT (REAL FISHNET SYSTEM)
+# =====================================================
+def build_sample_plots(polygon, cell_w, cell_h):
+
+    minx, miny, maxx, maxy = polygon.bounds
+
+    sample_points = []
+    grid_cells = []
+
+    x = minx
+    while x < maxx:
+        y = miny
+        while y < maxy:
+
+            cell = box(x, y, x + cell_w, y + cell_h)
+
+            if cell.intersects(polygon):
+                grid_cells.append(cell)
+                sample_points.append(cell.centroid)
+
+            y += cell_h
+
+        x += cell_w
+
+    return grid_cells, sample_points
 
 
-# ================= PREVIEW =================
-def make_preview(geom, title):
+# =====================================================
+# PREVIEW RENDER
+# =====================================================
+def make_preview(boundary, samples=None, title="Preview", mode="boundary"):
+
     fig, ax = plt.subplots(figsize=(7, 6))
 
-    if isinstance(geom, Polygon):
-        x, y = geom.exterior.xy
-        ax.plot(x, y, "r-", linewidth=2)
+    # ---- boundary ----
+    if isinstance(boundary, Polygon):
+        x, y = boundary.exterior.xy
+        ax.plot(x, y, "r-", linewidth=1)
 
-    elif isinstance(geom, list):  # segmented
-        for g in geom:
-            x, y = g.exterior.xy
-            ax.plot(x, y, "g-", linewidth=2)
+    elif isinstance(boundary, list):
+        for poly in boundary:
+            x, y = poly.exterior.xy
+            ax.plot(x, y, "r-", linewidth=1)
 
-    elif isinstance(geom, gpd.GeoSeries):
-        geom.plot(ax=ax, color="red")
+    # ---- sample plots ----
+    if samples:
+        for p in samples:
+            ax.scatter(p.x, p.y, color="blue", s=10)
 
     ax.set_title(title)
     ax.set_axis_off()
@@ -116,15 +148,20 @@ def make_preview(geom, title):
     return "/static/preview.png"
 
 
-# ================= HOME =================
+# =====================================================
+# HOME
+# =====================================================
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# ================= PREVIEW API =================
+# =====================================================
+# PREVIEW API
+# =====================================================
 @app.route("/preview", methods=["POST"])
 def preview():
+
     file = request.files["file"]
     mode = request.form.get("mode", "boundary")
 
@@ -132,25 +169,34 @@ def preview():
     file.save(path)
 
     try:
-        # ZIP
+        # ---- ZIP ----
         if path.endswith(".zip"):
             geom = load_shapefile(path)
-            return jsonify({"image": make_preview(geom, "Shapefile Boundary")})
+            return jsonify({"image": make_preview(geom, title="Shapefile Boundary")})
 
-        # EXCEL
+        # ---- EXCEL ----
         df = pd.read_excel(path)
 
         if mode == "boundary":
             poly = build_whole_boundary(df)
-            return jsonify({"image": make_preview(poly, "Whole Forest Boundary")})
+            return jsonify({"image": make_preview(poly, title="Whole Boundary")})
 
         if mode == "compartment":
             polys = build_segmented(df)
-            return jsonify({"image": make_preview(polys, "Segmented Forest Boundary")})
+            return jsonify({"image": make_preview(polys, title="Segmented Boundary")})
 
         if mode == "sample":
-            poly = build_sample(df)
-            return jsonify({"image": make_preview(poly, "Sample Plot")})
+
+            poly = build_whole_boundary(df)
+
+            cell_w = float(request.form.get("cell_width", 100))
+            cell_h = float(request.form.get("cell_height", 100))
+
+            grids, samples = build_sample_plots(poly, cell_w, cell_h)
+
+            return jsonify({
+                "image": make_preview(poly, samples, "Sample Plot (Fishnet)")
+            })
 
         return jsonify({"error": "Invalid mode"})
 
@@ -158,9 +204,12 @@ def preview():
         return jsonify({"error": str(e)})
 
 
-# ================= MAIN PROCESS =================
+# =====================================================
+# MAIN PROCESS (EXPORT SHP)
+# =====================================================
 @app.route("/upload", methods=["POST"])
 def upload():
+
     file = request.files["file"]
     mode = request.form["mode"]
     zone = request.form["zone"]
@@ -184,19 +233,36 @@ def upload():
 
         if mode == "compartment":
             gdf = gpd.GeoDataFrame(geometry=build_segmented(df), crs=crs)
-        elif mode == "sample":
-            gdf = gpd.GeoDataFrame(geometry=[build_sample(df)], crs=crs)
+
         else:
             gdf = gpd.GeoDataFrame(geometry=[build_whole_boundary(df)], crs=crs)
 
-    # ================= POINT / LINE / POLYGON =================
-    points = gdf.copy()
-    points["geometry"] = points.centroid
+    # ================= SAMPLE MODE =================
+    if mode == "sample":
 
-    lines = gdf.copy()
-    lines["geometry"] = gdf.geometry.apply(lambda g: LineString(g.exterior.coords))
+        cell_w = float(request.form.get("cell_width", 100))
+        cell_h = float(request.form.get("cell_height", 100))
 
-    polygons = gdf.copy()
+        poly = gdf.geometry.iloc[0]
+        grids, samples = build_sample_plots(poly, cell_w, cell_h)
+
+        sample_gdf = gpd.GeoDataFrame(geometry=samples, crs=crs)
+
+        points = sample_gdf
+
+        lines = gdf.copy()
+        lines["geometry"] = gdf.geometry.apply(lambda g: LineString(g.exterior.coords))
+
+        polygons = gdf.copy()
+
+    else:
+        points = gdf.copy()
+        points["geometry"] = points.centroid
+
+        lines = gdf.copy()
+        lines["geometry"] = gdf.geometry.apply(lambda g: LineString(g.exterior.coords))
+
+        polygons = gdf.copy()
 
     # ================= OUTPUT =================
     base = os.path.splitext(file.filename)[0]
@@ -207,7 +273,6 @@ def upload():
     lines.to_file(os.path.join(out_dir, "lines.shp"))
     polygons.to_file(os.path.join(out_dir, "polygons.shp"))
 
-    # ZIP
     zip_name = f"{base}.zip"
     zip_path = os.path.join(OUTPUT, zip_name)
 
@@ -226,7 +291,9 @@ def upload():
     )
 
 
-# ================= DOWNLOAD =================
+# =====================================================
+# DOWNLOAD
+# =====================================================
 @app.route("/download/<filename>")
 def download(filename):
     return send_file(os.path.join(OUTPUT, filename), as_attachment=True)
