@@ -7,17 +7,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 from shapely.geometry import Point, LineString, Polygon, box, MultiPolygon
 
 app = Flask(__name__)
 
 UPLOAD = "uploads"
 STATIC = "static"
+OUTPUT = "output"
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(STATIC, exist_ok=True)
-
+os.makedirs(OUTPUT, exist_ok=True)
 
 # =====================================================
 # CRS
@@ -27,7 +28,7 @@ def get_crs(zone):
 
 
 # =====================================================
-# SAFE MULTIPOLYGON
+# SAFE GEOMETRY
 # =====================================================
 def normalize_geom(geom):
     if geom is None:
@@ -40,7 +41,7 @@ def normalize_geom(geom):
 
 
 # =====================================================
-# LOAD SHAPEFILE (ZIP)
+# LOAD SHAPEFILE ZIP
 # =====================================================
 def load_shapefile(zip_path):
     temp_dir = tempfile.mkdtemp()
@@ -72,80 +73,32 @@ def build_points(df):
 
 
 # =====================================================
-# BOUNDARY
+# BUILD POLYGON
 # =====================================================
-def build_whole(df):
-    df = df.sort_values("Order")
-    df, pts = build_points(df)
+def build_polygon(coords):
+    if len(coords) < 3:
+        return None
 
-    coords = list(zip(df["X"], df["Y"]))
     if coords[0] != coords[-1]:
         coords.append(coords[0])
 
-    poly = Polygon(coords)
+    poly = Polygon(coords).buffer(0)
     if not poly.is_valid:
-        poly = poly.buffer(0)
+        return None
 
     line = LineString(coords)
-
-    return pts, line, poly
-
-
-# =====================================================
-# COMPARTMENT
-# =====================================================
-def build_compartment(df, crs):
-
-    results = []
-
-    for comp, g in df.groupby("Compartment"):
-
-        g = g.sort_values("Order")
-
-        coords = list(zip(g["X"], g["Y"]))
-        if len(coords) < 3:
-            continue
-
-        coords.append(coords[0])
-
-        poly = Polygon(coords).buffer(0)
-        if not poly.is_valid:
-            continue
-
-        line = LineString(coords)
-
-        results.append({
-            "Comp": comp,
-            "polygon": poly,
-            "line": line,
-            "points": [Point(xy) for xy in coords],
-            "area": poly.area / 10000,
-            "perimeter": poly.length
-        })
-
-    return results
+    return poly, line
 
 
 # =====================================================
-# SAMPLE FISHNET (SAFE FIXED)
+# SAMPLE GRID
 # =====================================================
 def build_sample(poly, w, h, rows, cols):
-
     if poly is None or poly.is_empty:
         return []
 
-    if not poly.is_valid:
-        poly = poly.buffer(0)
-
     minx, miny, maxx, maxy = poly.bounds
     samples = []
-
-    # auto-limit grid to avoid empty output
-    max_cols = max(1, int((maxx - minx) // w) + 1)
-    max_rows = max(1, int((maxy - miny) // h) + 1)
-
-    cols = min(cols, max_cols)
-    rows = min(rows, max_rows)
 
     for i in range(cols):
         for j in range(rows):
@@ -159,7 +112,6 @@ def build_sample(poly, w, h, rows, cols):
                 continue
 
             clipped = cell.intersection(poly)
-
             if not clipped.is_empty:
                 samples.append(clipped.centroid)
 
@@ -167,90 +119,99 @@ def build_sample(poly, w, h, rows, cols):
 
 
 # =====================================================
-# SAVE PLOT
+# SAVE MAP (PROFESSIONAL STYLE)
 # =====================================================
-def save_plot():
-    path = os.path.join(STATIC, "preview.png")
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    return "/static/preview.png"
-
-
-# =====================================================
-# PREVIEWS
-# =====================================================
-def preview_whole(poly, line, pts):
-    fig, ax = plt.subplots()
-
-    ax.plot(*poly.exterior.xy, "green")
-    ax.plot(*line.xy, "black")
-
-    for p in pts:
-        ax.scatter(p.x, p.y, s=10)
-
-    ax.set_title("BOUNDARY")
-    ax.set_axis_off()
-    return save_plot()
-
-
-def preview_compartment(data):
-    fig, ax = plt.subplots()
-
-    for d in data:
-        ax.plot(*d["polygon"].exterior.xy, "red")
-        ax.plot(*d["line"].xy, "black")
-
-        for p in d["points"]:
-            ax.scatter(p.x, p.y, s=8)
-
-        c = d["polygon"].centroid
-        ax.text(c.x, c.y, str(d["Comp"]))
-
-    ax.set_title("COMPARTMENT MAP")
-    ax.set_axis_off()
-    return save_plot()
-
-
-def preview_sample(poly, samples):
-    fig, ax = plt.subplots()
-
-    ax.plot(*poly.exterior.xy, "blue", linewidth=2)
-
-    for s in samples:
-        ax.scatter(s.x, s.y, s=15, color="red")
-
-    ax.set_title("BOUNDARY + SAMPLE PLOTS")
-    ax.set_axis_off()
-
-    return save_plot()
+def save_map(fig, name):
+    path = os.path.join(STATIC, f"{name}.png")
+    fig.savefig(path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return f"/static/{name}.png"
 
 
 # =====================================================
-# ROUTES
+# FOREST EXPORT (NEW FEATURE FROM TKINTER)
 # =====================================================
-@app.route("/")
-def home():
-    return render_template("index.html")
+def export_forest(df, crs, forest_name):
+
+    forest_folder = os.path.join(OUTPUT, forest_name)
+    os.makedirs(forest_folder, exist_ok=True)
+
+    all_points = []
+    all_lines = []
+    all_polygons = []
+
+    for comp, g in df.groupby("Compartment"):
+
+        g = g.sort_values("Order")
+
+        coords = list(zip(g["X"], g["Y"]))
+        poly_line = build_polygon(coords)
+
+        if not poly_line:
+            continue
+
+        poly, line = poly_line
+
+        all_polygons.append({
+            "Forest": forest_name,
+            "Comp": comp,
+            "Area_Ha": poly.area / 10000,
+            "geometry": poly
+        })
+
+        all_lines.append({
+            "Forest": forest_name,
+            "Comp": comp,
+            "geometry": line
+        })
+
+        for _, r in g.iterrows():
+            all_points.append({
+                "Forest": forest_name,
+                "Comp": comp,
+                "geometry": Point(r["X"], r["Y"])
+            })
+
+    if not all_polygons:
+        return None
+
+    gdf_p = gpd.GeoDataFrame(all_points, crs=crs)
+    gdf_l = gpd.GeoDataFrame(all_lines, crs=crs)
+    gdf_poly = gpd.GeoDataFrame(all_polygons, crs=crs)
+
+    p1 = os.path.join(forest_folder, "points.shp")
+    p2 = os.path.join(forest_folder, "lines.shp")
+    p3 = os.path.join(forest_folder, "polygons.shp")
+
+    gdf_p.to_file(p1)
+    gdf_l.to_file(p2)
+    gdf_poly.to_file(p3)
+
+    # ZIP
+    zip_path = os.path.join(OUTPUT, f"{forest_name}.zip")
+    with zipfile.ZipFile(zip_path, "w") as z:
+        for f in os.listdir(forest_folder):
+            z.write(os.path.join(forest_folder, f), arcname=f)
+
+    return zip_path
 
 
+# =====================================================
+# ROUTE
+# =====================================================
 @app.route("/preview", methods=["POST"])
 def preview():
 
     file = request.files["file"]
     mode = request.form.get("mode")
+    zone = request.form.get("zone", "45")
 
     path = os.path.join(UPLOAD, file.filename)
     file.save(path)
 
-    zone = request.form.get("zone", "45")
+    crs = get_crs(zone)
 
     try:
-
-        poly = None
-        line = None
-        pts = None
-        df = None
-        crs = get_crs(zone)
 
         # ================= ZIP =================
         if path.endswith(".zip"):
@@ -258,62 +219,58 @@ def preview():
             geom_list = normalize_geom(geom)
 
             if not geom_list:
-                return jsonify({"error": "No valid geometry in shapefile"})
+                return jsonify({"error": "Invalid shapefile"})
 
             poly = geom_list[0]
-
-            if poly.geom_type == "MultiPolygon":
-                poly = list(poly.geoms)[0]
-
-            line = LineString(poly.exterior.coords)
-            pts = [Point(xy) for xy in poly.exterior.coords]
 
         # ================= EXCEL =================
         else:
             df = pd.read_excel(path)
 
-        # ================= BOUNDARY =================
-        if mode == "boundary":
-
-            if poly:
-                return jsonify({"image": preview_whole(poly, line, pts)})
-
-            pts, line, poly = build_whole(df)
-            return jsonify({"image": preview_whole(poly, line, pts)})
-
         # ================= COMPARTMENT =================
         if mode == "compartment":
 
             if df is None:
-                return jsonify({"error": "Compartment needs Excel file"})
+                return jsonify({"error": "Excel required"})
 
-            data = build_compartment(df, crs)
-            return jsonify({"image": preview_compartment(data)})
+            forest_name = "FOREST"
+            zip_file = export_forest(df, crs, forest_name)
 
-        # ================= SAMPLE (FIXED) =================
+            if not zip_file:
+                return jsonify({"error": "No valid geometry"})
+
+            return jsonify({"download": f"/download/{os.path.basename(zip_file)}"})
+
+        # ================= SAMPLE =================
         if mode == "sample":
 
-            base_poly = poly if poly else build_whole(df)[2]
-
-            if base_poly is None:
-                return jsonify({"error": "No boundary found for sampling"})
+            base_poly = poly if "poly" in locals() else build_polygon(list(zip(df["X"], df["Y"])))[0]
 
             w = float(request.form.get("cell_width", 100))
             h = float(request.form.get("cell_height", 100))
-            rows = int(request.form.get("rows", 10))
-            cols = int(request.form.get("cols", 10))
 
-            samples = build_sample(base_poly, w, h, rows, cols)
+            samples = build_sample(base_poly, w, h, 10, 10)
 
-            if len(samples) == 0:
-                return jsonify({"error": "No sample points generated. Adjust grid size."})
+            fig, ax = plt.subplots()
 
-            return jsonify({"image": preview_sample(base_poly, samples)})
+            ax.plot(*base_poly.exterior.xy, "blue")
+            for s in samples:
+                ax.scatter(s.x, s.y, color="red")
 
-        return jsonify({"error": "invalid mode"})
+            return jsonify({"image": save_map(fig, "sample")})
+
+        return jsonify({"error": "Invalid mode"})
 
     except Exception as e:
         return jsonify({"error": str(e)})
+
+
+# =====================================================
+# DOWNLOAD ROUTE (NEW)
+# =====================================================
+@app.route("/download/<filename>")
+def download(filename):
+    return send_file(os.path.join(OUTPUT, filename), as_attachment=True)
 
 
 if __name__ == "__main__":
