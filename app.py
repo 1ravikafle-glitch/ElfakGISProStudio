@@ -5,7 +5,7 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, send_file, send_from_directory, jsonify
+from flask import Flask, render_template, request, send_file, send_from_directory
 from shapely.geometry import Polygon, Point, LineString
 from io import BytesIO
 
@@ -31,13 +31,35 @@ def normalize_order(df):
     return df
 
 
-# ================= SERVE OUTPUT FILES =================
-@app.route("/outputs/<run_id>/<path:filename>")
-def outputs(run_id, filename):
-    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
+# ================= SERVE OUTPUT =================
+@app.route("/outputs/<path:filename>")
+def outputs(filename):
+    return send_from_directory(OUTPUT, filename)
 
 
-# ================= ZIP =================
+# ================= ZIP EXTRACT =================
+def extract_zip(file):
+    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+    os.makedirs(folder, exist_ok=True)
+
+    zip_path = os.path.join(folder, "input.zip")
+    file.save(zip_path)
+
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(folder)
+
+    return folder
+
+
+def read_shp_from_zip(folder):
+    for root, _, files in os.walk(folder):
+        for f in files:
+            if f.endswith(".shp"):
+                return gpd.read_file(os.path.join(root, f))
+    return None
+
+
+# ================= ZIP OUTPUT =================
 def zip_folder(folder):
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -51,7 +73,6 @@ def zip_folder(folder):
 
 # ================= GROUP A =================
 def group_a(df, forest, crs, out):
-
     df = normalize_order(df).sort_values("Order")
 
     coords = list(zip(df["X"], df["Y"]))
@@ -62,6 +83,8 @@ def group_a(df, forest, crs, out):
 
     poly_gdf = gpd.GeoDataFrame([{
         "Forest": forest,
+        "Area": poly.area / 10000,
+        "Perim": poly.length,
         "geometry": poly
     }], crs=crs)
 
@@ -85,7 +108,6 @@ def group_a(df, forest, crs, out):
 
 # ================= GROUP B =================
 def group_b(df, crs, out):
-
     df = normalize_order(df)
 
     polys, lines, pts = [], [], []
@@ -94,7 +116,6 @@ def group_b(df, crs, out):
         for c, cg in g.groupby("Compartment"):
 
             cg = cg.sort_values("Order")
-
             coords = list(zip(cg["X"], cg["Y"]))
             coords.append(coords[0])
 
@@ -104,6 +125,8 @@ def group_b(df, crs, out):
             polys.append({
                 "Forest": f,
                 "Compartment": c,
+                "Area": poly.area / 10000,
+                "Perim": poly.length,
                 "geometry": poly
             })
 
@@ -117,29 +140,46 @@ def group_b(df, crs, out):
                 pts.append({
                     "Forest": f,
                     "Compartment": c,
+                    "Order": r["Order"],
                     "geometry": Point(r["X"], r["Y"])
                 })
 
-    return (
-        gpd.GeoDataFrame(polys, crs=crs),
-        gpd.GeoDataFrame(lines, crs=crs),
-        gpd.GeoDataFrame(pts, crs=crs)
-    )
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP C =================
-def group_c(df, crs, w, h, rows, cols, out):
+# ================= GROUP C (FIXED ZIP SUPPORT) =================
+def group_c(file, crs, w, h, rows, cols, out):
 
-    poly = Polygon(list(zip(df["X"], df["Y"])))
-    line = LineString(list(zip(df["X"], df["Y"])))
+    # CASE 1: ZIP INPUT (SHAPEFILE)
+    if file.filename.endswith(".zip"):
+        folder = extract_zip(file)
+        gdf = read_shp_from_zip(folder)
+
+        if gdf is None:
+            raise Exception("No shapefile found in ZIP")
+
+        poly = gdf.unary_union
+
+    # CASE 2: EXCEL INPUT
+    else:
+        df = pd.read_excel(file)
+        poly = Polygon(list(zip(df["X"], df["Y"])))
+
+    line = LineString(poly.exterior.coords)
 
     minx, miny, _, _ = poly.bounds
 
     pts = []
-
     for i in range(rows):
         for j in range(cols):
-
             x = minx + j * w
             y = miny + i * h
 
@@ -154,23 +194,22 @@ def group_c(df, crs, w, h, rows, cols, out):
 
     inside = [p for p in pts if poly.contains(p)]
 
-    gdf = gpd.GeoDataFrame({
-        "SN": range(1, len(inside) + 1)
-    }, geometry=inside, crs=crs)
+    gdf = gpd.GeoDataFrame({"SN": range(1, len(inside) + 1)}, geometry=inside, crs=crs)
+    gdf["X"] = gdf.geometry.x
+    gdf["Y"] = gdf.geometry.y
 
     poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
     line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
 
-    gdf.to_file(os.path.join(out, "sample.shp"))
     poly_gdf.to_file(os.path.join(out, "boundary.shp"))
     line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
+    gdf.to_file(os.path.join(out, "sampleplot.shp"))
 
     return poly_gdf, line_gdf, gdf
 
 
 # ================= GROUP D =================
 def group_d(df, crs, out):
-
     df = normalize_order(df).sort_values("Order")
 
     polys, lines, pts = [], [], []
@@ -185,6 +224,8 @@ def group_d(df, crs, out):
 
         polys.append({
             "Forest": f,
+            "Area": poly.area / 10000,
+            "Perim": poly.length,
             "geometry": poly
         })
 
@@ -196,24 +237,29 @@ def group_d(df, crs, out):
         for _, r in g.iterrows():
             pts.append({
                 "Forest": f,
+                "Order": r["Order"],
                 "geometry": Point(r["X"], r["Y"])
             })
 
-    return (
-        gpd.GeoDataFrame(polys, crs=crs),
-        gpd.GeoDataFrame(lines, crs=crs),
-        gpd.GeoDataFrame(pts, crs=crs)
-    )
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= PREVIEW =================
-def preview(poly_gdf, line_gdf, pts_gdf, path):
+# ================= PREVIEW (ALWAYS SAVED) =================
+def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
 
     fig, ax = plt.subplots()
 
-    poly_gdf.plot(ax=ax, facecolor="none", edgecolor="red")
-    line_gdf.plot(ax=ax, color="black", linewidth=2)
-    pts_gdf.plot(ax=ax, color="yellow", markersize=8)
+    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
+    line_gdf.plot(ax=ax, color=lc, linewidth=2)
+    pts_gdf.plot(ax=ax, color=ptc, markersize=8)
 
     plt.axis("off")
     plt.savefig(path, dpi=220, bbox_inches="tight")
@@ -238,42 +284,30 @@ def upload():
     out = os.path.join(OUTPUT, run_id)
     os.makedirs(out, exist_ok=True)
 
-    df = pd.read_excel(file)
     crs = get_crs(zone)
-
     preview_path = os.path.join(out, f"{mode}_preview.png")
 
     if mode == "A":
-        poly, line, pts = group_a(df, forest, crs, out)
+        poly, line, pts = group_a(df := pd.read_excel(file), forest, crs, out)
+        preview(poly, line, pts, preview_path, "red", "black", "red")
 
     elif mode == "B":
+        df = pd.read_excel(file)
         poly, line, pts = group_b(df, crs, out)
+        preview(poly, line, pts, preview_path, "blue", "orange", "green")
 
     elif mode == "C":
-        poly, line, pts = group_c(df, crs, w, h, rows, cols, out)
+        poly, line, pts = group_c(file, crs, w, h, rows, cols, out)
+        preview(poly, line, pts, preview_path, "red", "yellow", "yellow")
 
     else:
+        df = pd.read_excel(file)
         poly, line, pts = group_d(df, crs, out)
-
-    preview(poly, line, pts, preview_path)
+        preview(poly, line, pts, preview_path, "green", "cyan", "cyan")
 
     zip_buffer = zip_folder(out)
 
-    return jsonify({
-        "zip": f"/download/{run_id}",
-        "preview": f"/outputs/{run_id}/{mode}_preview.png"
-    })
-
-
-@app.route("/download/<run_id>")
-def download(run_id):
-    folder = os.path.join(OUTPUT, run_id)
-    return send_file(
-        zip_folder(folder),
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name="output.zip"
-    )
+    return send_file(zip_buffer, mimetype="application/zip", as_attachment=True, download_name="output.zip")
 
 
 @app.route("/")
