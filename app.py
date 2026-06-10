@@ -5,8 +5,8 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, send_file
-from shapely.geometry import Polygon, MultiPolygon
+from flask import Flask, render_template, request, send_file, jsonify
+from shapely.geometry import Polygon, Point, LineString, MultiPolygon
 
 app = Flask(__name__)
 
@@ -18,78 +18,95 @@ os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 os.makedirs(STATIC, exist_ok=True)
 
+
 # ================= CRS =================
 def get_crs(z):
     return "EPSG:32644" if str(z) == "44" else "EPSG:32645"
 
 
-# ================= SHP ZIP LOADER =================
+# ================= LOAD ZIP SHAPEFILE =================
 def load_shapefile_from_zip(zip_path):
-
     temp_dir = tempfile.mkdtemp()
 
     with zipfile.ZipFile(zip_path, "r") as z:
         z.extractall(temp_dir)
 
     shp_file = None
-
     for f in os.listdir(temp_dir):
         if f.endswith(".shp"):
             shp_file = os.path.join(temp_dir, f)
             break
 
     if shp_file is None:
-        raise Exception("No .shp file found inside ZIP")
+        raise Exception("No .shp found in ZIP")
 
     gdf = gpd.read_file(shp_file)
-
     return gdf.geometry.unary_union
 
 
-# ================= FISHNET =================
-def fishnet_clip(polygon, cell_width, cell_height, rows, cols, crs):
-
-    minx, miny, maxx, maxy = polygon.bounds
-    cells = []
-
-    for r in range(rows):
-        for c in range(cols):
-
-            x1 = minx + (c * cell_width)
-            y1 = miny + (r * cell_height)
-
-            x2 = x1 + cell_width
-            y2 = y1 + cell_height
-
-            cell = Polygon([
-                (x1, y1),
-                (x2, y1),
-                (x2, y2),
-                (x1, y2)
-            ])
-
-            cells.append(cell)
-
-    return gpd.GeoDataFrame(geometry=cells, crs=crs)
+# ================= BUILD POLYGON (WHOLE) =================
+def build_polygon_excel(df):
+    coords = list(zip(df["X"], df["Y"]))
+    coords.append(coords[0])
+    return Polygon(coords)
 
 
-# ================= PLOT =================
-def make_preview(polygon, fishnet_gdf, title):
+# ================= SEGMENTED POLYGONS =================
+def build_segmented_polygons(df):
+    """
+    Uses Compartment grouping:
+    C1 -> rows 1-7
+    C2 -> rows 8-15 etc.
+    """
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    polygons = {}
 
-    # ---- polygon boundary ----
-    if isinstance(polygon, Polygon):
-        x, y = polygon.exterior.xy
-        ax.plot(x, y, color="red", linewidth=2)
+    for comp, group in df.groupby("Compartment"):
+        group = group.sort_values("Order")
 
-    elif isinstance(polygon, MultiPolygon):
-        for poly in polygon.geoms:
-            x, y = poly.exterior.xy
-            ax.plot(x, y, color="red", linewidth=2)
+        coords = list(zip(group["X"], group["Y"]))
+        coords.append(coords[0])
 
-    # ---- fishnet points ----
-    fishnet_gdf.plot(ax=ax, color="blue", markersize=5)
+        polygons[comp] = Polygon(coords)
+
+    return polygons
+
+
+# ================= GEOMETRY EXPORT (POINT/LINE/POLYGON) =================
+def export_layers(gdf, out_dir, name):
+    point_gdf = gdf.copy()
+    line_gdf = gdf.copy()
+    poly_gdf = gdf.copy()
+
+    point_gdf["geometry"] = point_gdf.centroid
+    line_gdf["geometry"] = LineString(list(gdf.geometry.iloc[0].coords)) if hasattr(gdf.geometry.iloc[0], "coords") else None
+    poly_gdf = gdf.copy()
+
+    point_path = os.path.join(out_dir, f"{name}_point.shp")
+    line_path = os.path.join(out_dir, f"{name}_line.shp")
+    poly_path = os.path.join(out_dir, f"{name}_polygon.shp")
+
+    point_gdf.to_file(point_path)
+    poly_gdf.to_file(poly_path)
+
+    if line_gdf.geometry.iloc[0] is not None:
+        line_gdf.to_file(line_path)
+
+    return point_path, line_path, poly_path
+
+
+# ================= PREVIEW =================
+def make_preview(geom, title):
+    fig, ax = plt.subplots(figsize=(7, 6))
+
+    if isinstance(geom, Polygon):
+        x, y = geom.exterior.xy
+        ax.plot(x, y, "r")
+
+    elif isinstance(geom, MultiPolygon):
+        for g in geom.geoms:
+            x, y = g.exterior.xy
+            ax.plot(x, y, "r")
 
     ax.set_title(title)
     ax.set_axis_off()
@@ -101,101 +118,106 @@ def make_preview(polygon, fishnet_gdf, title):
     return "/static/preview.png"
 
 
-# ================= PROCESS =================
-def build_polygon(file_path):
-
-    if file_path.endswith(".zip"):
-        return load_shapefile_from_zip(file_path)
-
-    df = pd.read_excel(file_path)
-    coords = list(zip(df["X"], df["Y"]))
-    coords.append(coords[0])
-    return Polygon(coords)
-
-
-# ================= ROUTES =================
+# ================= ROUTE =================
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# ================= PREVIEW (IMPORTANT FIX) =================
+# ================= PREVIEW API (MODE CONTROLLED) =================
 @app.route("/preview", methods=["POST"])
 def preview():
-
     file = request.files["file"]
+    mode = request.form.get("mode", "boundary")
+
     path = os.path.join(UPLOAD, file.filename)
     file.save(path)
 
     try:
+        if path.endswith(".zip"):
+            geom = load_shapefile_from_zip(path)
+            return jsonify({"image": make_preview(geom, "Shapefile Boundary Preview")})
 
-        polygon = build_polygon(path)
+        df = pd.read_excel(path)
 
-        # SAME LOGIC FOR BOTH ZIP + EXCEL
-        fishnet = fishnet_clip(
-            polygon,
-            100, 100,
-            10, 10,
-            "EPSG:32645"
-        )
+        # ================= WHOLE FOREST =================
+        if mode == "boundary":
+            poly = build_polygon_excel(df)
+            return jsonify({"image": make_preview(poly, "Whole Forest Boundary")})
 
-        fishnet["geometry"] = fishnet.centroid
-        fishnet = fishnet[fishnet.within(polygon)]
+        # ================= SEGMENTED =================
+        if mode == "compartment":
+            comps = build_segmented_polygons(df)
+            union = gpd.GeoSeries(list(comps.values())).unary_union
+            return jsonify({"image": make_preview(union, "Segmented Forest Boundary")})
 
-        img = make_preview(polygon, fishnet, "Preview")
+        # ================= SAMPLE PLOT =================
+        if mode == "sample":
+            poly = build_polygon_excel(df)
+            return jsonify({"image": make_preview(poly, "Sample Plot Preview")})
 
-        return {"image": img}
+        return jsonify({"error": "Invalid mode"})
 
     except Exception as e:
-        return {"error": str(e)}
+        return jsonify({"error": str(e)})
 
 
-# ================= FINAL PROCESS =================
+# ================= MAIN PROCESS =================
 @app.route("/upload", methods=["POST"])
 def upload():
-
     file = request.files["file"]
     mode = request.form["mode"]
     zone = request.form["zone"]
 
-    cell_width = float(request.form.get("cell_width", 100))
-    cell_height = float(request.form.get("cell_height", 100))
-    rows = int(request.form.get("rows", 10))
-    cols = int(request.form.get("cols", 10))
-
     path = os.path.join(UPLOAD, file.filename)
     file.save(path)
 
     try:
 
-        polygon = build_polygon(path)
+        # ================= ZIP INPUT =================
+        if path.endswith(".zip"):
+            geom = load_shapefile_from_zip(path)
 
-        fishnet = fishnet_clip(
-            polygon,
-            cell_width,
-            cell_height,
-            rows,
-            cols,
-            get_crs(zone)
-        )
+            gdf = gpd.GeoDataFrame(geometry=[geom], crs=get_crs(zone))
 
-        fishnet["geometry"] = fishnet.centroid
-        fishnet = fishnet[fishnet.within(polygon)]
+        # ================= EXCEL INPUT =================
+        else:
+            df = pd.read_excel(path)
 
-        fishnet["Plot_No"] = range(1, len(fishnet) + 1)
+            if mode == "compartment":
+                comps = build_segmented_polygons(df)
+                gdf = gpd.GeoDataFrame(geometry=list(comps.values()), crs=get_crs(zone))
 
-        # output
+            else:
+                poly = build_polygon_excel(df)
+                gdf = gpd.GeoDataFrame(geometry=[poly], crs=get_crs(zone))
+
+        # ================= DERIVED LAYERS =================
+        points = gdf.copy()
+        points["geometry"] = points.centroid
+
+        lines = gdf.copy()
+        lines["geometry"] = gdf.geometry.apply(lambda g: LineString(g.exterior.coords))
+
+        polygons = gdf.copy()
+
+        # ================= OUTPUT =================
         base = os.path.splitext(file.filename)[0]
         out_dir = os.path.join(OUTPUT, base)
         os.makedirs(out_dir, exist_ok=True)
 
-        shp_path = os.path.join(out_dir, "sample.shp")
-        xlsx_path = os.path.join(out_dir, "sample.xlsx")
+        point_path = os.path.join(out_dir, "point.shp")
+        line_path = os.path.join(out_dir, "line.shp")
+        poly_path = os.path.join(out_dir, "polygon.shp")
 
-        fishnet.to_file(shp_path)
-        fishnet.drop(columns="geometry").to_excel(xlsx_path, index=False)
+        points.to_file(point_path)
+        lines.to_file(line_path)
+        polygons.to_file(poly_path)
 
-        # zip output
+        xlsx_path = os.path.join(out_dir, "output.xlsx")
+        polygons.drop(columns="geometry").to_excel(xlsx_path, index=False)
+
+        # ZIP
         zip_name = f"{base}.zip"
         zip_path = os.path.join(OUTPUT, zip_name)
 
@@ -207,9 +229,9 @@ def upload():
             "index.html",
             download_file=zip_name,
             stats={
-                "plot_count": len(fishnet),
-                "plot_size": f"{cell_width} × {cell_height}",
-                "crs": f"UTM {zone}N"
+                "plot_count": len(gdf),
+                "crs": f"UTM {zone}N",
+                "mode": mode
             }
         )
 
