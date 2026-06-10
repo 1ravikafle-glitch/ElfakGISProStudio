@@ -7,3 +7,12 @@ openpyxl
 fiona
 gunicorn
 xlrd
+streamlit
+pandas
+geopandas
+shapely
+matplotlib
+openpyxl
+fiona
+pyproj
+rtree
