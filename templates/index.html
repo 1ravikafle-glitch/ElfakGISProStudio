@@ -2,286 +2,148 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>GIS Engine Pro</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>File Upload with Preview & Download</title>
 <style>
-  /* Reset default styles for better consistency */
-  *, *::before, *::after {
-    box-sizing: border-box;
-  }
-
-  body {
-    margin: 0;
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    background: #f8f8f8; /* Light creamy background */
-    color: #333; /* Darker text for contrast */
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  /* Top header styles with green, white, and orange accents */
-  .header {
-    padding: 16px;
-    background: linear-gradient(135deg, #a8dadc, #ffd6a5); /* Soft green to orange gradient */
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .header-title {
-    font-size: 24px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #1d3557; /* Deep blue for contrast */
-    text-shadow: 0 0 10px #ffffff88;
-  }
-
-  .header-sub {
-    font-size: 12px;
-    color: #6c757d; /* Grayish */
-    margin-top: 4px;
-    margin-bottom: 12px;
-  }
-
-  /* Buttons container with orange accents */
-  .buttons-container {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  /* Group cards with green and orange gradients and hover effects */
-  .card {
-    padding: 14px;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    background: linear-gradient(135deg, #4caf50, #81c784); /* Green gradient */
-    border: 1px solid rgba(0,0,0,0.1);
-    display: flex;
-    align-items: center;
-    font-size: 14px;
-    color: #fff;
-  }
-
-  .card:hover {
-    background: linear-gradient(135deg, #66bb6a, #a5d6a7);
-    transform: translateY(-2px);
-  }
-
-  .card.active {
-    background: linear-gradient(135deg, #2e7d32, #388e3c); /* Darker green for active */
-    border-color: #ffd6a5; /* Light orange border */
-    box-shadow: 0 0 15px #388e3c66;
-  }
-
-  /* Panel styles */
-  #panel {
-    margin-top: 20px;
-    opacity: 0;
-    transform: translateY(10px);
-    transition: all 0.4s ease;
-  }
-
-  #panel.show {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  /* Sections styles */
-  .section {
-    display: none;
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(0,0,0,0.1);
-    display: flex;
-    flex-direction: column;
-  }
-
-  /* Inputs styles with white and orange accents */
-  input, select {
-    width: 100%;
-    padding: 12px;
-    margin-top: 10px;
-    border-radius: 10px;
-    background: #ffffff; /* White background for inputs */
-    border: 1px solid rgba(0,0,0,0.2);
-    color: #333;
-    outline: none;
-    font-size: 14px;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  input:focus, select:focus {
-    border-color: #ff7f50; /* Coral orange outline */
-    box-shadow: 0 0 8px #ff7f5066;
-  }
-
-  /* Button styles with orange gradient and glow */
-  .btn {
-    width: 100%;
-    margin-top: 15px;
-    padding: 12px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #ff7f50, #ffb347); /* Orange shades */
-    border: none;
-    font-weight: 600;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.3s ease, box-shadow 0.2s ease;
-  }
-
-  .btn:hover {
-    background: linear-gradient(135deg, #ffb347, #ff7f50);
-    box-shadow: 0 0 15px #ff7f5066;
-    transform: scale(1.02);
-  }
-
-  /* Preview container styles with glow effect */
-  .preview {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    background-color: #fafafa; /* Slightly off-white for contrast */
-  }
-
-  .box {
-    width: 85%;
-    height: 80%;
-    border-radius: 16px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(0,0,0,0.1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    font-size: 16px;
-    text-align: center;
-    color: #1d3557; /* Deep blue text for contrast */
-    box-shadow: 0 0 10px #ff7f5066;
-  }
+  body { font-family: Arial, sans-serif; padding: 20px; }
+  h2 { margin-top: 40px; }
+  input[type="file"], select, input[type="text"] {
+    display: block; margin: 10px 0; padding: 8px; width: 300px; }
+  button { padding: 10px 20px; margin-top: 10px; cursor: pointer; }
+  .preview { margin-top: 20px; }
+  .box { padding: 10px; border: 2px dashed #ccc; border-radius: 12px; min-height: 200px; display: flex; align-items: center; justify-content: center; }
+  #preview img { max-width: 100%; border-radius: 12px; }
 </style>
 </head>
 <body>
 
-<!-- Top Header -->
-<div class="header">
-  <div class="header-title">
-    🌲 GIS Engine Pro
-  </div>
-  <div class="header-sub">Professional Spatial Processing System</div>
-  <div class="buttons-container">
-    <div class="card" onclick="setGroup('A')">🌲 Group A — Forest Boundary</div>
-    <div class="card" onclick="setGroup('B')">🏞️ Group B — Compartment Mapping</div>
-    <div class="card" onclick="setGroup('C')">🧪 Group C — Sample Grid Engine</div>
-    <div class="card" onclick="setGroup('D')">🌳 Group D — Auto Forest Detection</div>
-  </div>
-</div>
+<h1>File Processing Tool</h1>
 
-<!-- Bottom Area: Processing Panel and Preview -->
-<div style="display:flex; flex:1; flex-direction:column;">
-  <!-- Processing Panel -->
-  <div id="panel" class="panel" style="padding: 16px;">
-    <!-- File Upload -->
-    <input type="file" id="file" />
+<label for="file">Select a file:</label>
+<input type="file" id="file" />
 
-    <!-- Group A Section -->
-    <div id="aBox" class="section">
-      <small>Forest Name (required only for Group A)</small>
-      <input id="forest" placeholder="Enter forest name" />
-    </div>
+<label for="mode">Select Mode:</label>
+<select id="mode">
+  <option value="A">Mode A</option>
+  <option value="B">Mode B</option>
+  <option value="C">Mode C</option>
+</select>
 
-    <!-- UTM Zone -->
-    <select id="zone">
-      <option value="44">UTM 44N</option>
-      <option value="45">UTM 45N</option>
-    </select>
+<label for="zone">Zone:</label>
+<input type="text" id="zone" placeholder="Enter zone" />
 
-    <!-- Group C Grid Settings -->
-    <div id="cBox" class="section">
-      <small>Input Source (required)</small>
-      <select id="source">
-        <option value="A">Group A Data</option>
-        <option value="B">Group B Data</option>
-        <option value="ZIP">Shapefile ZIP</option>
-      </select>
+<!-- Additional inputs based on mode -->
+<div id="additionalInputs"></div>
 
-      <small>Grid Settings</small>
-      <input id="w" placeholder="Cell Width (m)" />
-      <input id="h" placeholder="Cell Height (m)" />
-      <input id="rows" placeholder="Rows" />
-      <input id="cols" placeholder="Columns" />
-    </div>
+<button onclick="run()">Run</button>
 
-    <!-- Run Button -->
-    <button class="btn" onclick="run()">Run Processing</button>
-  </div>
-
-  <!-- Preview Area -->
-  <div class="preview">
-    <div class="box" id="preview">
-      Preview Area
-    </div>
+<div class="preview">
+  <div class="box" id="preview">
+    <div id="previewContent">✔ Processing Complete - Preview will appear here</div>
+    <a id="downloadLink" style="display:none; margin-top:10px; padding:10px 20px; border:none; border-radius:8px; background:#ff7f50; color:#fff; font-weight:600; cursor:pointer; text-decoration:none;">Download Processed File</a>
   </div>
 </div>
 
 <script>
-  let mode = null;
+  const modeSelect = document.getElementById('mode');
+  const additionalInputsDiv = document.getElementById('additionalInputs');
 
-  function setGroup(m) {
-    mode = m;
+modeSelect.addEventListener('change', () => {
+  updateAdditionalInputs();
+});
 
-    document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
-    event.target.classList.add('active');
+function updateAdditionalInputs() {
+  const mode = modeSelect.value;
+  additionalInputsDiv.innerHTML = '';
+  if (mode === 'A') {
+    additionalInputsDiv.innerHTML = `
+      <label for="forest">Forest:</label>
+      <input type="text" id="forest" placeholder="Enter forest" />
+    `;
+  } else if (mode === 'C') {
+    additionalInputsDiv.innerHTML = `
+      <label for="source">Source:</label>
+      <input type="text" id="source" placeholder="Enter source" />
+      <label for="w">Width (w):</label>
+      <input type="text" id="w" placeholder="Width" />
+      <label for="h">Height (h):</label>
+      <input type="text" id="h" placeholder="Height" />
+      <label for="rows">Rows:</label>
+      <input type="text" id="rows" placeholder="Rows" />
+      <label for="cols">Columns:</label>
+      <input type="text" id="cols" placeholder="Columns" />
+    `;
+  }
+}
 
-    document.getElementById("panel").classList.add("show");
+updateAdditionalInputs();
 
-    // Reset sections visibility
-    document.getElementById("aBox").style.display = "none";
-    document.getElementById("cBox").style.display = "none";
-
-    // Show relevant section
-    if (mode === "A") {
-      document.getElementById("aBox").style.display = "block";
-    }
-    if (mode === "C") {
-      document.getElementById("cBox").style.display = "block";
-    }
+async function run() {
+  const fileInput = document.getElementById('file');
+  if (!fileInput.files.length) {
+    alert('Please select a file.');
+    return;
   }
 
-  async function run() {
-    let fd = new FormData();
-    fd.append("file", document.getElementById("file").files[0]);
-    fd.append("mode", mode);
-    fd.append("zone", document.getElementById("zone").value);
+  let fd = new FormData();
+  fd.append("file", fileInput.files[0]);
+  const mode = document.getElementById("mode").value;
+  fd.append("mode", mode);
+  fd.append("zone", document.getElementById("zone").value);
 
-    if (mode === "A") {
-      fd.append("forest", document.getElementById("forest").value);
-    }
-
-    if (mode === "C") {
-      fd.append("source", document.getElementById("source").value);
-      fd.append("w", document.getElementById("w").value);
-      fd.append("h", document.getElementById("h").value);
-      fd.append("rows", document.getElementById("rows").value);
-      fd.append("cols", document.getElementById("cols").value);
-    }
-
-    try {
-      let res = await fetch("/upload", { method: "POST", body: fd });
-      let blob = await res.blob();
-      document.getElementById("preview").innerHTML = "✔ Processing Complete - Download Ready";
-    } catch (error) {
-      document.getElementById("preview").innerHTML = "❌ Error during processing.";
-      console.error(error);
-    }
+  if (mode === "A") {
+    fd.append("forest", document.getElementById("forest").value);
   }
+
+  if (mode === "C") {
+    fd.append("source", document.getElementById("source").value);
+    fd.append("w", document.getElementById("w").value);
+    fd.append("h", document.getElementById("h").value);
+    fd.append("rows", document.getElementById("rows").value);
+    fd.append("cols", document.getElementById("cols").value);
+  }
+
+  try {
+    const res = await fetch("/upload", { method: "POST", body: fd });
+    const blob = await res.blob();
+
+    // Generate URL for download
+    const url = URL.createObjectURL(blob);
+
+    // Setup download link
+    const downloadLink = document.getElementById("downloadLink");
+    downloadLink.href = url;
+    downloadLink.download = "processed_file"; // You can set a dynamic filename if needed
+    downloadLink.style.display = "inline-block";
+
+    // Handle preview based on file type
+    const previewContent = document.getElementById("previewContent");
+    previewContent.innerHTML = ""; // Clear previous preview
+
+    if (blob.type.startsWith("image/")) {
+      const img = document.createElement("img");
+      img.src = url;
+      previewContent.appendChild(img);
+    } else if (blob.type.startsWith("text/")) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const textPreview = document.createElement("pre");
+        textPreview.textContent = reader.result;
+        textPreview.style.whiteSpace = "pre-wrap";
+        textPreview.style.maxHeight = "200px";
+        textPreview.style.overflowY = "auto";
+        previewContent.appendChild(textPreview);
+      };
+      reader.readAsText(blob);
+    } else {
+      previewContent.textContent = "Preview not available.";
+    }
+
+  } catch (error) {
+    document.getElementById("previewContent").textContent = "❌ Error during processing.";
+    console.error(error);
+  }
+}
 </script>
 
 </body>
