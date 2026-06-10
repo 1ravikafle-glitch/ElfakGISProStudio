@@ -1,149 +1,277 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>File Upload with Preview & Download</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>GIS Engine Pro</title>
+
 <style>
-  body { font-family: Arial, sans-serif; padding: 20px; }
-  h2 { margin-top: 40px; }
-  input[type="file"], select, input[type="text"] {
-    display: block; margin: 10px 0; padding: 8px; width: 300px; }
-  button { padding: 10px 20px; margin-top: 10px; cursor: pointer; }
-  .preview { margin-top: 20px; }
-  .box { padding: 10px; border: 2px dashed #ccc; border-radius: 12px; min-height: 200px; display: flex; align-items: center; justify-content: center; }
-  #preview img { max-width: 100%; border-radius: 12px; }
+
+body{
+margin:0;
+font-family:system-ui;
+background:#0b0d12;
+color:#e5e7eb;
+}
+
+/* APP LAYOUT */
+.app{
+display:flex;
+height:100vh;
+}
+
+/* SIDEBAR */
+.sidebar{
+width:380px;
+padding:20px;
+background:rgba(255,255,255,0.03);
+border-right:1px solid rgba(255,255,255,0.08);
+backdrop-filter:blur(20px);
+}
+
+/* TITLE */
+h1{
+font-size:20px;
+margin-bottom:5px;
+}
+
+/* GROUP BUTTONS */
+.group{
+padding:12px;
+margin:8px 0;
+border-radius:10px;
+background:rgba(255,255,255,0.05);
+cursor:pointer;
+transition:0.3s;
+border:1px solid transparent;
+}
+
+.group:hover{
+transform:translateY(-2px);
+}
+
+.active{
+background:#4f46e5;
+border-color:#6366f1;
+}
+
+/* FORM */
+input,select{
+width:100%;
+padding:12px;
+margin-top:10px;
+border-radius:10px;
+border:1px solid rgba(255,255,255,0.08);
+background:rgba(255,255,255,0.05);
+color:white;
+outline:none;
+}
+
+input:focus,select:focus{
+border-color:#6366f1;
+}
+
+/* SECTIONS */
+.section{
+display:none;
+margin-top:10px;
+padding-top:10px;
+border-top:1px solid rgba(255,255,255,0.08);
+}
+
+/* BUTTON */
+button{
+width:100%;
+margin-top:15px;
+padding:12px;
+border:none;
+border-radius:10px;
+background:#6366f1;
+color:white;
+font-weight:600;
+cursor:pointer;
+transition:0.3s;
+}
+
+button:hover{
+background:#4f46e5;
+transform:scale(1.02);
+}
+
+/* PREVIEW */
+.preview{
+flex:1;
+display:flex;
+align-items:center;
+justify-content:center;
+}
+
+.box{
+width:90%;
+height:85%;
+border-radius:14px;
+background:rgba(255,255,255,0.03);
+border:1px solid rgba(255,255,255,0.08);
+display:flex;
+flex-direction:column;
+align-items:center;
+justify-content:center;
+overflow:hidden;
+}
+
+img{
+max-width:100%;
+max-height:80%;
+display:none;
+border-radius:10px;
+}
+
+a{
+margin-top:10px;
+color:#60a5fa;
+display:none;
+}
+
+small{
+color:#9ca3af;
+font-size:12px;
+}
+
 </style>
 </head>
+
 <body>
 
-<h1>File Processing Tool</h1>
+<div class="app">
 
-<label for="file">Select a file:</label>
-<input type="file" id="file" />
+<!-- LEFT -->
+<div class="sidebar">
 
-<label for="mode">Select Mode:</label>
-<select id="mode">
-  <option value="A">Mode A</option>
-  <option value="B">Mode B</option>
-  <option value="C">Mode C</option>
+<h1>🌲 GIS Engine Pro</h1>
+
+<div class="group active" onclick="setMode('A')">Group A — Forest Boundary</div>
+<div class="group" onclick="setMode('B')">Group B — Compartment Mapping</div>
+<div class="group" onclick="setMode('C')">Group C — Sample Grid</div>
+<div class="group" onclick="setMode('D')">Group D — Auto Forest Split</div>
+
+<input type="file" id="file">
+
+<!-- FOREST (ONLY A) -->
+<div id="forestBox" class="section">
+<small>Forest Name (Group A only)</small>
+<input id="forest" placeholder="Forest name">
+</div>
+
+<!-- UTM -->
+<select id="zone">
+<option value="44">UTM 44N</option>
+<option value="45">UTM 45N</option>
 </select>
 
-<label for="zone">Zone:</label>
-<input type="text" id="zone" placeholder="Enter zone" />
+<!-- GROUP C GRID -->
+<div id="gridBox" class="section">
 
-<!-- Additional inputs based on mode -->
-<div id="additionalInputs"></div>
+<small>Grid Settings (Group C only)</small>
 
-<button onclick="run()">Run</button>
+<input id="w" placeholder="Cell Width (m)">
+<input id="h" placeholder="Cell Height (m)">
+<input id="rows" placeholder="Rows">
+<input id="cols" placeholder="Columns">
 
+</div>
+
+<button onclick="run()">Run Processing</button>
+
+</div>
+
+<!-- RIGHT -->
 <div class="preview">
-  <div class="box" id="preview">
-    <div id="previewContent">✔ Processing Complete - Preview will appear here</div>
-    <a id="downloadLink" style="display:none; margin-top:10px; padding:10px 20px; border:none; border-radius:8px; background:#ff7f50; color:#fff; font-weight:600; cursor:pointer; text-decoration:none;">Download Processed File</a>
-  </div>
+<div class="box">
+
+<img id="img">
+<a id="download">Download Output ZIP</a>
+<div id="status">Preview Area</div>
+
+</div>
+</div>
+
 </div>
 
 <script>
-  const modeSelect = document.getElementById('mode');
-  const additionalInputsDiv = document.getElementById('additionalInputs');
 
-modeSelect.addEventListener('change', () => {
-  updateAdditionalInputs();
-});
+let mode="A";
 
-function updateAdditionalInputs() {
-  const mode = modeSelect.value;
-  additionalInputsDiv.innerHTML = '';
-  if (mode === 'A') {
-    additionalInputsDiv.innerHTML = `
-      <label for="forest">Forest:</label>
-      <input type="text" id="forest" placeholder="Enter forest" />
-    `;
-  } else if (mode === 'C') {
-    additionalInputsDiv.innerHTML = `
-      <label for="source">Source:</label>
-      <input type="text" id="source" placeholder="Enter source" />
-      <label for="w">Width (w):</label>
-      <input type="text" id="w" placeholder="Width" />
-      <label for="h">Height (h):</label>
-      <input type="text" id="h" placeholder="Height" />
-      <label for="rows">Rows:</label>
-      <input type="text" id="rows" placeholder="Rows" />
-      <label for="cols">Columns:</label>
-      <input type="text" id="cols" placeholder="Columns" />
-    `;
-  }
+/* SWITCH GROUP */
+function setMode(m){
+
+mode=m;
+
+document.querySelectorAll(".group")
+.forEach(g=>g.classList.remove("active"));
+
+event.target.classList.add("active");
+
+/* RESET */
+document.getElementById("forestBox").style.display="none";
+document.getElementById("gridBox").style.display="none";
+
+/* GROUP A */
+if(mode==="A"){
+document.getElementById("forestBox").style.display="block";
 }
 
-updateAdditionalInputs();
-
-async function run() {
-  const fileInput = document.getElementById('file');
-  if (!fileInput.files.length) {
-    alert('Please select a file.');
-    return;
-  }
-
-  let fd = new FormData();
-  fd.append("file", fileInput.files[0]);
-  const mode = document.getElementById("mode").value;
-  fd.append("mode", mode);
-  fd.append("zone", document.getElementById("zone").value);
-
-  if (mode === "A") {
-    fd.append("forest", document.getElementById("forest").value);
-  }
-
-  if (mode === "C") {
-    fd.append("source", document.getElementById("source").value);
-    fd.append("w", document.getElementById("w").value);
-    fd.append("h", document.getElementById("h").value);
-    fd.append("rows", document.getElementById("rows").value);
-    fd.append("cols", document.getElementById("cols").value);
-  }
-
-  try {
-    const res = await fetch("/upload", { method: "POST", body: fd });
-    const blob = await res.blob();
-
-    // Generate URL for download
-    const url = URL.createObjectURL(blob);
-
-    // Setup download link
-    const downloadLink = document.getElementById("downloadLink");
-    downloadLink.href = url;
-    downloadLink.download = "processed_file"; // You can set a dynamic filename if needed
-    downloadLink.style.display = "inline-block";
-
-    // Handle preview based on file type
-    const previewContent = document.getElementById("previewContent");
-    previewContent.innerHTML = ""; // Clear previous preview
-
-    if (blob.type.startsWith("image/")) {
-      const img = document.createElement("img");
-      img.src = url;
-      previewContent.appendChild(img);
-    } else if (blob.type.startsWith("text/")) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const textPreview = document.createElement("pre");
-        textPreview.textContent = reader.result;
-        textPreview.style.whiteSpace = "pre-wrap";
-        textPreview.style.maxHeight = "200px";
-        textPreview.style.overflowY = "auto";
-        previewContent.appendChild(textPreview);
-      };
-      reader.readAsText(blob);
-    } else {
-      previewContent.textContent = "Preview not available.";
-    }
-
-  } catch (error) {
-    document.getElementById("previewContent").textContent = "❌ Error during processing.";
-    console.error(error);
-  }
+/* GROUP C */
+if(mode==="C"){
+document.getElementById("gridBox").style.display="block";
 }
+
+}
+
+/* RUN PROCESS */
+async function run(){
+
+if(!document.getElementById("file").files[0]){
+alert("Upload file first");
+return;
+}
+
+document.getElementById("status").innerText="Processing...";
+
+let fd=new FormData();
+
+fd.append("file",document.getElementById("file").files[0]);
+fd.append("mode",mode);
+fd.append("zone",document.getElementById("zone").value);
+
+/* GROUP A */
+if(mode==="A"){
+fd.append("forest",document.getElementById("forest").value || "FOREST");
+}
+
+/* GROUP C */
+if(mode==="C"){
+fd.append("w",document.getElementById("w").value || 50);
+fd.append("h",document.getElementById("h").value || 50);
+fd.append("rows",document.getElementById("rows").value || 10);
+fd.append("cols",document.getElementById("cols").value || 10);
+}
+
+let res=await fetch("/upload",{method:"POST",body:fd});
+
+let blob=await res.blob();
+let url=URL.createObjectURL(blob);
+
+/* DOWNLOAD */
+let dl=document.getElementById("download");
+dl.href=url;
+dl.style.display="block";
+dl.innerText="⬇ Download ZIP";
+
+/* PREVIEW */
+document.getElementById("status").innerText="Processing Complete ✔";
+
+}
+
 </script>
 
 </body>
