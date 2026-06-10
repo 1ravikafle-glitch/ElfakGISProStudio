@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CF Boundary Generator</title>
+    <style>
+        body {
+            font-family: Arial;
+            background: #eef5ee;
+            text-align: center;
+        }
+
+        .box {
+            width: 420px;
+            margin: auto;
+            margin-top: 60px;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px gray;
+        }
+
+        input, select {
+            width: 90%;
+            padding: 10px;
+            margin: 10px;
+        }
+
+        button {
+            background: green;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="box">
+
+    <h2>CF Boundary Generator</h2>
+
+    <form action="/upload" method="post" enctype="multipart/form-data">
+
+        <input type="file" name="file" required>
+
+        <select name="crs">
+            <option value="45">UTM 45N</option>
+            <option value="44">UTM 44N</option>
+        </select>
+
+        <input type="text" name="title" value="Community Forest Map">
+
+        <input type="text" name="legend" value="Boundary">
+
+        <button type="submit">Generate</button>
+
+    </form>
+
+</div>
+
+</body>
+</html>
