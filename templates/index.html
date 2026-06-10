@@ -22,6 +22,13 @@
         <p class="text-sm text-gray-200">Forest Boundary • Compartment • Sample Plot Generator</p>
     </div>
 
+    <!-- ERROR MESSAGE -->
+    {% if error %}
+    <div class="bg-red-200 text-red-800 p-3 rounded mb-4">
+        ⚠️ {{ error }}
+    </div>
+    {% endif %}
+
     <!-- FORM CARD -->
     <div class="bg-white text-black rounded-2xl shadow-xl p-6 grid md:grid-cols-2 gap-6">
 
@@ -61,8 +68,8 @@
                 </select>
             </div>
 
-            <!-- SAMPLE SETTINGS (HIDDEN BY DEFAULT) -->
-            <div id="sample-settings" class="hidden space-y-4">
+            <!-- SAMPLE SETTINGS (ONLY FOR SAMPLE MODE) -->
+            <div id="sample-settings" class="hidden space-y-4 border p-3 rounded bg-gray-50">
 
                 <div>
                     <label class="font-semibold">Sampling Intensity (0–1)</label>
@@ -91,18 +98,85 @@
         <div class="bg-green-50 p-4 rounded-xl text-black">
             <h2 class="font-bold text-lg mb-2">📌 How it works</h2>
             <ul class="text-sm space-y-2">
-                <li>✔ Upload Excel with X, Y, Forest columns</li>
+                <li>✔ Upload Excel with Forest, X, Y columns</li>
                 <li>✔ Choose processing mode</li>
                 <li>✔ System generates GIS outputs</li>
-                <li>✔ Download ZIP + view map</li>
+                <li>✔ Download ZIP + View Map</li>
+            </ul>
+
+            <hr class="my-3">
+
+            <h2 class="font-bold text-lg mb-2">📊 Output includes</h2>
+            <ul class="text-sm space-y-2">
+                <li>🗺️ Map PNG</li>
+                <li>📦 Shapefiles</li>
+                <li>📄 Excel Points</li>
+                <li>📁 ZIP Download</li>
             </ul>
         </div>
 
     </div>
 
+    <!-- RESULTS -->
+    {% if stats %}
+    <div class="mt-6 bg-white text-black p-6 rounded-2xl shadow-xl">
+
+        <h2 class="text-xl font-bold mb-3">📊 Results Summary</h2>
+
+        <div class="grid md:grid-cols-4 gap-4 text-center">
+
+            <div class="bg-green-100 p-3 rounded">
+                <p class="font-bold">Area</p>
+                <p>{{ stats.total_area }}</p>
+            </div>
+
+            <div class="bg-green-100 p-3 rounded">
+                <p class="font-bold">Perimeter</p>
+                <p>{{ stats.total_perimeter }}</p>
+            </div>
+
+            <div class="bg-green-100 p-3 rounded">
+                <p class="font-bold">Plots</p>
+                <p>{{ stats.plot_count }}</p>
+            </div>
+
+            <div class="bg-green-100 p-3 rounded">
+                <p class="font-bold">CRS</p>
+                <p>{{ stats.crs }}</p>
+            </div>
+
+        </div>
+
+        <!-- DOWNLOAD -->
+        {% if download_file %}
+        <div class="mt-4 text-center">
+            <a href="/download/{{ download_file }}"
+               class="bg-blue-600 text-white px-4 py-2 rounded-lg">
+                📥 Download ZIP Output
+            </a>
+        </div>
+        {% endif %}
+
+    </div>
+    {% endif %}
+
+    <!-- MAP OUTPUT -->
+    {% if map_images %}
+    <div class="mt-6 grid md:grid-cols-2 gap-4">
+
+        {% for name, img in map_images.items() %}
+        <div class="bg-white p-3 rounded-xl text-black shadow">
+            <h3 class="font-bold mb-2">🗺️ {{ name }}</h3>
+            <img src="/static/{{ img }}" class="w-full rounded">
+        </div>
+        {% endfor %}
+
+    </div>
+    {% endif %}
+
 </div>
 
-<!-- ================= JS TOGGLE ================= -->
+<!-- ================= JS ================= -->
 <script>
     const mode = document.getElementById("mode");
     const sampleBox = document.getElementById("sample-settings");
