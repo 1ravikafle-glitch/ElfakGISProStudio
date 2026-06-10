@@ -54,6 +54,9 @@ def load_shapefile(zip_path):
             shp = os.path.join(temp_dir, f)
             break
 
+    if shp is None:
+        return None
+
     gdf = gpd.read_file(shp)
     return gdf.geometry.unary_union
 
@@ -69,7 +72,7 @@ def build_points(df):
 
 
 # =====================================================
-# 1. BOUNDARY
+# BOUNDARY
 # =====================================================
 def build_whole(df):
     df = df.sort_values("Order")
@@ -89,7 +92,7 @@ def build_whole(df):
 
 
 # =====================================================
-# 2. COMPARTMENT
+# COMPARTMENT
 # =====================================================
 def build_compartment(df, crs):
 
@@ -124,7 +127,7 @@ def build_compartment(df, crs):
 
 
 # =====================================================
-# 3. SAMPLE
+# SAMPLE FISHNET
 # =====================================================
 def build_sample(poly, w, h, rows, cols):
 
@@ -199,7 +202,7 @@ def preview_sample(poly, samples):
     for s in samples:
         ax.scatter(s.x, s.y, s=15, color="red")
 
-    ax.set_title("BOUNDARY + CLIPPED SAMPLE PLOTS")
+    ax.set_title("BOUNDARY + SAMPLE PLOTS")
     ax.set_axis_off()
 
     return save_plot()
@@ -226,9 +229,15 @@ def preview():
 
     try:
 
-        # ZIP SHAPEFILE
+        poly = None
+        line = None
+        pts = None
+        df = None
+
+        # ================= ZIP =================
         if path.endswith(".zip"):
-            geom_list = normalize_geom(load_shapefile(path))
+            geom = load_shapefile(path)
+            geom_list = normalize_geom(geom)
 
             if not geom_list:
                 return jsonify({"error": "No valid geometry in shapefile"})
@@ -238,36 +247,48 @@ def preview():
             if poly.geom_type == "MultiPolygon":
                 poly = list(poly.geoms)[0]
 
-            return jsonify({
-                "image": preview_whole(
-                    poly,
-                    LineString(poly.exterior.coords),
-                    [Point(xy) for xy in poly.exterior.coords]
-                )
-            })
+            line = LineString(poly.exterior.coords)
+            pts = [Point(xy) for xy in poly.exterior.coords]
 
-        df = pd.read_excel(path)
-        crs = get_crs(zone)
+        # ================= EXCEL =================
+        else:
+            df = pd.read_excel(path)
+            crs = get_crs(zone)
 
+        # ================= BOUNDARY =================
         if mode == "boundary":
+
+            if poly:
+                return jsonify({"image": preview_whole(poly, line, pts)})
+
             pts, line, poly = build_whole(df)
             return jsonify({"image": preview_whole(poly, line, pts)})
 
+        # ================= COMPARTMENT =================
         if mode == "compartment":
+
+            if df is None:
+                return jsonify({"error": "Compartment needs Excel file"})
+
             data = build_compartment(df, crs)
             return jsonify({"image": preview_compartment(data)})
 
+        # ================= SAMPLE (FIXED FOR ZIP + EXCEL) =================
         if mode == "sample":
-            _, _, poly = build_whole(df)
+
+            if poly:
+                base_poly = poly
+            else:
+                _, _, base_poly = build_whole(df)
 
             w = float(request.form.get("cell_width", 100))
             h = float(request.form.get("cell_height", 100))
             rows = int(request.form.get("rows", 10))
             cols = int(request.form.get("cols", 10))
 
-            samples = build_sample(poly, w, h, rows, cols)
+            samples = build_sample(base_poly, w, h, rows, cols)
 
-            return jsonify({"image": preview_sample(poly, samples)})
+            return jsonify({"image": preview_sample(base_poly, samples)})
 
         return jsonify({"error": "invalid mode"})
 
