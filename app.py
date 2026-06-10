@@ -69,7 +69,7 @@ def build_points(df):
 
 
 # =====================================================
-# 1. PROFESSIONAL BOUNDARY GENERATOR LOGIC
+# 1. BOUNDARY
 # =====================================================
 def build_whole(df):
     df = df.sort_values("Order")
@@ -89,7 +89,7 @@ def build_whole(df):
 
 
 # =====================================================
-# 2. COMPARTMENT GIS PROCESSING TOOL
+# 2. COMPARTMENT
 # =====================================================
 def build_compartment(df, crs):
 
@@ -124,7 +124,7 @@ def build_compartment(df, crs):
 
 
 # =====================================================
-# 3. CLIPPED FISHNET SAMPLE GENERATOR
+# 3. SAMPLE
 # =====================================================
 def build_sample(poly, w, h, rows, cols):
 
@@ -138,7 +138,6 @@ def build_sample(poly, w, h, rows, cols):
             y = miny + j * h
 
             cell = box(x, y, x + w, y + h)
-
             clipped = cell.intersection(poly)
 
             if not clipped.is_empty:
@@ -192,16 +191,11 @@ def preview_compartment(data):
     return save_plot()
 
 
-# =====================================================
-# UPDATED MODE 3 PREVIEW (BOUNDARY + SAMPLES TOGETHER)
-# =====================================================
 def preview_sample(poly, samples):
     fig, ax = plt.subplots()
 
-    # boundary
-    ax.plot(*poly.exterior.xy, "blue", linewidth=2, label="Boundary")
+    ax.plot(*poly.exterior.xy, "blue", linewidth=2)
 
-    # clipped fishnet sample points
     for s in samples:
         ax.scatter(s.x, s.y, s=15, color="red")
 
@@ -212,16 +206,13 @@ def preview_sample(poly, samples):
 
 
 # =====================================================
-# HOME
+# ROUTES
 # =====================================================
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# =====================================================
-# MAIN API
-# =====================================================
 @app.route("/preview", methods=["POST"])
 def preview():
 
@@ -237,8 +228,15 @@ def preview():
 
         # ZIP SHAPEFILE
         if path.endswith(".zip"):
-            geom = normalize_geom(load_shapefile(path))
-            poly = geom[0]
+            geom_list = normalize_geom(load_shapefile(path))
+
+            if not geom_list:
+                return jsonify({"error": "No valid geometry in shapefile"})
+
+            poly = geom_list[0]
+
+            if poly.geom_type == "MultiPolygon":
+                poly = list(poly.geoms)[0]
 
             return jsonify({
                 "image": preview_whole(
@@ -251,17 +249,14 @@ def preview():
         df = pd.read_excel(path)
         crs = get_crs(zone)
 
-        # 1 BOUNDARY
         if mode == "boundary":
             pts, line, poly = build_whole(df)
             return jsonify({"image": preview_whole(poly, line, pts)})
 
-        # 2 COMPARTMENT GIS TOOL
         if mode == "compartment":
             data = build_compartment(df, crs)
             return jsonify({"image": preview_compartment(data)})
 
-        # 3 CLIPPED SAMPLE (UPDATED PREVIEW)
         if mode == "sample":
             _, _, poly = build_whole(df)
 
@@ -280,8 +275,5 @@ def preview():
         return jsonify({"error": str(e)})
 
 
-# =====================================================
-# RUN
-# =====================================================
 if __name__ == "__main__":
     app.run(debug=True)
