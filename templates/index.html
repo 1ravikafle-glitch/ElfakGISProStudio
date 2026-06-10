@@ -1,846 +1,247 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Forest GIS Engine</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:        #F5F2EC;
-    --surface:   #FFFFFF;
-    --border:    #DDD9D0;
-    --forest:    #1A3C2B;
-    --forest-mid:#2B5C42;
-    --accent:    #4CAF72;
-    --amber:     #B07D2A;
-    --text:      #2D2D2D;
-    --muted:     #7A7567;
-    --preview-bg:#111A14;
-    --radius:    10px;
-    --shadow:    0 2px 12px rgba(26,60,43,.10);
-    --transition: 200ms ease;
-  }
-
-  html, body { height: 100%; }
-
-  body {
-    font-family: 'Inter', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-  }
-
-  /* ── TOPBAR ── */
-  .topbar {
-    background: var(--forest);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 0 24px;
-    height: 56px;
-    flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,.25);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-
-  .topbar-icon {
-    width: 32px; height: 32px;
-    background: var(--accent);
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-  }
-
-  .topbar-icon svg { width: 18px; height: 18px; }
-
-  .topbar-title {
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: .3px;
-  }
-
-  .topbar-sub {
-    font-size: 12px;
-    color: rgba(255,255,255,.5);
-    font-family: 'DM Mono', monospace;
-    margin-left: 4px;
-  }
-
-  .topbar-spacer { flex: 1; }
-
-  .topbar-badge {
-    font-size: 11px;
-    font-family: 'DM Mono', monospace;
-    background: rgba(255,255,255,.1);
-    border: 1px solid rgba(255,255,255,.15);
-    color: rgba(255,255,255,.7);
-    padding: 3px 10px;
-    border-radius: 20px;
-  }
-
-  /* ── LAYOUT ── */
-  .layout {
-    display: flex;
-    flex: 1;
-    gap: 0;
-    overflow: hidden;
-  }
-
-  /* ── SIDEBAR ── */
-  .sidebar {
-    width: 340px;
-    min-width: 300px;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    flex-shrink: 0;
-  }
-
-  .sidebar-section {
-    padding: 20px 20px 0;
-  }
-
-  .section-label {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-bottom: 12px;
-  }
-
-  /* ── FILE DROP ── */
-  .drop-zone {
-    border: 2px dashed var(--border);
-    border-radius: var(--radius);
-    padding: 24px 16px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color var(--transition), background var(--transition);
-    background: var(--bg);
-    position: relative;
-  }
-
-  .drop-zone:hover, .drop-zone.drag-over {
-    border-color: var(--accent);
-    background: #f0faf4;
-  }
-
-  .drop-zone input[type="file"] {
-    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
-  }
-
-  .drop-icon {
-    width: 40px; height: 40px;
-    background: var(--forest);
-    border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    margin: 0 auto 10px;
-  }
-
-  .drop-icon svg { width: 20px; height: 20px; color: #fff; }
-
-  .drop-text {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text);
-    margin-bottom: 4px;
-  }
-
-  .drop-hint {
-    font-size: 11px;
-    color: var(--muted);
-    font-family: 'DM Mono', monospace;
-  }
-
-  .drop-filename {
-    margin-top: 8px;
-    font-size: 12px;
-    font-family: 'DM Mono', monospace;
-    color: var(--accent);
-    font-weight: 500;
-    min-height: 18px;
-  }
-
-  /* ── MODE TABS ── */
-  .mode-tabs {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 0;
-  }
-
-  .mode-tab {
-    flex: 1;
-    padding: 9px 6px;
-    border: 1.5px solid var(--border);
-    border-radius: 8px;
-    background: none;
-    cursor: pointer;
-    font-size: 11.5px;
-    font-weight: 500;
-    color: var(--muted);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 5px;
-    transition: all var(--transition);
-    font-family: 'Inter', sans-serif;
-  }
-
-  .mode-tab svg { width: 18px; height: 18px; }
-
-  .mode-tab:hover {
-    border-color: var(--forest-mid);
-    color: var(--forest);
-    background: #f0faf4;
-  }
-
-  .mode-tab.active {
-    border-color: var(--forest);
-    background: var(--forest);
-    color: #fff;
-  }
-
-  /* ── FIELD ── */
-  .field { margin-bottom: 14px; }
-
-  .field-label {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--muted);
-    margin-bottom: 6px;
-    display: block;
-  }
-
-  .field select,
-  .field input[type="text"],
-  .field input[type="number"] {
-    width: 100%;
-    padding: 9px 12px;
-    border: 1.5px solid var(--border);
-    border-radius: 8px;
-    font-size: 13px;
-    font-family: 'Inter', sans-serif;
-    color: var(--text);
-    background: var(--bg);
-    outline: none;
-    transition: border-color var(--transition), box-shadow var(--transition);
-    appearance: none;
-    -webkit-appearance: none;
-  }
-
-  .field select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237A7567' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    padding-right: 32px;
-  }
-
-  .field select:focus,
-  .field input:focus {
-    border-color: var(--forest-mid);
-    box-shadow: 0 0 0 3px rgba(26,60,43,.08);
-  }
-
-  /* ── GRID 2 ── */
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-
-  /* ── SAMPLE BOX ── */
-  .sample-box {
-    display: none;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 14px;
-    background: var(--bg);
-  }
-
-  .sample-box.visible { display: block; }
-
-  .sample-box-title {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .8px;
-    text-transform: uppercase;
-    color: var(--amber);
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-
-  /* ── RUN BUTTON ── */
-  .run-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-    padding: 13px;
-    background: var(--forest);
-    color: #fff;
-    border: none;
-    border-radius: var(--radius);
-    font-size: 14px;
-    font-weight: 600;
-    font-family: 'Inter', sans-serif;
-    cursor: pointer;
-    transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
-    letter-spacing: .2px;
-    margin-top: 6px;
-  }
-
-  .run-btn:hover:not(:disabled) {
-    background: var(--forest-mid);
-    box-shadow: 0 4px 16px rgba(26,60,43,.3);
-    transform: translateY(-1px);
-  }
-
-  .run-btn:disabled {
-    opacity: .55;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .run-btn svg { width: 16px; height: 16px; }
-
-  .run-btn .spinner {
-    width: 16px; height: 16px;
-    border: 2px solid rgba(255,255,255,.3);
-    border-top-color: #fff;
-    border-radius: 50%;
-    animation: spin .7s linear infinite;
-    display: none;
-  }
-
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .run-btn.loading .spinner { display: block; }
-  .run-btn.loading .btn-text { display: none; }
-
-  /* ── SIDEBAR FOOTER ── */
-  .sidebar-footer {
-    margin-top: auto;
-    padding: 16px 20px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--border);
-    flex-shrink: 0;
-    transition: background .3s;
-  }
-
-  .status-dot.ready { background: var(--accent); }
-  .status-dot.error { background: #E05252; }
-
-  .status-text {
-    font-size: 12px;
-    color: var(--muted);
-    font-family: 'DM Mono', monospace;
-  }
-
-  /* ── PREVIEW PANEL ── */
-  .preview-panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    background: var(--preview-bg);
-    overflow: hidden;
-    position: relative;
-  }
-
-  .preview-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 20px;
-    border-bottom: 1px solid rgba(255,255,255,.06);
-    background: rgba(255,255,255,.03);
-  }
-
-  .preview-toolbar-label {
-    font-size: 11px;
-    font-family: 'DM Mono', monospace;
-    color: rgba(255,255,255,.35);
-    letter-spacing: .8px;
-    text-transform: uppercase;
-    flex: 1;
-  }
-
-  .preview-toolbar-mode {
-    font-size: 11px;
-    font-family: 'DM Mono', monospace;
-    color: var(--accent);
-    background: rgba(76,175,114,.1);
-    border: 1px solid rgba(76,175,114,.25);
-    padding: 3px 10px;
-    border-radius: 20px;
-  }
-
-  .preview-content {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 28px;
-    overflow: hidden;
-    position: relative;
-  }
-
-  /* Empty state */
-  .empty-state {
-    text-align: center;
-    color: rgba(255,255,255,.25);
-  }
-
-  .empty-state svg {
-    width: 64px; height: 64px;
-    color: rgba(255,255,255,.1);
-    margin: 0 auto 16px;
-    display: block;
-  }
-
-  .empty-state p {
-    font-size: 14px;
-    font-family: 'DM Mono', monospace;
-    line-height: 1.6;
-  }
-
-  .empty-state span {
-    display: block;
-    font-size: 11px;
-    margin-top: 6px;
-    color: rgba(255,255,255,.15);
-  }
-
-  /* Preview image */
-  #preview-img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    border-radius: 6px;
-    box-shadow: 0 8px 48px rgba(0,0,0,.5);
-    opacity: 0;
-    transition: opacity .4s ease;
-    display: none;
-  }
-
-  #preview-img.show {
-    display: block;
-    opacity: 1;
-  }
-
-  /* Loading overlay */
-  .preview-loading {
-    position: absolute; inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: rgba(17,26,20,.8);
-    backdrop-filter: blur(4px);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .25s;
-  }
-
-  .preview-loading.visible { opacity: 1; pointer-events: all; }
-
-  .loading-ring {
-    width: 48px; height: 48px;
-    border: 3px solid rgba(76,175,114,.2);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin .8s linear infinite;
-    margin-bottom: 14px;
-  }
-
-  .loading-text {
-    font-size: 12px;
-    font-family: 'DM Mono', monospace;
-    color: rgba(255,255,255,.5);
-    letter-spacing: .5px;
-  }
-
-  /* Error message */
-  .preview-error {
-    position: absolute; bottom: 20px; left: 20px; right: 20px;
-    background: rgba(224,82,82,.15);
-    border: 1px solid rgba(224,82,82,.3);
-    border-radius: 8px;
-    padding: 12px 16px;
-    font-size: 12px;
-    font-family: 'DM Mono', monospace;
-    color: #F08080;
-    display: none;
-  }
-
-  .preview-error.show { display: block; }
-
-  /* ── DIVIDER ── */
-  .divider {
-    height: 1px;
-    background: var(--border);
-    margin: 16px 0;
-  }
-
-  /* ── RESPONSIVE ── */
-  @media (max-width: 768px) {
-    .layout { flex-direction: column; }
-    .sidebar { width: 100%; min-width: unset; border-right: none; border-bottom: 1px solid var(--border); }
-    .preview-panel { min-height: 320px; }
-    .topbar-badge { display: none; }
-  }
-</style>
-</head>
-<body>
-
-<!-- TOPBAR -->
-<header class="topbar">
-  <div class="topbar-icon">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-      <circle cx="9" cy="7" r="4"/>
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-      <polyline points="22 12 18 16 16 14"/>
-    </svg>
-  </div>
-  <span class="topbar-title">Forest GIS Engine</span>
-  <span class="topbar-sub">v1.0</span>
-  <div class="topbar-spacer"></div>
-  <span class="topbar-badge">Boundary · Compartment · Sample</span>
-</header>
-
-<!-- LAYOUT -->
-<div class="layout">
-
-  <!-- SIDEBAR -->
-  <aside class="sidebar">
-
-    <!-- FILE UPLOAD -->
-    <div class="sidebar-section" style="padding-top:20px">
-      <div class="section-label">Data Source</div>
-
-      <div class="drop-zone" id="dropZone">
-        <input type="file" id="fileInput" accept=".xlsx,.xls,.zip"/>
-        <div class="drop-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
-        </div>
-        <div class="drop-text">Drop file or click to browse</div>
-        <div class="drop-hint">.xlsx · .xls · .zip (shapefile)</div>
-        <div class="drop-filename" id="dropFilename"></div>
-      </div>
-    </div>
-
-    <div class="sidebar-section" style="padding-top:18px">
-      <div class="section-label">Analysis Mode</div>
-
-      <div class="mode-tabs">
-        <button class="mode-tab active" data-mode="boundary" onclick="setMode('boundary', this)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <path d="M3 9h18M3 15h18M9 3v18M15 3v18" stroke-width="1.2"/>
-          </svg>
-          Whole<br/>Boundary
-        </button>
-        <button class="mode-tab" data-mode="compartment" onclick="setMode('compartment', this)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
-            <polyline points="12 2 12 22"/>
-            <line x1="2" y1="8.5" x2="22" y2="8.5"/>
-          </svg>
-          Segmented
-        </button>
-        <button class="mode-tab" data-mode="sample" onclick="setMode('sample', this)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
-            <circle cx="5" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>
-            <circle cx="5" cy="5" r="1"/><circle cx="19" cy="5" r="1"/>
-            <circle cx="5" cy="19" r="1"/><circle cx="19" cy="19" r="1"/>
-          </svg>
-          Sample<br/>Plots
-        </button>
-      </div>
-    </div>
-
-    <div class="sidebar-section" style="padding-top:18px">
-      <div class="section-label">Configuration</div>
-
-      <div class="field">
-        <label class="field-label">UTM Zone</label>
-        <select id="zone">
-          <option value="44">Zone 44N — Longitude 78°–84°E</option>
-          <option value="45" selected>Zone 45N — Longitude 84°–90°E</option>
-        </select>
-      </div>
-
-      <div class="field" id="orderModeField">
-        <label class="field-label">Point Order</label>
-        <select id="order_mode">
-          <option value="manual">Manual Order (use Order column)</option>
-          <option value="auto">Auto Order (convex sort)</option>
-        </select>
-      </div>
-
-      <!-- ZIP notice: shown only when .zip file selected -->
-      <div id="zipNotice" style="display:none; align-items:center; gap:8px; padding:9px 12px; border-radius:8px; background:rgba(176,125,42,.1); border:1px solid rgba(176,125,42,.3); margin-bottom:14px;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B07D2A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <span style="font-size:11.5px; color:#8B6914; font-family:'DM Mono',monospace;">Shapefile — whole boundary only</span>
-      </div>
-
-      <!-- SAMPLE OPTIONS -->
-      <div class="sample-box" id="sampleBox">
-        <div class="sample-box-title">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          Fishnet Grid Settings
-          <span style="margin-left:auto; font-size:10px; font-weight:400; color:var(--muted); letter-spacing:0">leave blank = auto from bounds</span>
-        </div>
-        <div class="grid-2">
-          <div class="field" style="margin-bottom:0">
-            <label class="field-label">Cell Width (m)</label>
-            <input type="number" id="cell_width" placeholder="auto"/>
-          </div>
-          <div class="field" style="margin-bottom:0">
-            <label class="field-label">Cell Height (m)</label>
-            <input type="number" id="cell_height" placeholder="auto"/>
-          </div>
-        </div>
-        <div class="grid-2" style="margin-top:10px">
-          <div class="field" style="margin-bottom:0">
-            <label class="field-label">Rows</label>
-            <input type="number" id="rows" placeholder="10" value="10"/>
-          </div>
-          <div class="field" style="margin-bottom:0">
-            <label class="field-label">Cols</label>
-            <input type="number" id="cols" placeholder="10" value="10"/>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="sidebar-section" style="padding: 16px 20px 20px;">
-      <button class="run-btn" id="runBtn" onclick="runAnalysis()" disabled>
-        <div class="spinner"></div>
-        <span class="btn-text" style="display:flex;align-items:center;gap:8px">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          Run Analysis
-        </span>
-      </button>
-    </div>
-
-    <div class="sidebar-footer">
-      <div class="status-dot" id="statusDot"></div>
-      <span class="status-text" id="statusText">No file selected</span>
-    </div>
-
-  </aside>
-
-  <!-- PREVIEW PANEL -->
-  <main class="preview-panel">
-
-    <div class="preview-toolbar">
-      <span class="preview-toolbar-label">Output Preview</span>
-      <span class="preview-toolbar-mode" id="modeLabel">WHOLE BOUNDARY</span>
-    </div>
-
-    <div class="preview-content">
-
-      <div class="empty-state" id="emptyState">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/>
-          <path d="M12 3v18M3 7l9 4 9-4"/>
-        </svg>
-        <p>Upload a file and run analysis<br/>to see the boundary preview here.</p>
-        <span>Supports .xlsx coordinate sheets and .zip shapefiles</span>
-      </div>
-
-      <img id="preview-img" alt="GIS Preview"/>
-
-      <div class="preview-loading" id="loadingOverlay">
-        <div class="loading-ring"></div>
-        <div class="loading-text">Processing geometry…</div>
-      </div>
-
-      <div class="preview-error" id="errorBox"></div>
-
-    </div>
-
-  </main>
-
-</div>
-
-<script>
-  let currentMode = 'boundary';
-
-  // ── MODE SWITCH ──
-  function setMode(mode, btn) {
-    currentMode = mode;
-    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
-    if (btn) btn.classList.add('active');
-
-    const labels = { boundary: 'WHOLE BOUNDARY', compartment: 'SEGMENTED', sample: 'SAMPLE PLOTS' };
-    document.getElementById('modeLabel').textContent = labels[mode];
-
-    // Sample fishnet options
-    document.getElementById('sampleBox').classList.toggle('visible', mode === 'sample');
-
-    // Order mode only applies to boundary (backend hardcodes "manual" for sample, unused for compartment/zip)
-    document.getElementById('orderModeField').style.display =
-      (mode === 'boundary') ? '' : 'none';
-  }
-
-  // ── FILE INPUT ──
-const fileInput  = document.getElementById('fileInput');
-const dropZone   = document.getElementById('dropZone');
-const dropFn     = document.getElementById('dropFilename');
-const statusDot  = document.getElementById('statusDot');
-const statusText = document.getElementById('statusText');
-const runBtn     = document.getElementById('runBtn');
-
-let isZipFile = false;
-
-function onFileSelected(f) {
-  dropFn.textContent = f.name;
-  statusDot.className = 'status-dot ready';
-  statusText.textContent = f.name;
-  runBtn.disabled = false;
-
-  isZipFile = f.name.toLowerCase().endsWith('.zip');
-
-  // Show ZIP notice only (simple + stable)
-  const zipNotice = document.getElementById('zipNotice');
-  if (isZipFile) {
-    zipNotice.style.display = 'flex';
-    zipNotice.innerHTML = "⚠ Shapefile detected — will process full boundary geometry";
-  } else {
-    zipNotice.style.display = 'none';
-  }
-
-  // DO NOT disable modes (your requirement: allow sample + zip)
-  document.querySelectorAll('.mode-tab').forEach(t => {
-    t.disabled = false;
-    t.style.opacity = '';
-    t.style.pointerEvents = '';
-  });
-}
-
-fileInput.addEventListener('change', () => {
-  const f = fileInput.files[0];
-  if (f) onFileSelected(f);
-});
-
-// Drag & drop
-dropZone.addEventListener('dragover', e => {
-  e.preventDefault();
-  dropZone.classList.add('drag-over');
-});
-
-dropZone.addEventListener('dragleave', () => {
-  dropZone.classList.remove('drag-over');
-});
-
-dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropZone.classList.remove('drag-over');
-
-  const f = e.dataTransfer.files[0];
-  if (f) {
-    const dt = new DataTransfer();
-    dt.items.add(f);
-    fileInput.files = dt.files;
-    onFileSelected(f);
-  }
-});
-
-// ── RUN ──
-async function runAnalysis() {
-  const file = fileInput.files[0];
-  if (!file) return;
-
-  const loading = document.getElementById('loadingOverlay');
-  const errorBox = document.getElementById('errorBox');
-  const img = document.getElementById('preview-img');
-  const emptyState = document.getElementById('emptyState');
-
-  runBtn.classList.add('loading');
-  runBtn.disabled = true;
-  loading.classList.add('visible');
-  errorBox.classList.remove('show');
-  img.classList.remove('show');
-
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('mode', currentMode);
-  fd.append('zone', document.getElementById('zone').value);
-
-  // boundary only options
-  if (currentMode === 'boundary') {
-    fd.append('order_mode', document.getElementById('order_mode').value);
-  }
-
-  // sample mode options
-  if (currentMode === 'sample') {
-    fd.append('cell_width', document.getElementById('cell_width').value || 0);
-    fd.append('cell_height', document.getElementById('cell_height').value || 0);
-    fd.append('rows', document.getElementById('rows').value || 10);
-    fd.append('cols', document.getElementById('cols').value || 10);
-  }
-
-  try {
-    const res = await fetch('/preview', {
-      method: 'POST',
-      body: fd
-    });
-
-    const data = await res.json();
-
-    if (!data.image) {
-      throw new Error(data.error || 'Processing failed');
-    }
-
-    emptyState.style.display = 'none';
-    img.src = data.image + '?t=' + Date.now();
-
-    img.onload = () => img.classList.add('show');
-
-    statusDot.className = 'status-dot ready';
-    statusText.textContent = 'Preview ready';
-
-  } catch (err) {
-    errorBox.textContent = '⚠ ' + err.message;
-    errorBox.classList.add('show');
-
-    statusDot.className = 'status-dot error';
-    statusText.textContent = 'Error — check file';
-  } finally {
-    loading.classList.remove('visible');
-    runBtn.classList.remove('loading');
-    runBtn.disabled = false;
-  }
-}
-</script>
-
-</body>
-</html>
+import os
+import zipfile
+import pandas as pd
+import geopandas as gpd
+import streamlit as st
+import matplotlib.pyplot as plt
+
+from shapely.geometry import Point, LineString, Polygon
+from io import BytesIO
+
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(
+    page_title="Community Forest GIS Tool",
+    page_icon="🌲",
+    layout="wide"
+)
+
+OUTPUT_FOLDER = "OUTPUT"
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+
+# =========================
+# HEADER UI
+# =========================
+st.title("🌲 Community Forest GIS Processing System")
+st.caption("Generate Forest Boundaries & Compartment Maps (Shapefile + ZIP Export)")
+
+
+# =========================
+# SIDEBAR UI
+# =========================
+with st.sidebar:
+    st.header("⚙️ Settings")
+
+    mode = st.selectbox(
+        "Processing Mode",
+        ["Whole Forest Boundary", "Segmented Forest (Compartment-wise)"]
+    )
+
+    zone = st.radio("UTM Zone", ["44", "45"], index=1)
+
+    st.divider()
+    st.info("📌 Upload Excel file with required columns before running processing.")
+
+
+# =========================
+# FILE UPLOAD UI
+# =========================
+st.subheader("📤 Input Data")
+
+uploaded_file = st.file_uploader(
+    "Upload Excel File",
+    type=["xlsx", "xls"],
+    help="Required columns depend on selected mode"
+)
+
+# Dynamic column hint
+if mode == "Whole Forest Boundary":
+    st.markdown("**Required Columns:** `Forest, X, Y, Order`")
+else:
+    st.markdown("**Required Columns:** `Forest, Compartment, X, Y, Order`")
+
+
+# =========================
+# HELP FUNCTIONS
+# =========================
+def get_crs(zone):
+    return "EPSG:32644" if zone == "44" else "EPSG:32645"
+
+
+def make_zip(folder_path):
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
+    zip_buffer.seek(0)
+    return zip_buffer
+
+
+# =========================
+# RUN BUTTON UI
+# =========================
+run = st.button("🚀 Run GIS Processing", use_container_width=True)
+
+
+# =========================
+# PROCESS FUNCTION (SAME LOGIC SHORTENED UI STYLE)
+# =========================
+def process_whole(file, crs):
+    df = pd.read_excel(file)
+
+    grouped = df.groupby("Forest")
+    results = {}
+
+    progress = st.progress(0)
+
+    for i, (forest, group) in enumerate(grouped):
+
+        group = group.sort_values("Order")
+        group["X"] = pd.to_numeric(group["X"], errors="coerce")
+        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+        group = group.dropna()
+
+        coords = list(zip(group["X"], group["Y"]))
+        if len(coords) < 3:
+            continue
+
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+
+        polygon = Polygon(coords).buffer(0)
+        if not polygon.is_valid:
+            continue
+
+        line = LineString(coords)
+
+        folder = os.path.join(OUTPUT_FOLDER, f"whole_{forest}")
+        os.makedirs(folder, exist_ok=True)
+
+        gpd.GeoDataFrame(group.copy(), geometry=[Point(xy) for xy in coords[:len(group)]], crs=crs)\
+            .to_file(os.path.join(folder, "points.shp"))
+
+        gpd.GeoDataFrame(geometry=[line], crs=crs)\
+            .to_file(os.path.join(folder, "line.shp"))
+
+        gpd.GeoDataFrame({"Forest": [forest]}, geometry=[polygon], crs=crs)\
+            .to_file(os.path.join(folder, "polygon.shp"))
+
+        results[forest] = make_zip(folder)
+        progress.progress((i + 1) / len(grouped))
+
+    return results
+
+
+def process_segmented(file, crs):
+    df = pd.read_excel(file)
+
+    grouped = df.groupby("Forest")
+    results = {}
+
+    progress = st.progress(0)
+
+    total = len(grouped)
+
+    for i, (forest, group) in enumerate(grouped):
+
+        all_polys = []
+        all_lines = []
+        all_points = []
+
+        group["X"] = pd.to_numeric(group["X"], errors="coerce")
+        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+        group = group.dropna()
+
+        for comp, g in group.groupby("Compartment"):
+            g = g.sort_values("Order")
+            coords = list(zip(g["X"], g["Y"]))
+
+            if len(coords) < 3:
+                continue
+
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])
+
+            poly = Polygon(coords).buffer(0)
+            if not poly.is_valid:
+                continue
+
+            line = LineString(coords)
+
+            all_polys.append({"Comp": comp, "geometry": poly})
+            all_lines.append({"Comp": comp, "geometry": line})
+
+            for _, r in g.iterrows():
+                all_points.append({"geometry": Point(r["X"], r["Y"])})
+
+        folder = os.path.join(OUTPUT_FOLDER, f"seg_{forest}")
+        os.makedirs(folder, exist_ok=True)
+
+        gpd.GeoDataFrame(all_points, crs=crs)\
+            .to_file(os.path.join(folder, "points.shp"))
+
+        gpd.GeoDataFrame(all_lines, crs=crs)\
+            .to_file(os.path.join(folder, "lines.shp"))
+
+        gpd.GeoDataFrame(all_polys, crs=crs)\
+            .to_file(os.path.join(folder, "polygons.shp"))
+
+        # Preview
+        fig, ax = plt.subplots(figsize=(5, 5))
+        gpd.GeoDataFrame(all_polys, crs=crs).plot(ax=ax, alpha=0.4)
+        gpd.GeoDataFrame(all_points, crs=crs).plot(ax=ax, color="red", markersize=10)
+        ax.set_title(forest)
+        ax.axis("off")
+
+        st.pyplot(fig)
+
+        results[forest] = make_zip(folder)
+
+        progress.progress((i + 1) / total)
+
+    return results
+
+
+# =========================
+# EXECUTION UI FLOW
+# =========================
+if run:
+
+    if uploaded_file is None:
+        st.warning("⚠️ Please upload an Excel file first.")
+        st.stop()
+
+    st.markdown("---")
+    st.subheader("📊 Processing Status")
+
+    crs = get_crs(zone)
+
+    with st.spinner("Processing GIS data... please wait"):
+
+        if mode == "Whole Forest Boundary":
+            results = process_whole(uploaded_file, crs)
+        else:
+            results = process_segmented(uploaded_file, crs)
+
+    if not results:
+        st.error("No valid outputs generated.")
+    else:
+        st.success("✅ Processing Completed Successfully!")
+
+        st.subheader("📦 Download Outputs")
+
+        cols = st.columns(2)
+
+        for i, (name, zip_buffer) in enumerate(results.items()):
+            with cols[i % 2]:
+                st.download_button(
+                    label=f"⬇ Download {name}",
+                    data=zip_buffer,
+                    file_name=f"{name}.zip",
+                    use_container_width=True
+                )
