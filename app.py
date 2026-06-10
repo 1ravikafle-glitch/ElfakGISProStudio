@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 
 from flask import Flask, render_template, request, send_file, send_from_directory
 from shapely.geometry import Polygon, Point, LineString
+from shapely.ops import unary_union
 from io import BytesIO
 
 app = Flask(__name__)
@@ -37,7 +38,7 @@ def outputs(filename):
     return send_from_directory(OUTPUT, filename)
 
 
-# ================= ZIP EXTRACT =================
+# ================= ZIP HELPERS =================
 def extract_zip(file):
     folder = os.path.join(UPLOAD, str(uuid.uuid4()))
     os.makedirs(folder, exist_ok=True)
@@ -51,11 +52,14 @@ def extract_zip(file):
     return folder
 
 
-def read_shp_from_zip(folder):
+def read_shp(folder):
     for root, _, files in os.walk(folder):
         for f in files:
             if f.endswith(".shp"):
-                return gpd.read_file(os.path.join(root, f))
+                try:
+                    return gpd.read_file(os.path.join(root, f))
+                except Exception:
+                    continue
     return None
 
 
@@ -144,42 +148,47 @@ def group_b(df, crs, out):
                     "geometry": Point(r["X"], r["Y"])
                 })
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
 
 
-# ================= GROUP C (FIXED ZIP SUPPORT) =================
+# ================= GROUP C (FIXED ZIP CRASH) =================
 def group_c(file, crs, w, h, rows, cols, out):
 
-    # CASE 1: ZIP INPUT (SHAPEFILE)
+    # ---------- LOAD POLYGON FROM ZIP OR EXCEL ----------
     if file.filename.endswith(".zip"):
+
         folder = extract_zip(file)
-        gdf = read_shp_from_zip(folder)
+        gdf = read_shp(folder)
 
-        if gdf is None:
-            raise Exception("No shapefile found in ZIP")
+        if gdf is None or len(gdf) == 0:
+            raise Exception("No valid shapefile found in ZIP")
 
-        poly = gdf.unary_union
+        # SAFE FIX for MultiPolygon / GeometryCollection
+        poly = unary_union(gdf.geometry)
 
-    # CASE 2: EXCEL INPUT
+        # force polygon if needed
+        if poly.geom_type not in ["Polygon", "MultiPolygon"]:
+            raise Exception("Invalid geometry in shapefile")
+
     else:
         df = pd.read_excel(file)
-        poly = Polygon(list(zip(df["X"], df["Y"])))
+        coords = list(zip(df["X"], df["Y"]))
+        coords.append(coords[0])
+        poly = Polygon(coords)
 
     line = LineString(poly.exterior.coords)
 
+    # ---------- GRID ----------
     minx, miny, _, _ = poly.bounds
 
     pts = []
     for i in range(rows):
         for j in range(cols):
+
             x = minx + j * w
             y = miny + i * h
 
@@ -194,7 +203,12 @@ def group_c(file, crs, w, h, rows, cols, out):
 
     inside = [p for p in pts if poly.contains(p)]
 
-    gdf = gpd.GeoDataFrame({"SN": range(1, len(inside) + 1)}, geometry=inside, crs=crs)
+    gdf = gpd.GeoDataFrame(
+        {"SN": range(1, len(inside) + 1)},
+        geometry=inside,
+        crs=crs
+    )
+
     gdf["X"] = gdf.geometry.x
     gdf["Y"] = gdf.geometry.y
 
@@ -241,28 +255,30 @@ def group_d(df, crs, out):
                 "geometry": Point(r["X"], r["Y"])
             })
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
 
 
-# ================= PREVIEW (ALWAYS SAVED) =================
+# ================= PREVIEW (FIXED ALWAYS SAVE) =================
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(6, 6))
 
-    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
-    line_gdf.plot(ax=ax, color=lc, linewidth=2)
-    pts_gdf.plot(ax=ax, color=ptc, markersize=8)
+    if poly_gdf is not None:
+        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
+
+    if line_gdf is not None:
+        line_gdf.plot(ax=ax, color=lc, linewidth=2)
+
+    if pts_gdf is not None:
+        pts_gdf.plot(ax=ax, color=ptc, markersize=8)
 
     plt.axis("off")
-    plt.savefig(path, dpi=220, bbox_inches="tight")
+    plt.tight_layout()
+    plt.savefig(path, dpi=220)
     plt.close()
 
 
@@ -288,7 +304,7 @@ def upload():
     preview_path = os.path.join(out, f"{mode}_preview.png")
 
     if mode == "A":
-        poly, line, pts = group_a(df := pd.read_excel(file), forest, crs, out)
+        poly, line, pts = group_a(pd.read_excel(file), forest, crs, out)
         preview(poly, line, pts, preview_path, "red", "black", "red")
 
     elif mode == "B":
@@ -307,7 +323,8 @@ def upload():
 
     zip_buffer = zip_folder(out)
 
-    return send_file(zip_buffer, mimetype="application/zip", as_attachment=True, download_name="output.zip")
+    return send_file(zip_buffer, mimetype="application/zip",
+                     as_attachment=True, download_name="output.zip")
 
 
 @app.route("/")
