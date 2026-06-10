@@ -1,224 +1,268 @@
 import os
-import zipfile
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import threading
 
-from flask import Flask, render_template, request, send_file
-from shapely.geometry import Polygon
-from werkzeug.utils import secure_filename
-from io import BytesIO
-import math
+from shapely.geometry import Polygon, Point, LineString
 
-app = Flask(__name__)
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
-UPLOAD = "uploads"
-OUTPUT = "outputs"
-STATIC = "static"
 
-os.makedirs(UPLOAD, exist_ok=True)
-os.makedirs(OUTPUT, exist_ok=True)
-os.makedirs(STATIC, exist_ok=True)
+# ======================================================
+# CRS (FIXED SAFE VERSION)
+# ======================================================
+CRS_VAR = None
 
 
-# ================= CRS =================
-def get_crs(z):
-    return "EPSG:32644" if z == "44" else "EPSG:32645"
+def get_crs(zone):
+    return "EPSG:32644" if zone == "44" else "EPSG:32645"
 
 
-# ================= FISHNET =================
-def fishnet_clip(polygon, plot_size_m2, crs):
-    cell = math.sqrt(plot_size_m2)
-
-    minx, miny, maxx, maxy = polygon.bounds
-    cells = []
-
-    x = minx
-    while x < maxx:
-        y = miny
-        while y < maxy:
-
-            poly = Polygon([
-                (x, y),
-                (x + cell, y),
-                (x + cell, y + cell),
-                (x, y + cell)
-            ])
-
-            clipped = poly.intersection(polygon)
-
-            if not clipped.is_empty:
-                cells.append(clipped)
-
-            y += cell
-        x += cell
-
-    return gpd.GeoDataFrame(geometry=cells, crs=crs)
-
-
-# ================= MAP =================
-def make_map(gdf, name, out_name):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    gdf.plot(ax=ax, edgecolor="black", alpha=0.7)
-    ax.set_title(name)
-    ax.set_axis_off()
-
-    path = os.path.join(STATIC, out_name + ".png")
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    return path
-
-
-# ================= EXPORT EXCEL =================
-def export_excel(gdf, path):
-    df = gdf.copy()
-
-    if df.geometry.iloc[0].geom_type == "Point":
-        df["X"] = df.geometry.x
-        df["Y"] = df.geometry.y
-
-    df = df.drop(columns="geometry", errors="ignore")
-    df.to_excel(path, index=False)
-
-
-# ================= PROCESS =================
-def process(file_path, mode, zone, order_mode, intensity, plot_size):
-
-    crs = get_crs(zone)
-    base = os.path.splitext(os.path.basename(file_path))[0]
-
-    df = pd.read_excel(file_path)
-
-    out_dir = os.path.join(OUTPUT, base)
-    os.makedirs(out_dir, exist_ok=True)
-
-    zip_buffer = BytesIO()
-    preview_img = None
-
-    # ================= BOUNDARY / COMPARTMENT =================
-    if mode in ["boundary", "compartment"]:
-
-        for forest, group in df.groupby("Forest"):
-
-            group["X"] = pd.to_numeric(group["X"], errors="coerce")
-            group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
-            group = group.dropna()
-
-            if mode == "boundary":
-
-                coords = list(zip(group["X"], group["Y"]))
-                coords.append(coords[0])
-
-                poly = Polygon(coords)
-                gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
-
-                shp_path = os.path.join(out_dir, f"{forest}_boundary.shp")
-                xlsx_path = os.path.join(out_dir, f"{forest}_boundary.xlsx")
-
-                gdf.to_file(shp_path)
-                export_excel(gdf.explode(index_parts=False), xlsx_path)
-
-                preview_img = make_map(gdf, forest, "boundary_preview")
-
-            else:
-
-                polys = []
-
-                for comp, cgroup in group.groupby("Compartment"):
-
-                    if order_mode == "auto":
-                        cgroup = cgroup.sort_values("Order").reset_index(drop=True)
-
-                    coords = list(zip(cgroup["X"], cgroup["Y"]))
-                    coords.append(coords[0])
-
-                    polys.append({
-                        "Forest": forest,
-                        "Compartment": comp,
-                        "geometry": Polygon(coords)
-                    })
-
-                gdf = gpd.GeoDataFrame(polys, crs=crs)
-
-                shp_path = os.path.join(out_dir, f"{forest}_compartment.shp")
-                xlsx_path = os.path.join(out_dir, f"{forest}_compartment.xlsx")
-
-                gdf.to_file(shp_path)
-                gdf.drop(columns="geometry").to_excel(xlsx_path, index=False)
-
-                preview_img = make_map(gdf, forest, "compartment_preview")
-
-    # ================= SAMPLE =================
-    if mode == "sample":
-
-        for forest, group in df.groupby("Forest"):
-
-            group["X"] = pd.to_numeric(group["X"], errors="coerce")
-            group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
-            group = group.dropna()
-
-            coords = list(zip(group["X"], group["Y"]))
-            coords.append(coords[0])
-
-            poly = Polygon(coords)
-
-            grid = fishnet_clip(poly, plot_size, crs)
-
-            points = grid.copy()
-            points["geometry"] = points.centroid
-
-            shp_path = os.path.join(out_dir, f"{forest}_sample_points.shp")
-            xlsx_path = os.path.join(out_dir, f"{forest}_sample_points.xlsx")
-
-            points.to_file(shp_path)
-            export_excel(points, xlsx_path)
-
-            preview_img = make_map(points, forest, "sample_preview")
-
-    # ================= ZIP OUTPUT =================
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
-        for root, _, files in os.walk(out_dir):
-            for f in files:
-                full_path = os.path.join(root, f)
-                arcname = os.path.relpath(full_path, out_dir)
-                z.write(full_path, arcname)
-
-    zip_buffer.seek(0)
-
-    return zip_buffer, preview_img
-
-
-# ================= ROUTES =================
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-
-@app.route("/upload", methods=["POST"])
-def upload():
-
-    file = request.files["file"]
-    mode = request.form["mode"]
-    zone = request.form["zone"]
-    order_mode = request.form.get("order_mode", "auto")
-
-    intensity = float(request.form.get("intensity", 0.5))
-    plot_size = float(request.form.get("plot_size", 500))
-
-    filename = secure_filename(file.filename)
-    path = os.path.join(UPLOAD, filename)
-    file.save(path)
-
-    zip_file, img = process(path, mode, zone, order_mode, intensity, plot_size)
-
-    return send_file(
-        zip_file,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name="gis_output.zip"
+# ======================================================
+# FILE SELECT
+# ======================================================
+def select_file():
+    return filedialog.askopenfilename(
+        filetypes=[("Excel Files", "*.xlsx *.xls")]
     )
 
 
-# ================= RENDER ENTRY =================
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+def select_output_folder():
+    return filedialog.askdirectory(title="Select Output Folder")
+
+
+# ======================================================
+# WHOLE FOREST BOUNDARY (1–24)  [UNCHANGED LOGIC]
+# ======================================================
+def process_whole_forest(df, crs, output_dir):
+
+    grouped = df.groupby("Forest")
+
+    for forest, group in grouped:
+
+        forest_dir = os.path.join(output_dir, "Whole_Forest_Boundary", str(forest))
+        os.makedirs(forest_dir, exist_ok=True)
+
+        group["X"] = pd.to_numeric(group["X"], errors="coerce")
+        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+        group = group.dropna()
+
+        group = group.sort_values("Order")
+
+        coords = list(zip(group["X"], group["Y"]))
+
+        # FIX: safety check added
+        if len(coords) < 3:
+            continue
+
+        coords.append(coords[0])
+
+        polygon = Polygon(coords)
+        line = LineString(coords)
+
+        gdf_poly = gpd.GeoDataFrame(
+            [{
+                "Forest": forest,
+                "Area_Ha": polygon.area / 10000,
+                "Perim_M": polygon.length,
+                "geometry": polygon
+            }],
+            crs=crs
+        )
+
+        gdf_line = gpd.GeoDataFrame(
+            [{"Forest": forest, "geometry": line}],
+            crs=crs
+        )
+
+        gdf_points = gpd.GeoDataFrame(
+            group,
+            geometry=gpd.points_from_xy(group["X"], group["Y"]),
+            crs=crs
+        )
+
+        gdf_points.to_file(os.path.join(forest_dir, "points.shp"))
+        gdf_line.to_file(os.path.join(forest_dir, "line.shp"))
+        gdf_poly.to_file(os.path.join(forest_dir, "polygon.shp"))
+
+        # preview
+        fig, ax = plt.subplots()
+        gdf_poly.plot(ax=ax, alpha=0.4)
+        gdf_points.plot(ax=ax, color="red")
+        plt.title(forest)
+        plt.axis("off")
+        plt.savefig(os.path.join(forest_dir, "map.png"), dpi=300)
+        plt.close()
+
+
+# ======================================================
+# PART FOREST BOUNDARY (25–28) [UNCHANGED LOGIC]
+# ======================================================
+def process_part_forest(df, crs, output_dir):
+
+    grouped = df.groupby("Forest")
+
+    for forest, group in grouped:
+
+        forest_dir = os.path.join(output_dir, "Part_Forest_Boundary", str(forest))
+        os.makedirs(forest_dir, exist_ok=True)
+
+        group["X"] = pd.to_numeric(group["X"], errors="coerce")
+        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+        group = group.dropna()
+
+        all_polygons = []
+        all_lines = []
+        all_points = []
+
+        for comp, cgroup in group.groupby("Compartment"):
+
+            cgroup = cgroup.sort_values("Order")
+
+            coords = list(zip(cgroup["X"], cgroup["Y"]))
+
+            if len(coords) < 3:
+                continue
+
+            coords.append(coords[0])
+
+            poly = Polygon(coords).buffer(0)
+            line = LineString(coords)
+
+            all_polygons.append({
+                "Forest": forest,
+                "Comp": comp,
+                "Area_Ha": poly.area / 10000,
+                "Perim_M": poly.length,
+                "geometry": poly
+            })
+
+            all_lines.append({
+                "Forest": forest,
+                "Comp": comp,
+                "geometry": line
+            })
+
+            for _, row in cgroup.iterrows():
+                all_points.append({
+                    "Forest": forest,
+                    "Comp": comp,
+                    "Order": row["Order"],
+                    "geometry": Point(row["X"], row["Y"])
+                })
+
+        gdf_poly = gpd.GeoDataFrame(all_polygons, crs=crs)
+        gdf_line = gpd.GeoDataFrame(all_lines, crs=crs)
+        gdf_point = gpd.GeoDataFrame(all_points, crs=crs)
+
+        gdf_poly.to_file(os.path.join(forest_dir, "polygons.shp"))
+        gdf_line.to_file(os.path.join(forest_dir, "lines.shp"))
+        gdf_point.to_file(os.path.join(forest_dir, "points.shp"))
+
+        # map
+        fig, ax = plt.subplots()
+        gdf_poly.plot(ax=ax, alpha=0.4)
+        gdf_point.plot(ax=ax, color="red")
+        plt.title(forest)
+        plt.axis("off")
+        plt.savefig(os.path.join(forest_dir, "map.png"), dpi=300)
+        plt.close()
+
+
+# ======================================================
+# PROCESS CONTROLLER (FIXED)
+# ======================================================
+def process_file(file_path, output_dir, status_label, mode):
+
+    try:
+        df = pd.read_excel(file_path)
+
+        zone = CRS_VAR.get()
+        crs = get_crs(zone)
+
+        output_dir = os.path.join(output_dir, "OUTPUT")
+        os.makedirs(output_dir, exist_ok=True)
+
+        status_label.config(text="Processing...")
+
+        if mode == "whole":
+            process_whole_forest(df, crs, output_dir)
+
+        elif mode == "part":
+            required = ["Forest", "Compartment", "X", "Y", "Order"]
+            for c in required:
+                if c not in df.columns:
+                    raise ValueError(f"Missing column: {c}")
+
+            process_part_forest(df, crs, output_dir)
+
+        status_label.config(text="Completed ✔")
+        messagebox.showinfo("Success", "Processing Done")
+
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
+        status_label.config(text="Error ❌")
+
+
+# ======================================================
+# START THREAD
+# ======================================================
+def start():
+
+    file_path = select_file()
+    if not file_path:
+        return
+
+    output_dir = select_output_folder()
+    if not output_dir:
+        return
+
+    mode = mode_var.get()
+
+    threading.Thread(
+        target=process_file,
+        args=(file_path, output_dir, status_label, mode),
+        daemon=True
+    ).start()
+
+
+# ======================================================
+# GUI (UNCHANGED)
+# ======================================================
+root = tk.Tk()
+root.title("CF Boundary Generator")
+root.geometry("500x320")
+
+
+tk.Label(root, text="Community Forest GIS Tool",
+         font=("Arial", 14, "bold")).pack(pady=10)
+
+
+mode_var = tk.StringVar(value="whole")
+
+tk.Label(root, text="Select Mode:").pack()
+
+tk.Radiobutton(root, text="Whole Forest Boundary", variable=mode_var, value="whole").pack()
+tk.Radiobutton(root, text="Part Forest Boundary", variable=mode_var, value="part").pack()
+
+
+CRS_VAR = tk.StringVar(value="45")
+
+frame = tk.Frame(root)
+frame.pack(pady=5)
+
+tk.Label(frame, text="UTM Zone:").grid(row=0, column=0)
+
+tk.Radiobutton(frame, text="44N", variable=CRS_VAR, value="44").grid(row=0, column=1)
+tk.Radiobutton(frame, text="45N", variable=CRS_VAR, value="45").grid(row=0, column=2)
+
+
+tk.Button(root, text="Select File & Run",
+          command=start, width=30, height=2).pack(pady=15)
+
+status_label = tk.Label(root, text="Waiting...")
+status_label.pack()
+
+root.mainloop()
