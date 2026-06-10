@@ -32,6 +32,23 @@
             orderModeContainer.classList.remove("hidden");
         }
 
+        function previewData() {
+            toggleUI();
+            const fileInput = document.getElementById("fileInput");
+            const previewContainer = document.getElementById("previewContainer");
+            const previewFileName = document.getElementById("previewFileName");
+            const previewType = document.getElementById("previewType");
+            
+            if (fileInput && fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                previewFileName.textContent = file.name;
+                previewType.textContent = (file.size / 1024).toFixed(1) + " KB";
+                previewContainer.classList.remove("hidden");
+            } else {
+                previewContainer.classList.add("hidden");
+            }
+        }
+
         window.addEventListener("DOMContentLoaded", toggleUI);
     </script>
 </head>
@@ -39,11 +56,18 @@
 
     <header class="bg-emerald-800 text-white shadow-md mb-8">
         <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <span class="text-2xl">🌲</span>
-                <h1 class="text-xl font-bold tracking-tight">Forest GIS Engine</h1>
+            <div class="flex items-center space-x-4">
+                <a href="https://cf-boundary-app.onrender.com" class="inline-flex items-center space-x-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 transition-all duration-150 px-3 py-1.5 rounded-lg text-sm font-semibold tracking-wide shadow-sm" title="Return to Default Engine Instance">
+                    <span>🏠</span>
+                    <span>Home</span>
+                </a>
+                <div class="h-6 w-px bg-emerald-700/60 hidden sm:block"></div>
+                <div class="flex items-center space-x-3">
+                    <span class="text-2xl">🌲</span>
+                    <h1 class="text-xl font-bold tracking-tight">Forest GIS Engine</h1>
+                </div>
             </div>
-            <div class="text-xs bg-emerald-700 px-3 py-1.5 rounded-full border border-emerald-600 text-emerald-100 font-medium">
+            <div class="text-xs bg-emerald-700 px-3 py-1.5 rounded-full border border-emerald-600 text-emerald-100 font-medium hidden sm:block">
                 ArcGIS Centroid Core v2.4
             </div>
         </div>
@@ -81,10 +105,21 @@
                                     <span class="font-medium text-emerald-700 group-hover:underline cursor-pointer">Choose target data source</span>
                                 </div>
                                 <p class="text-xs text-slate-400">Excel tables (.xlsx) or ESRI Shapefile directories (.zip)</p>
-                                <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.zip" onchange="toggleUI()" required 
+                                <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.zip" onchange="previewData()" required 
                                        class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                             </div>
                         </div>
+                    </div>
+
+                    <div id="previewContainer" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-4 flex items-center justify-between transition-all duration-200">
+                        <div class="flex items-center space-x-3 truncate">
+                            <span class="text-xl">📁</span>
+                            <div class="truncate">
+                                <p id="previewFileName" class="text-sm font-medium text-slate-700 truncate">filename.xlsx</p>
+                                <p id="previewType" class="text-xs text-slate-400">0.0 KB</p>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-emerald-100 text-emerald-800 font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap">Selected</span>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
