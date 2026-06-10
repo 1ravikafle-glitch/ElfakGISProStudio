@@ -2,12 +2,12 @@
 <html>
 <head>
 <title>Forest GIS Tool</title>
+
 <style>
-body { font-family: Arial; background:#f2f6f2; text-align:center; }
-.container { width:60%; margin:auto; background:white; padding:20px; border-radius:10px; }
-input, select { padding:10px; margin:10px; width:80%; }
-button { background:green; color:white; padding:10px 20px; border:none; }
-img { margin-top:20px; width:90%; }
+body {font-family: Arial; background:#eef5ee; text-align:center;}
+.container {width:60%; margin:auto; background:white; padding:20px; border-radius:10px;}
+input, select {padding:10px; width:80%; margin:8px;}
+button {background:green; color:white; padding:10px 20px; border:none;}
 </style>
 </head>
 
@@ -17,12 +17,19 @@ img { margin-top:20px; width:90%; }
 
 <h2>🌲 Forest GIS Engine</h2>
 
-<form action="/upload" method="POST" enctype="multipart/form-data">
+<h4>Excel Format Required:</h4>
+<p>
+<b>Whole:</b> Order | Forest | X | Y <br>
+<b>Compartment:</b> Order | Forest | Compartment | X | Y
+</p>
+
+<form method="POST" action="/upload" enctype="multipart/form-data">
 
 <input type="file" name="file" required><br>
 
 <select name="mode">
-<option value="boundary">Whole Boundary</option>
+<option value="boundary">Whole Forest</option>
+<option value="compartment">Compartment Forest</option>
 <option value="sample">Sample Plot (Fishnet)</option>
 </select><br>
 
@@ -31,11 +38,17 @@ img { margin-top:20px; width:90%; }
 <option value="44">UTM 44N</option>
 </select><br>
 
-<input type="number" name="intensity" step="0.1" value="0.5" placeholder="Sampling Intensity %">
+<select name="order_mode">
+<option value="auto">Auto Reset Order</option>
+<option value="manual">Keep Excel Order</option>
+</select><br>
+
+<input type="number" name="intensity" value="0.5" step="0.1" placeholder="Sampling Intensity %">
 <input type="number" name="plot_size" value="500" placeholder="Plot size m²">
 
-<br>
-<button type="submit">Generate</button>
+<br><br>
+
+<button type="submit">Generate GIS Output</button>
 
 </form>
 
@@ -45,7 +58,7 @@ img { margin-top:20px; width:90%; }
 {% endif %}
 
 {% if download_file %}
-<br>
+<br><br>
 <a href="/{{ download_file }}" download>
 <button>Download ZIP</button>
 </a>
