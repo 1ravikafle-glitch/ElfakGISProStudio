@@ -23,11 +23,14 @@ def get_crs(z):
     return "EPSG:32644" if z == "44" else "EPSG:32645"
 
 
-# ================= FISHNET =================
-def fishnet(poly, step, crs):
+# ================= FISHNET + CLIP =================
+def fishnet_clip(polygon, plot_size_m2, crs):
 
-    minx, miny, maxx, maxy = poly.bounds
-    size = step ** 0.5
+    import math
+
+    cell = math.sqrt(plot_size_m2)
+
+    minx, miny, maxx, maxy = polygon.bounds
 
     cells = []
 
@@ -36,18 +39,20 @@ def fishnet(poly, step, crs):
         y = miny
         while y < maxy:
 
-            cell = Polygon([
+            poly = Polygon([
                 (x, y),
-                (x+size, y),
-                (x+size, y+size),
-                (x, y+size)
+                (x + cell, y),
+                (x + cell, y + cell),
+                (x, y + cell)
             ])
 
-            if cell.intersects(poly):
-                cells.append(cell)
+            clipped = poly.intersection(polygon)
 
-            y += size
-        x += size
+            if not clipped.is_empty:
+                cells.append(clipped)
+
+            y += cell
+        x += cell
 
     return gpd.GeoDataFrame(geometry=cells, crs=crs)
 
@@ -81,7 +86,6 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
     os.makedirs(out_dir, exist_ok=True)
 
     zip_path = os.path.join(OUTPUT, f"{base}.zip")
-
     preview_img = None
 
     # ================= BOUNDARY =================
@@ -101,7 +105,8 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
                 poly = Polygon(coords)
 
                 gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
-                gdf.to_file(os.path.join(out_dir, f"{forest}_poly.shp"))
+                path_shp = os.path.join(out_dir, f"{forest}_poly.shp")
+                gdf.to_file(path_shp)
 
                 preview_img = make_map(gdf, forest)
 
@@ -113,9 +118,7 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
 
                     if order_mode == "auto":
                         cgroup = cgroup.sort_values("Order").reset_index(drop=True)
-                        cgroup["Order"] = range(1, len(cgroup)+1)
-                    else:
-                        cgroup = cgroup.sort_values("Order")
+                        cgroup["Order"] = range(1, len(cgroup) + 1)
 
                     coords = list(zip(cgroup["X"], cgroup["Y"]))
                     coords.append(coords[0])
@@ -127,6 +130,7 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
                     })
 
                 gdf = gpd.GeoDataFrame(polys, crs=crs)
+
                 gdf.to_file(os.path.join(out_dir, f"{forest}_compartment.shp"))
 
                 preview_img = make_map(gdf, forest)
@@ -145,20 +149,19 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
 
             poly = Polygon(coords)
 
-            intensity_area = poly.area * (intensity / 100)
-            step = max(plot_size, intensity_area)
+            grid = fishnet_clip(poly, plot_size, crs)
 
-            grid = fishnet(poly, step, crs)
+            # OPTIONAL: convert to centroid points (BEST FOR FIELD WORK)
+            grid_points = grid.copy()
+            grid_points["geometry"] = grid_points.centroid
 
-            grid = grid[grid.intersects(poly)]
+            shp_path = os.path.join(out_dir, f"{forest}_sample.shp")
+            grid_points.to_file(shp_path)
 
-            grid.to_file(os.path.join(out_dir, f"{forest}_sample.shp"))
-
-            preview_img = make_map(grid, forest)
+            preview_img = make_map(grid_points, forest)
 
     # ================= ZIP =================
     with zipfile.ZipFile(zip_path, "w") as z:
-
         for root, _, files in os.walk(out_dir):
             for f in files:
                 z.write(os.path.join(root, f), arcname=f)
@@ -188,10 +191,12 @@ def upload():
 
     zip_file, img = process(path, mode, zone, order_mode, intensity, plot_size)
 
-    return render_template("index.html",
-                           map_image=img,
-                           download_file=zip_file)
-    
+    return render_template(
+        "index.html",
+        map_image=img,
+        download_file=zip_file
+    )
+
 
 if __name__ == "__main__":
     app.run(debug=True)
