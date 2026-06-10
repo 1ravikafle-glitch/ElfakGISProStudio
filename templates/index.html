@@ -1,43 +1,114 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>MASTER CF TOOL</title>
+    <title>CF PlanPro GIS</title>
+
+    <style>
+        body {
+            font-family: Arial;
+            background: #e9f5ea;
+            margin: 0;
+        }
+
+        .header {
+            background: #1b5e20;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 22px;
+        }
+
+        .card {
+            width: 420px;
+            margin: auto;
+            margin-top: 30px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0px 4px 15px rgba(0,0,0,0.2);
+        }
+
+        input, select {
+            width: 95%;
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #2e7d32;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1b5e20;
+        }
+
+        .preview {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        img {
+            width: 90%;
+            border-radius: 10px;
+            border: 2px solid #2e7d32;
+        }
+
+        .download {
+            margin-top: 10px;
+        }
+    </style>
 </head>
 
-<body style="font-family: Arial; text-align:center; background:#f2f6f2;">
+<body>
 
-<h2>MASTER COMMUNITY FOREST GIS TOOL</h2>
+<div class="header">
+    🌲 CF PlanPro GIS System
+</div>
 
-<form action="/upload" method="post" enctype="multipart/form-data">
+<div class="card">
 
-    <br>
+    <form action="/upload" method="post" enctype="multipart/form-data">
 
-    <input type="file" name="file" required>
+        <input type="file" name="file" required>
 
-    <br><br>
+        <select name="mode">
+            <option value="single">Single Forest</option>
+        </select>
 
-    <label>Mode:</label>
-    <select name="mode">
-        <option value="comp">Compartment CF</option>
-        <option value="single">Single Forest CF</option>
-        <option value="points">Sample Points</option>
-    </select>
+        <select name="crs">
+            <option value="45">UTM 45N</option>
+            <option value="44">UTM 44N</option>
+        </select>
 
-    <br><br>
+        <button type="submit">Generate Map</button>
 
-    <label>CRS:</label>
-    <select name="crs">
-        <option value="45">UTM 45N</option>
-        <option value="44">UTM 44N</option>
-    </select>
+    </form>
 
-    <br><br>
+</div>
 
-    <button type="submit" style="padding:10px 20px; background:green; color:white;">
-        RUN TOOL
-    </button>
+{% if map_image %}
+<div class="preview">
+    <h3>Map Preview</h3>
+    <img src="/static/preview.png">
+</div>
+{% endif %}
 
-</form>
+{% if download_file %}
+<div class="preview download">
+    <a href="{{ download_file }}" download>
+        <button>⬇ Download ZIP</button>
+    </a>
+</div>
+{% endif %}
 
 </body>
 </html>
