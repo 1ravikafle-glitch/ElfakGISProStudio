@@ -3,7 +3,6 @@ import zipfile
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import math
 
 from flask import Flask, render_template, request, send_file
 from shapely.geometry import Polygon, Point
@@ -25,44 +24,76 @@ def get_crs(z):
 
 
 # ================= FISHNET =================
-def fishnet_clip(polygon, cell_size, crs):
+def fishnet_clip(
+    polygon,
+    cell_width,
+    cell_height,
+    rows,
+    cols,
+    crs
+):
 
     minx, miny, maxx, maxy = polygon.bounds
+
     cells = []
 
-    x = minx
-    while x < maxx:
-        y = miny
-        while y < maxy:
+    for r in range(rows):
+
+        for c in range(cols):
+
+            x1 = minx + (c * cell_width)
+            y1 = miny + (r * cell_height)
+
+            x2 = x1 + cell_width
+            y2 = y1 + cell_height
 
             cell = Polygon([
-                (x, y),
-                (x + cell_size, y),
-                (x + cell_size, y + cell_size),
-                (x, y + cell_size)
+                (x1, y1),
+                (x2, y1),
+                (x2, y2),
+                (x1, y2)
             ])
 
-            clipped = cell.intersection(polygon)
+            clipped = cell.intersection(
+                polygon
+            )
+
             if not clipped.is_empty:
                 cells.append(clipped)
 
-            y += cell_size
-        x += cell_size
-
-    return gpd.GeoDataFrame(geometry=cells, crs=crs)
+    return gpd.GeoDataFrame(
+        geometry=cells,
+        crs=crs
+    )
 
 
 # ================= MAP =================
 def make_map(gdf, name, filename):
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    gdf.plot(ax=ax, edgecolor="black", alpha=0.7)
+    fig, ax = plt.subplots(
+        figsize=(10, 6)
+    )
+
+    gdf.plot(
+        ax=ax,
+        edgecolor="black",
+        alpha=0.7
+    )
 
     ax.set_title(name)
     ax.set_axis_off()
 
-    path = os.path.join(STATIC, filename + ".png")
-    plt.savefig(path, dpi=160, bbox_inches="tight")
+    path = os.path.join(
+        STATIC,
+        filename + ".png"
+    )
+
+    plt.savefig(
+        path,
+        dpi=160,
+        bbox_inches="tight"
+    )
+
     plt.close()
 
     return filename + ".png"
@@ -70,55 +101,109 @@ def make_map(gdf, name, filename):
 
 # ================= EXPORT =================
 def export_points(gdf, path):
+
     df = gdf.copy()
+
     df["X"] = df.geometry.x
     df["Y"] = df.geometry.y
-    df.drop(columns="geometry").to_excel(path, index=False)
+
+    df.drop(
+        columns="geometry"
+    ).to_excel(
+        path,
+        index=False
+    )
 
 
 # ================= PROCESS =================
-def process(file_path, mode, zone, order_mode, intensity, plot_size):
+def process(
+    file_path,
+    mode,
+    zone,
+    order_mode,
+    intensity,
+    plot_size,
+    cell_width,
+    cell_height,
+    rows,
+    cols
+):
 
     crs = get_crs(zone)
-    base = os.path.splitext(os.path.basename(file_path))[0]
 
-    df = pd.read_excel(file_path)
+    base = os.path.splitext(
+        os.path.basename(file_path)
+    )[0]
 
-    # 🔥 FIX: check required columns
-    required_cols = ["Forest", "X", "Y"]
+    df = pd.read_excel(
+        file_path
+    )
+
+    required_cols = [
+        "Forest",
+        "X",
+        "Y"
+    ]
+
     for c in required_cols:
-        if c not in df.columns:
-            raise Exception(f"Missing column: {c}")
 
-    out_dir = os.path.join(OUTPUT, base)
-    os.makedirs(out_dir, exist_ok=True)
+        if c not in df.columns:
+            raise Exception(
+                f"Missing column: {c}"
+            )
+
+    out_dir = os.path.join(
+        OUTPUT,
+        base
+    )
+
+    os.makedirs(
+        out_dir,
+        exist_ok=True
+    )
 
     zip_name = f"{base}.zip"
-    zip_path = os.path.join(OUTPUT, zip_name)
+
+    zip_path = os.path.join(
+        OUTPUT,
+        zip_name
+    )
 
     map_images = {}
 
     total_area_m2 = 0.0
     total_perimeter_m = 0.0
     total_plots = 0
-
-    # ================= BOUNDARY =================
+        # ================= BOUNDARY =================
     if mode == "boundary":
 
         for forest, group in df.groupby("Forest"):
 
-            group["X"] = pd.to_numeric(group["X"], errors="coerce")
-            group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+            group["X"] = pd.to_numeric(
+                group["X"],
+                errors="coerce"
+            )
+
+            group["Y"] = pd.to_numeric(
+                group["Y"],
+                errors="coerce"
+            )
+
             group = group.dropna()
 
             if order_mode == "auto" and "Order" in group.columns:
                 group = group.sort_values("Order")
 
-            coords = list(zip(group["X"], group["Y"]))
+            coords = list(zip(
+                group["X"],
+                group["Y"]
+            ))
+
             if len(coords) < 3:
                 continue
 
             coords.append(coords[0])
+
             poly = Polygon(coords)
 
             total_area_m2 += poly.area
@@ -131,10 +216,18 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
                 "geometry": poly
             }], crs=crs)
 
-            shp = os.path.join(out_dir, f"{forest}_boundary.shp")
+            shp = os.path.join(
+                out_dir,
+                f"{forest}_boundary.shp"
+            )
+
             gdf.to_file(shp)
 
-            map_images[forest] = make_map(gdf, forest, f"{forest}_boundary")
+            map_images[forest] = make_map(
+                gdf,
+                forest,
+                f"{forest}_boundary"
+            )
 
 
     # ================= COMPARTMENT =================
@@ -144,8 +237,15 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
 
             group = group.dropna()
 
-            forest_folder = os.path.join(out_dir, str(forest))
-            os.makedirs(forest_folder, exist_ok=True)
+            forest_folder = os.path.join(
+                out_dir,
+                str(forest)
+            )
+
+            os.makedirs(
+                forest_folder,
+                exist_ok=True
+            )
 
             polys = []
 
@@ -154,10 +254,12 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
                 cg = cg.sort_values("Order") if "Order" in cg.columns else cg
 
                 coords = list(zip(cg["X"], cg["Y"]))
+
                 if len(coords) < 3:
                     continue
 
                 coords.append(coords[0])
+
                 poly = Polygon(coords)
 
                 total_area_m2 += poly.area
@@ -170,61 +272,119 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
                     "geometry": poly
                 })
 
-            gdf = gpd.GeoDataFrame(polys, crs=crs)
-            shp = os.path.join(forest_folder, "compartment.shp")
+            gdf = gpd.GeoDataFrame(
+                polys,
+                crs=crs
+            )
+
+            shp = os.path.join(
+                forest_folder,
+                "compartment.shp"
+            )
+
             gdf.to_file(shp)
 
-            map_images[forest] = make_map(gdf, forest, f"{forest}_compartment")
+            map_images[forest] = make_map(
+                gdf,
+                forest,
+                f"{forest}_compartment"
+            )
 
 
     # ================= SAMPLE =================
     elif mode == "sample":
 
-        for forest, group in df.groupby("Forest"):
+        cell_width = float(cell_width)
+        cell_height = float(cell_height)
+
+        rows = int(rows)
+        cols = int(cols)
+                for forest, group in df.groupby("Forest"):
 
             group = group.dropna()
 
             coords = list(zip(group["X"], group["Y"]))
+
             if len(coords) < 3:
                 continue
 
             coords.append(coords[0])
+
             poly = Polygon(coords)
 
             total_area_m2 += poly.area
             total_perimeter_m += poly.length
 
-            # intensity SAFE FIX
-            intensity = float(intensity) if intensity else 0.5
-            plot_size = float(plot_size) if plot_size else 500
+            fishnet = fishnet_clip(
+                poly,
+                cell_width,
+                cell_height,
+                rows,
+                cols,
+                crs
+            )
 
-            cell_size = math.sqrt(plot_size)
-            grid = fishnet_clip(poly, cell_size, crs)
+            if not fishnet.empty:
 
-            if not grid.empty:
-                grid["geometry"] = grid.centroid
-                total_plots += len(grid)
+                fishnet_shp = os.path.join(
+                    out_dir,
+                    f"{forest}_fishnet.shp"
+                )
 
-                shp = os.path.join(out_dir, f"{forest}_sample.shp")
-                xlsx = os.path.join(out_dir, f"{forest}_sample.xlsx")
+                fishnet.to_file(fishnet_shp)
 
-                grid.to_file(shp)
-                export_points(grid, xlsx)
+                points = fishnet.copy()
+                points["geometry"] = points.centroid
 
-                map_images[forest] = make_map(grid, forest, f"{forest}_sample")
+                points["Plot_No"] = range(
+                    1,
+                    len(points) + 1
+                )
+
+                total_plots += len(points)
+
+                sample_shp = os.path.join(
+                    out_dir,
+                    f"{forest}_sample.shp"
+                )
+
+                sample_xlsx = os.path.join(
+                    out_dir,
+                    f"{forest}_sample.xlsx"
+                )
+
+                points.to_file(sample_shp)
+
+                export_points(
+                    points,
+                    sample_xlsx
+                )
+
+                map_images[forest] = make_map(
+                    points,
+                    forest,
+                    f"{forest}_sample"
+                )
+
 
     # ================= ZIP =================
     with zipfile.ZipFile(zip_path, "w") as z:
-        for root, _, files in os.walk(out_dir):
-            for f in files:
-                z.write(os.path.join(root, f), arcname=f)
 
-    # 🔥 ALWAYS RETURN STATS (FIXED)
+        for root, _, files in os.walk(out_dir):
+
+            for f in files:
+
+                z.write(
+                    os.path.join(root, f),
+                    arcname=f
+                )
+
+
     stats = {
         "total_area": f"{round(total_area_m2 / 10000, 2)} ha",
         "total_perimeter": f"{round(total_perimeter_m, 2)} m",
         "plot_count": str(total_plots),
-        "plot_size": f"{int(plot_size)} m²",
+        "plot_size": f"{cell_width} m × {cell_height} m",
         "crs": f"UTM {zone}N"
     }
 
@@ -233,26 +393,75 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
 
 # ================= ROUTES =================
 @app.route("/")
+
 def home():
     return render_template("index.html")
 
 
 @app.route("/upload", methods=["POST"])
+
 def upload():
 
     file = request.files["file"]
+
     mode = request.form["mode"]
     zone = request.form["zone"]
-    order_mode = request.form.get("order_mode", "auto")
-    intensity = request.form.get("intensity", 0.5)
-    plot_size = request.form.get("plot_size", 500)
 
-    path = os.path.join(UPLOAD, file.filename)
+    order_mode = request.form.get(
+        "order_mode",
+        "auto"
+    )
+
+    intensity = request.form.get(
+        "intensity",
+        0.5
+    )
+
+    plot_size = request.form.get(
+        "plot_size",
+        500
+    )
+
+    cell_width = request.form.get(
+        "cell_width",
+        100
+    )
+
+    cell_height = request.form.get(
+        "cell_height",
+        100
+    )
+
+    rows = request.form.get(
+        "rows",
+        10
+    )
+
+    cols = request.form.get(
+        "cols",
+        10
+    )
+
+    path = os.path.join(
+        UPLOAD,
+        file.filename
+    )
+
     file.save(path)
 
     try:
+
         zip_file, map_images, stats = process(
-            path, mode, zone, order_mode, intensity, plot_size
+            path,
+            mode,
+            zone,
+            order_mode,
+            intensity,
+            plot_size,
+            cell_width,
+            cell_height,
+            rows,
+            cols
         )
 
         return render_template(
@@ -263,6 +472,7 @@ def upload():
         )
 
     except Exception as e:
+
         return render_template(
             "index.html",
             error=str(e)
@@ -271,9 +481,15 @@ def upload():
 
 # ================= DOWNLOAD =================
 @app.route("/download/<filename>")
+
 def download(filename):
-    return send_file(os.path.join(OUTPUT, filename), as_attachment=True)
+
+    return send_file(
+        os.path.join(OUTPUT, filename),
+        as_attachment=True
+    )
 
 
 if __name__ == "__main__":
     app.run(debug=True)
+    
