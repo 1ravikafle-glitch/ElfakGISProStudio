@@ -5,7 +5,7 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, send_file, send_from_directory
+from flask import Flask, render_template, request, send_file, send_from_directory, jsonify
 from shapely.geometry import Polygon, Point, LineString
 from io import BytesIO
 
@@ -31,10 +31,10 @@ def normalize_order(df):
     return df
 
 
-# ================= SERVE OUTPUT =================
-@app.route("/outputs/<path:filename>")
-def outputs(filename):
-    return send_from_directory(OUTPUT, filename)
+# ================= SERVE OUTPUT FILES =================
+@app.route("/outputs/<run_id>/<path:filename>")
+def outputs(run_id, filename):
+    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
 
 
 # ================= ZIP =================
@@ -62,8 +62,6 @@ def group_a(df, forest, crs, out):
 
     poly_gdf = gpd.GeoDataFrame([{
         "Forest": forest,
-        "Area": poly.area / 10000,
-        "Perim": poly.length,
         "geometry": poly
     }], crs=crs)
 
@@ -106,8 +104,6 @@ def group_b(df, crs, out):
             polys.append({
                 "Forest": f,
                 "Compartment": c,
-                "Area": poly.area / 10000,
-                "Perim": poly.length,
                 "geometry": poly
             })
 
@@ -121,19 +117,14 @@ def group_b(df, crs, out):
                 pts.append({
                     "Forest": f,
                     "Compartment": c,
-                    "Order": r["Order"],
                     "geometry": Point(r["X"], r["Y"])
                 })
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
 
 
 # ================= GROUP C =================
@@ -167,13 +158,10 @@ def group_c(df, crs, w, h, rows, cols, out):
         "SN": range(1, len(inside) + 1)
     }, geometry=inside, crs=crs)
 
-    gdf["X"] = gdf.geometry.x
-    gdf["Y"] = gdf.geometry.y
-
     poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
     line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
 
-    gdf.to_file(os.path.join(out, "sampleplot.shp"))
+    gdf.to_file(os.path.join(out, "sample.shp"))
     poly_gdf.to_file(os.path.join(out, "boundary.shp"))
     line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
 
@@ -197,8 +185,6 @@ def group_d(df, crs, out):
 
         polys.append({
             "Forest": f,
-            "Area": poly.area / 10000,
-            "Perim": poly.length,
             "geometry": poly
         })
 
@@ -210,29 +196,24 @@ def group_d(df, crs, out):
         for _, r in g.iterrows():
             pts.append({
                 "Forest": f,
-                "Order": r["Order"],
                 "geometry": Point(r["X"], r["Y"])
             })
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
 
 
 # ================= PREVIEW =================
-def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
+def preview(poly_gdf, line_gdf, pts_gdf, path):
 
     fig, ax = plt.subplots()
 
-    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
-    line_gdf.plot(ax=ax, color=lc, linewidth=2)
-    pts_gdf.plot(ax=ax, color=ptc, markersize=8)
+    poly_gdf.plot(ax=ax, facecolor="none", edgecolor="red")
+    line_gdf.plot(ax=ax, color="black", linewidth=2)
+    pts_gdf.plot(ax=ax, color="yellow", markersize=8)
 
     plt.axis("off")
     plt.savefig(path, dpi=220, bbox_inches="tight")
@@ -264,24 +245,31 @@ def upload():
 
     if mode == "A":
         poly, line, pts = group_a(df, forest, crs, out)
-        preview(poly, line, pts, preview_path, "red", "black", "red")
 
     elif mode == "B":
         poly, line, pts = group_b(df, crs, out)
-        preview(poly, line, pts, preview_path, "blue", "orange", "green")
 
     elif mode == "C":
         poly, line, pts = group_c(df, crs, w, h, rows, cols, out)
-        preview(poly, line, pts, preview_path, "red", "yellow", "yellow")
 
     else:
         poly, line, pts = group_d(df, crs, out)
-        preview(poly, line, pts, preview_path, "green", "cyan", "cyan")
+
+    preview(poly, line, pts, preview_path)
 
     zip_buffer = zip_folder(out)
 
+    return jsonify({
+        "zip": f"/download/{run_id}",
+        "preview": f"/outputs/{run_id}/{mode}_preview.png"
+    })
+
+
+@app.route("/download/<run_id>")
+def download(run_id):
+    folder = os.path.join(OUTPUT, run_id)
     return send_file(
-        zip_buffer,
+        zip_folder(folder),
         mimetype="application/zip",
         as_attachment=True,
         download_name="output.zip"
