@@ -3,274 +3,234 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ELFAKGIS — Professional Forestry Spatial Analytics Workspace</title>
+    <title>ElfakGIS Enterprise Workspace</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; }
-        /* Smooth fade-in utility for generated content */
-        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
     </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen antialiased selection:bg-emerald-500 selection:text-slate-950">
+<body class="bg-slate-900 text-slate-100 min-h-screen antialiased">
 
-    <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4">
-        <div class="max-w-7xl mx-auto flex justify-between items-center">
-            <div class="flex items-center space-x-3">
-                <div class="p-2 bg-emerald-500/10 rounded-xl border border-emerald-500/20 shadow-inner">
-                    <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l8 4v10l-8 4-8-4V7l8-4z"></path>
-                    </svg>
-                </div>
-                <div>
-                    <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                        Silvan<span class="text-emerald-400">GIS</span>
-                    </h1>
-                    <p class="text-[11px] text-slate-400 font-medium tracking-wide uppercase">Forest Boundary & Inventory Engineering</p>
-                </div>
-            </div>
-            <div class="flex items-center space-x-2 text-xs text-slate-300 bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-700/50 shadow-sm">
-                <span class="relative flex h-2 w-2">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span class="font-medium">Engine Status: Operational</span>
+<header class="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-50 px-8 py-4 shadow-sm">
+    <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="flex items-center space-x-3">
+            <div class="w-2.5 h-2.5 bg-teal-500 rounded-sm animate-pulse"></div>
+            <h1 class="text-lg font-bold tracking-tight text-white">Elfak<span class="text-teal-400 font-medium">GIS</span> <span class="text-slate-400 font-normal text-base mx-2">|</span> <span class="text-slate-300 font-normal text-sm">Processing Console</span></h1>
+        </div>
+        <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-2 text-xs bg-slate-900 px-3 py-1.5 border border-slate-800 rounded">
+                <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                <span class="text-slate-400 font-medium">Engine Status:</span>
+                <span class="text-slate-200 font-semibold">Online</span>
             </div>
         </div>
-    </header>
+    </div>
+</header>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {% if error_message %}
-        <div class="mb-8 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-start space-x-3 text-rose-300 fade-in">
-            <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-rose-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
+<main class="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+    <section class="lg:col-span-4 bg-slate-950 border border-slate-800/80 rounded-xl p-6 shadow-2xl h-fit">
+        <div class="mb-6 border-b border-slate-900 pb-4">
+            <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Pipeline Parameters</h2>
+            <p class="text-[11px] text-slate-500 mt-1">Configure vector spatial modeling settings</p>
+        </div>
+
+        <form action="/upload" method="POST" enctype="multipart/form-data" class="space-y-5">
+
             <div>
-                <h4 class="font-semibold text-rose-200 text-sm">Execution Engine Alert</h4>
-                <p class="text-xs opacity-90 mt-0.5">{{ error_message }}</p>
+                <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Inventory Vector File</label>
+                <div class="relative group border border-slate-800 rounded bg-slate-900/50 hover:bg-slate-900 transition-colors p-3.5 text-center cursor-pointer">
+                    <input id="fileSelector" type="file" name="file" required
+                        class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        onchange="displaySelectedFilename()">
+                    <div class="space-y-1">
+                        <span class="block text-xs font-medium text-slate-300 group-hover:text-teal-400 transition-colors">Select Source Spreadsheet</span>
+                        <span class="block text-[10px] text-slate-500">Accepts strictly formatted .xlsx files</span>
+                    </div>
+                </div>
+                <div id="fileInfoBadge" class="hidden text-[11px] font-medium text-teal-400 bg-teal-950/40 border border-teal-900/50 px-2.5 py-2 rounded mt-2.5 mono break-all"></div>
+            </div>
+
+            <div>
+                <label for="computationMode" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Processing Routine</label>
+                <select id="computationMode" name="mode"
+                    class="w-full bg-slate-900 border border-slate-800 rounded p-2.5 text-xs text-slate-200 cursor-pointer focus:outline-none focus:border-teal-500/80 transition-colors"
+                    onchange="evaluateSampleFieldsVisibility()">
+                    <option value="boundary" {% if chosen_mode == 'boundary' %}selected{% endif %}>Macro Boundary Extraction</option>
+                    <option value="compartment" {% if chosen_mode == 'compartment' %}selected{% endif %}>Block / Compartment Segmentation</option>
+                    <option value="sample" {% if chosen_mode == 'sample' %}selected{% endif %}>Sample Plot Matrix Generation</option>
+                </select>
+            </div>
+
+            <div>
+                <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Geodetic Target Datum</p>
+                <div class="grid grid-cols-2 gap-2">
+                    <label id="zone44"
+                        class="text-center text-xs py-2.5 px-3 border rounded cursor-pointer transition-all select-none font-medium {% if chosen_zone != '45' %}border-teal-500/50 text-white bg-teal-500/5 shadow-sm{% else %}border-slate-800 text-slate-400 hover:border-slate-700{% endif %}">
+                        <input type="radio" name="zone" value="44" class="hidden"
+                            {% if chosen_zone != '45' %}checked{% endif %}
+                            onclick="switchZone('44')">
+                        UTM Zone 44N
+                    </label>
+
+                    <label id="zone45"
+                        class="text-center text-xs py-2.5 px-3 border rounded cursor-pointer transition-all select-none font-medium {% if chosen_zone == '45' %}border-teal-500/50 text-white bg-teal-500/5 shadow-sm{% else %}border-slate-800 text-slate-400 hover:border-slate-700{% endif %}">
+                        <input type="radio" name="zone" value="45" class="hidden"
+                            {% if chosen_zone == '45' %}checked{% endif %}
+                            onclick="switchZone('45')">
+                        UTM Zone 45N
+                    </label>
+                </div>
+            </div>
+
+            <div id="sampleBox" class="{% if chosen_mode != 'sample' %}hidden{% endif %} space-y-3 pt-4 border-t border-slate-900 animate-fadeIn">
+                <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400">Inventory Parameters</label>
+                
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center">
+                        <span class="text-[10px] text-slate-500">Sampling Intensity Range</span>
+                        <span class="text-[9px] text-teal-500/80 uppercase font-mono tracking-tight">Default: 0.5%</span>
+                    </div>
+                    <input type="number" name="intensity" step="0.01" min="0.01" max="100.00"
+                        value="{{ chosen_intensity if chosen_intensity is not none else 0.5 }}"
+                        class="w-full bg-slate-900 border border-slate-800 p-2.5 text-xs rounded text-slate-200 focus:outline-none focus:border-teal-500/80 mono"
+                        placeholder="Intensity Percentage">
+                </div>
+
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center">
+                        <span class="text-[10px] text-slate-500">Plot Footprint Domain Bounds (m²)</span>
+                        <span class="text-[9px] text-teal-500/80 uppercase font-mono tracking-tight">Default: 500m²</span>
+                    </div>
+                    <input type="number" name="plot_size" min="1" step="1"
+                        value="{{ chosen_plot_size if chosen_plot_size is not none else 500 }}"
+                        class="w-full bg-slate-900 border border-slate-800 p-2.5 text-xs rounded text-slate-200 focus:outline-none focus:border-teal-500/80 mono"
+                        placeholder="Target Area Unit Size">
+                </div>
+            </div>
+
+            <button type="submit" class="w-full bg-teal-500 hover:bg-teal-400 active:bg-teal-600 text-slate-950 font-bold text-xs py-3 rounded tracking-wider uppercase transition-colors shadow-lg shadow-teal-950/20">
+                Execute Process Vector Pipelines
+            </button>
+        </form>
+    </section>
+
+    <section class="lg:col-span-8 space-y-6">
+
+        <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-6 shadow-xl">
+            <div class="mb-4">
+                <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400">Execution Performance Diagnostics</h2>
+                <p class="text-[11px] text-slate-500 mt-0.5">Statistical summaries verified by core geometry logic</p>
+            </div>
+            
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                <div class="bg-slate-900/60 p-3 rounded border border-slate-800/40">
+                    <span class="block text-[10px] uppercase font-bold text-slate-500 tracking-wider">Total Area</span>
+                    <span class="block text-sm font-semibold text-white mt-1 mono">{{ stats.total_area if stats else '0.00 ha' }}</span>
+                </div>
+                <div class="bg-slate-900/60 p-3 rounded border border-slate-800/40">
+                    <span class="block text-[10px] uppercase font-bold text-slate-500 tracking-wider">Total Perimeter</span>
+                    <span class="block text-sm font-semibold text-white mt-1 mono">{{ stats.total_perimeter if stats else '0.00 m' }}</span>
+                </div>
+                <div class="bg-slate-900/60 p-3 rounded border border-slate-800/40">
+                    <span class="block text-[10px] uppercase font-bold text-slate-500 tracking-wider">Spatial Reference</span>
+                    <span class="block text-sm font-semibold text-teal-400 mt-1 mono">{{ stats.crs if stats else 'Unassigned' }}</span>
+                </div>
+                <div class="bg-slate-900/60 p-3 rounded border border-slate-800/40">
+                    <span class="block text-[10px] uppercase font-bold text-slate-500 tracking-wider">Sample Units</span>
+                    <span class="block text-sm font-semibold text-white mt-1 mono">{{ stats.plot_count if stats else '0' }}</span>
+                </div>
             </div>
         </div>
-        {% endif %}
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-            
-            <section class="lg:col-span-1 bg-slate-950 border border-slate-800/80 rounded-2xl p-6 shadow-xl space-y-6">
+        <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-6 shadow-xl">
+            <div class="flex justify-between items-center mb-4 pb-3 border-b border-slate-900">
                 <div>
-                    <h2 class="text-base font-semibold text-white tracking-tight">Workspace Parameters</h2>
-                    <p class="text-xs text-slate-400 mt-0.5">Configure spatial compute configuration inputs</p>
+                    <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400">Spatial Topology Viewports</h2>
+                    <p class="text-[11px] text-slate-500 mt-0.5">High-fidelity 2D map projections</p>
                 </div>
+                {% if map_images %}
+                <button onclick="toggleMaps()" class="text-xs bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 font-medium px-3 py-1.5 rounded transition-colors">
+                    Toggle Canvas Display
+                </button>
+                {% endif %}
+            </div>
 
-                <form action="/upload" method="POST" enctype="multipart/form-data" class="space-y-5">
-                    
-                    <div class="space-y-2">
-                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Inventory Source File</label>
-                        <label class="group relative flex flex-col items-center justify-center border-2 border-dashed border-slate-800 hover:border-emerald-500/40 bg-slate-900/30 hover:bg-slate-900/60 transition duration-200 rounded-xl p-5 cursor-pointer text-center shadow-inner">
-                            <svg class="w-8 h-8 text-slate-500 group-hover:text-emerald-400 transition mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            <span class="text-xs font-medium text-slate-300 group-hover:text-white transition">Upload Excel Matrix Workbook</span>
-                            <span class="text-[10px] text-slate-500 mt-1">Requires structured: Order, Forest, X, Y vectors</span>
-                            <input type="file" name="file" required class="hidden" id="fileInput" onchange="updateFileLabel()">
-                            
-                            <div id="fileSelectedName" class="hidden mt-3 text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-md"></div>
-                        </label>
+            {% if map_images %}
+            <div id="maps" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% for forest, img in map_images.items() %}
+                <div class="border border-slate-800 bg-slate-900/20 rounded p-4 flex flex-col justify-between">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs font-bold text-slate-300">Entity ID: <span class="text-teal-400 mono font-medium ml-1">{{ forest }}</span></span>
+                        <span class="text-[9px] uppercase font-bold text-slate-500 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded tracking-wider">Raster Frame</span>
                     </div>
-
-                    <div class="space-y-2">
-                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Processing Architecture</label>
-                        <select name="mode" id="modeSelect" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-medium focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition" onchange="toggleSampleInputs()">
-                            <option value="boundary" {% if chosen_mode == 'boundary' %}selected{% endif %}>Forest Boundary Extraction</option>
-                            <option value="compartment" {% if chosen_mode == 'compartment' %}selected{% endif %}>Internal Compartment Segmentation</option>
-                            <option value="sample" {% if chosen_mode == 'sample' %}selected{% endif %}>Fishnet Sampling Plot Matrix</option>
-                        </select>
-                    </div>
-
-                    <div class="space-y-2">
-                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Geodetic Target Datum (WGS 84 / UTM)</label>
-                        <div class="grid grid-cols-2 gap-3">
-                            <label class="flex items-center justify-between p-3 rounded-lg border bg-slate-900/50 cursor-pointer transition select-none {% if chosen_zone != '45' %}border-emerald-500/60 bg-emerald-500/5 text-white{% else %}border-slate-800 text-slate-400 hover:border-slate-700{% endif %}" id="labelZone44">
-                                <span class="text-xs font-semibold">UTM Zone 44N</span>
-                                <input type="radio" name="zone" value="44" class="hidden" {% if chosen_zone != '45' %}checked{% endif %} onclick="updateZoneStyle('44')">
-                            </label>
-                            <label class="flex items-center justify-between p-3 rounded-lg border bg-slate-900/50 cursor-pointer transition select-none {% if chosen_zone == '45' %}border-emerald-500/60 bg-emerald-500/5 text-white{% else %}border-slate-800 text-slate-400 hover:border-slate-700{% endif %}" id="labelZone45">
-                                <span class="text-xs font-semibold">UTM Zone 45N</span>
-                                <input type="radio" name="zone" value="45" class="hidden" {% if chosen_zone == '45' %}checked{% endif %} onclick="updateZoneStyle('45')">
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2">
-                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Vertex Ordering Algorithm</label>
-                        <select name="order_mode" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition">
-                            <option value="auto" {% if chosen_order == 'auto' or not chosen_order %}selected{% endif %}>Auto-Sort Order Sequence (Correct Errors)</option>
-                            <option value="preserve" {% if chosen_order == 'preserve' %}selected{% endif %}>Preserve Native Spreadsheet Sequence</option>
-                        </select>
-                    </div>
-
-                    <div id="sampleParamsBlock" class="{% if chosen_mode != 'sample' %}hidden{% endif %} space-y-4 pt-4 border-t border-slate-800/80 fade-in">
-                        <div class="space-y-2">
-                            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Inventory Target Intensity (%)</label>
-                            <input type="number" step="0.01" name="intensity" value="{{ chosen_intensity if chosen_intensity else 0.5 }}" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition">
-                        </div>
-                        <div class="space-y-2">
-                            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Target Plot Footprint Area (m²)</label>
-                            <input type="number" step="1" name="plot_size" value="{{ chosen_plot_size|int if chosen_plot_size else 500 }}" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition">
-                        </div>
-                    </div>
-
-                    <button type="submit" class="w-full py-3 px-4 mt-2 bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-slate-950 font-bold text-sm rounded-lg transition duration-150 shadow-lg shadow-emerald-500/5 flex items-center justify-center space-x-2 tracking-wide">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span>Compute Spatial Model</span>
-                    </button>
-                </form>
-            </section>
-
-            <section class="lg:col-span-2 space-y-8">
-                
-                <div class="bg-slate-950 border border-slate-800/80 rounded-2xl p-6 shadow-xl">
-                    <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
-                        <div>
-                            <h2 class="text-base font-semibold text-white tracking-tight">Execution Diagnostics</h2>
-                            <p class="text-xs text-slate-400 mt-0.5">Computed attributes evaluated from geometries</p>
-                        </div>
-                        {% if download_file %}
-                        <a href="/{{ download_file }}" class="inline-flex items-center space-x-2 px-3.5 py-2 bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold rounded-lg transition duration-150 self-start sm:self-auto shadow-sm">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-                            </svg>
-                            <span>Download Export Bundle (.zip)</span>
-                        </a>
-                        {% endif %}
-                    </div>
-
-                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                        <div class="bg-slate-900/30 border border-slate-800/50 p-4 rounded-xl shadow-inner">
-                            <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Calculated Area</p>
-                            <p class="text-lg font-bold text-white mt-1">{{ stats.total_area if stats else '0.00 ha' }}</p>
-                        </div>
-                        <div class="bg-slate-900/30 border border-slate-800/50 p-4 rounded-xl shadow-inner">
-                            <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Total Perimeter</p>
-                            <p class="text-lg font-bold text-white mt-1">{{ stats.total_perimeter if stats else '0.0 m' }}</p>
-                        </div>
-                        <div class="bg-slate-900/30 border border-slate-800/50 p-4 rounded-xl shadow-inner">
-                            <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Projection Grid</p>
-                            <p class="text-lg font-bold text-emerald-400 mt-1">{{ stats.crs if stats else 'N/A' }}</p>
-                        </div>
-                        <div class="bg-slate-900/30 border border-slate-800/50 p-4 rounded-xl shadow-inner">
-                            <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Extracted Plots</p>
-                            <p class="text-lg font-bold text-white mt-1">{{ stats.plot_count if stats else '0' }}</p>
-                        </div>
-                        <div class="bg-slate-900/30 border border-slate-800/50 p-4 rounded-xl shadow-inner col-span-1 sm:col-span-2">
-                            <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Target Plot Footprint</p>
-                            <p class="text-lg font-bold text-white mt-1">{{ stats.plot_size if stats else '0 m²' }}</p>
-                        </div>
+                    <div class="bg-slate-950 border border-slate-900/80 rounded p-2 flex items-center justify-center">
+                        <img src="/{{ img }}" alt="Engine Output Projection Raster" class="w-full max-h-64 object-contain rounded-sm">
                     </div>
                 </div>
-
-                <div class="space-y-4">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div>
-                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Cartographic Canvas Previews</h3>
-                            <p class="text-xs text-slate-400 mt-0.5">High-definition raster models built directly from the processing run</p>
-                        </div>
-                        
-                        {% if map_images %}
-                        <button type="button" id="togglePreviewBtn" onclick="togglePreviewCanvas()" class="inline-flex items-center space-x-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-700/60 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition shadow-sm select-none">
-                            <svg id="togglePreviewIcon" class="w-4 h-4 text-emerald-400 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
-                            </svg>
-                            <span id="togglePreviewText">Reveal Cartographic Previews</span>
-                        </button>
-                        {% endif %}
-                    </div>
-
-                    {% if map_images %}
-                    <div id="previewCanvasGrid" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto md:mx-0 fade-in">
-                        {% for forest, img_path in map_images.items() %}
-                        <div class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-md group transition duration-200 hover:border-slate-700">
-                            <div class="p-2.5 bg-slate-900/80 border-b border-slate-800 flex justify-between items-center px-3.5">
-                                <span class="text-xs font-bold text-slate-300">Unit: <span class="text-emerald-400">{{ forest }}</span></span>
-                                <span class="text-[9px] uppercase bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded border border-slate-700 tracking-wide">Raster Frame</span>
-                            </div>
-                            <div class="bg-slate-950/60 p-3 flex justify-center items-center">
-                                <img src="/{{ img_path }}" alt="Spatial Geometry Evaluation Frame" class="max-h-64 object-contain rounded-lg border border-slate-800/60 shadow-sm transition duration-300 group-hover:scale-[1.01]">
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% else %}
-                    <div class="flex flex-col items-center justify-center p-12 border border-slate-800 border-dashed rounded-2xl bg-slate-950/20 text-center text-slate-500">
-                        <div class="p-3 bg-slate-900/40 rounded-xl border border-slate-800/60 mb-3 text-slate-400">
-                            <svg class="w-8 h-8 stroke-[1.5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 01.553-.894L9 2l6 3 5.447-2.724A1 1 0 0121 3.182v10.764a1 1 0 01-.553.894L15 18l-6 2z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 2v18m6-15v13"></path>
-                            </svg>
-                        </div>
-                        <p class="text-sm font-semibold text-slate-400">No Vector Previews Compiled</p>
-                        <p class="text-xs text-slate-600 mt-1 max-w-xs leading-relaxed">Submit a source dataset file into the processing runtime system to map and review output shapes</p>
-                    </div>
-                    {% endif %}
-                </div>
-            </section>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-12 text-xs text-slate-500 border border-dashed border-slate-800/80 rounded-lg bg-slate-900/10">
+                <p class="font-medium">No active spatial layout models currently mapped</p>
+                <p class="text-[11px] text-slate-600 mt-1">Provide a validated Excel array data structure to compile map outputs</p>
+            </div>
+            {% endif %}
         </div>
-    </main>
 
-    <script>
-        function toggleSampleInputs() {
-            const mode = document.getElementById('modeSelect').value;
-            const targetBlock = document.getElementById('sampleParamsBlock');
-            if (mode === 'sample') {
-                targetBlock.classList.remove('hidden');
-            } else {
-                targetBlock.classList.add('hidden');
-            }
-        }
+    </section>
+</main>
 
-        function updateZoneStyle(activeZone) {
-            const z44 = document.getElementById('labelZone44');
-            const z45 = document.getElementById('labelZone45');
-            
-            if (activeZone === '44') {
-                z44.className = "flex items-center justify-between p-3 rounded-lg border bg-emerald-500/5 border-emerald-500/60 text-white cursor-pointer transition select-none shadow-sm";
-                z45.className = "flex items-center justify-between p-3 rounded-lg border bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-700 cursor-pointer transition select-none";
-            } else {
-                z45.className = "flex items-center justify-between p-3 rounded-lg border bg-emerald-500/5 border-emerald-500/60 text-white cursor-pointer transition select-none shadow-sm";
-                z44.className = "flex items-center justify-between p-3 rounded-lg border bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-700 cursor-pointer transition select-none";
-            }
-        }
+<script>
+function evaluateSampleFieldsVisibility() {
+    const mode = document.getElementById('computationMode');
+    const box = document.getElementById('sampleBox');
+    if (!mode || !box) return;
+    
+    if (mode.value === 'sample') {
+        box.classList.remove('hidden');
+    } else {
+        box.classList.add('hidden');
+    }
+}
 
-        function updateFileLabel() {
-            const input = document.getElementById('fileInput');
-            const label = document.getElementById('fileSelectedName');
-            if (input.files && input.files.length > 0) {
-                label.textContent = "✓ Attached: " + input.files[0].name;
-                label.classList.remove('hidden');
-            } else {
-                label.classList.add('hidden');
-            }
-        }
+function switchZone(zone) {
+    const z44 = document.getElementById('zone44');
+    const z45 = document.getElementById('zone45');
+    if (!z44 || !z45) return;
 
-        function togglePreviewCanvas() {
-            const grid = document.getElementById('previewCanvasGrid');
-            const text = document.getElementById('togglePreviewText');
-            const icon = document.getElementById('togglePreviewIcon');
-            
-            if (grid.classList.contains('hidden')) {
-                grid.classList.remove('hidden');
-                text.textContent = "Hide Previews Canvas";
-                icon.classList.add('rotate-180');
-            } else {
-                grid.classList.add('hidden');
-                text.textContent = "Reveal Cartographic Previews";
-                icon.classList.remove('rotate-180');
-            }
-        }
-    </script>
+    if (zone === '44') {
+        z44.className = "text-center text-xs py-2.5 px-3 border rounded cursor-pointer transition-all select-none font-medium border-teal-500/50 text-white bg-teal-500/5 shadow-sm";
+        z45.className = "text-center text-xs py-2.5 px-3 border rounded cursor-pointer transition-all select-none font-medium border-slate-800 text-slate-400 hover:border-slate-700";
+        z44.querySelector('input[type="radio"]').checked = true;
+    } else {
+        z45.className = "text-center text-xs py-2.5 px-3 border rounded cursor-pointer transition-all select-none font-medium border-teal-500/50 text-white bg-teal-500/5 shadow-sm";
+        z44.className = "text-center text-xs py-2.5 px-3 border rounded cursor-pointer transition-all select-none font-medium border-slate-800 text-slate-400 hover:border-slate-700";
+        z45.querySelector('input[type="radio"]').checked = true;
+    }
+}
+
+function displaySelectedFilename() {
+    const f = document.getElementById('fileSelector');
+    const b = document.getElementById('fileInfoBadge');
+    if (!f || !b) return;
+
+    if (f.files.length > 0) {
+        b.textContent = "Data Matrix Allocated: " + f.files[0].name;
+        b.classList.remove('hidden');
+    } else {
+        b.classList.add('hidden');
+    }
+}
+
+function toggleMaps() {
+    const m = document.getElementById('maps');
+    if (!m) return;
+    m.classList.toggle('hidden');
+}
+</script>
+
 </body>
 </html>
