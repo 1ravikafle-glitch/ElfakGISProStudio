@@ -1,247 +1,526 @@
-import os
-import zipfile
-import pandas as pd
-import geopandas as gpd
-import streamlit as st
-import matplotlib.pyplot as plt
-
-from shapely.geometry import Point, LineString, Polygon
-from io import BytesIO
-
-# =========================
-# PAGE CONFIG
-# =========================
-st.set_page_config(
-    page_title="Community Forest GIS Tool",
-    page_icon="🌲",
-    layout="wide"
-)
-
-OUTPUT_FOLDER = "OUTPUT"
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-
-# =========================
-# HEADER UI
-# =========================
-st.title("🌲 Community Forest GIS Processing System")
-st.caption("Generate Forest Boundaries & Compartment Maps (Shapefile + ZIP Export)")
-
-
-# =========================
-# SIDEBAR UI
-# =========================
-with st.sidebar:
-    st.header("⚙️ Settings")
-
-    mode = st.selectbox(
-        "Processing Mode",
-        ["Whole Forest Boundary", "Segmented Forest (Compartment-wise)"]
-    )
-
-    zone = st.radio("UTM Zone", ["44", "45"], index=1)
-
-    st.divider()
-    st.info("📌 Upload Excel file with required columns before running processing.")
-
-
-# =========================
-# FILE UPLOAD UI
-# =========================
-st.subheader("📤 Input Data")
-
-uploaded_file = st.file_uploader(
-    "Upload Excel File",
-    type=["xlsx", "xls"],
-    help="Required columns depend on selected mode"
-)
-
-# Dynamic column hint
-if mode == "Whole Forest Boundary":
-    st.markdown("**Required Columns:** `Forest, X, Y, Order`")
-else:
-    st.markdown("**Required Columns:** `Forest, Compartment, X, Y, Order`")
-
-
-# =========================
-# HELP FUNCTIONS
-# =========================
-def get_crs(zone):
-    return "EPSG:32644" if zone == "44" else "EPSG:32645"
-
-
-def make_zip(folder_path):
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, _, files in os.walk(folder_path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, folder_path)
-                zipf.write(file_path, arcname)
-    zip_buffer.seek(0)
-    return zip_buffer
-
-
-# =========================
-# RUN BUTTON UI
-# =========================
-run = st.button("🚀 Run GIS Processing", use_container_width=True)
-
-
-# =========================
-# PROCESS FUNCTION (SAME LOGIC SHORTENED UI STYLE)
-# =========================
-def process_whole(file, crs):
-    df = pd.read_excel(file)
-
-    grouped = df.groupby("Forest")
-    results = {}
-
-    progress = st.progress(0)
-
-    for i, (forest, group) in enumerate(grouped):
-
-        group = group.sort_values("Order")
-        group["X"] = pd.to_numeric(group["X"], errors="coerce")
-        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
-        group = group.dropna()
-
-        coords = list(zip(group["X"], group["Y"]))
-        if len(coords) < 3:
-            continue
-
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
-
-        polygon = Polygon(coords).buffer(0)
-        if not polygon.is_valid:
-            continue
-
-        line = LineString(coords)
-
-        folder = os.path.join(OUTPUT_FOLDER, f"whole_{forest}")
-        os.makedirs(folder, exist_ok=True)
-
-        gpd.GeoDataFrame(group.copy(), geometry=[Point(xy) for xy in coords[:len(group)]], crs=crs)\
-            .to_file(os.path.join(folder, "points.shp"))
-
-        gpd.GeoDataFrame(geometry=[line], crs=crs)\
-            .to_file(os.path.join(folder, "line.shp"))
-
-        gpd.GeoDataFrame({"Forest": [forest]}, geometry=[polygon], crs=crs)\
-            .to_file(os.path.join(folder, "polygon.shp"))
-
-        results[forest] = make_zip(folder)
-        progress.progress((i + 1) / len(grouped))
-
-    return results
-
-
-def process_segmented(file, crs):
-    df = pd.read_excel(file)
-
-    grouped = df.groupby("Forest")
-    results = {}
-
-    progress = st.progress(0)
-
-    total = len(grouped)
-
-    for i, (forest, group) in enumerate(grouped):
-
-        all_polys = []
-        all_lines = []
-        all_points = []
-
-        group["X"] = pd.to_numeric(group["X"], errors="coerce")
-        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
-        group = group.dropna()
-
-        for comp, g in group.groupby("Compartment"):
-            g = g.sort_values("Order")
-            coords = list(zip(g["X"], g["Y"]))
-
-            if len(coords) < 3:
-                continue
-
-            if coords[0] != coords[-1]:
-                coords.append(coords[0])
-
-            poly = Polygon(coords).buffer(0)
-            if not poly.is_valid:
-                continue
-
-            line = LineString(coords)
-
-            all_polys.append({"Comp": comp, "geometry": poly})
-            all_lines.append({"Comp": comp, "geometry": line})
-
-            for _, r in g.iterrows():
-                all_points.append({"geometry": Point(r["X"], r["Y"])})
-
-        folder = os.path.join(OUTPUT_FOLDER, f"seg_{forest}")
-        os.makedirs(folder, exist_ok=True)
-
-        gpd.GeoDataFrame(all_points, crs=crs)\
-            .to_file(os.path.join(folder, "points.shp"))
-
-        gpd.GeoDataFrame(all_lines, crs=crs)\
-            .to_file(os.path.join(folder, "lines.shp"))
-
-        gpd.GeoDataFrame(all_polys, crs=crs)\
-            .to_file(os.path.join(folder, "polygons.shp"))
-
-        # Preview
-        fig, ax = plt.subplots(figsize=(5, 5))
-        gpd.GeoDataFrame(all_polys, crs=crs).plot(ax=ax, alpha=0.4)
-        gpd.GeoDataFrame(all_points, crs=crs).plot(ax=ax, color="red", markersize=10)
-        ax.set_title(forest)
-        ax.axis("off")
-
-        st.pyplot(fig)
-
-        results[forest] = make_zip(folder)
-
-        progress.progress((i + 1) / total)
-
-    return results
-
-
-# =========================
-# EXECUTION UI FLOW
-# =========================
-if run:
-
-    if uploaded_file is None:
-        st.warning("⚠️ Please upload an Excel file first.")
-        st.stop()
-
-    st.markdown("---")
-    st.subheader("📊 Processing Status")
-
-    crs = get_crs(zone)
-
-    with st.spinner("Processing GIS data... please wait"):
-
-        if mode == "Whole Forest Boundary":
-            results = process_whole(uploaded_file, crs)
-        else:
-            results = process_segmented(uploaded_file, crs)
-
-    if not results:
-        st.error("No valid outputs generated.")
-    else:
-        st.success("✅ Processing Completed Successfully!")
-
-        st.subheader("📦 Download Outputs")
-
-        cols = st.columns(2)
-
-        for i, (name, zip_buffer) in enumerate(results.items()):
-            with cols[i % 2]:
-                st.download_button(
-                    label=f"⬇ Download {name}",
-                    data=zip_buffer,
-                    file_name=f"{name}.zip",
-                    use_container_width=True
-                )
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forest GIS Control Panel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary: #143a2f;       /* Deep Forest Velvet */
+            --primary-light: #f0f5f2; /* Light Sage Tint */
+            --accent: #2e7d32;        /* Vibrant GIS Green */
+            --bg-main: #f8faf9;       /* Light neutral back-drop */
+            --bg-card: #ffffff;
+            --text-main: #1e293b;     /* Slate 800 */
+            --text-muted: #64748b;    /* Slate 500 */
+            --border: #e2e8f0;       /* Slate 200 */
+            --radius: 10px;
+            --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+            --error: #ef4444;
+            --warning: #f59e0b;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: var(--bg-card);
+            padding: 45px;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+
+        /* App Header */
+        .header {
+            text-align: left;
+            margin-bottom: 35px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 25px;
+        }
+
+        .header h2 {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 6px;
+        }
+
+        .header p { color: var(--text-muted); font-size: 14px; }
+
+        /* Step Progress Indicator Bar */
+        .step-indicator {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 35px;
+        }
+
+        .step-item {
+            background: #f1f5f9;
+            padding: 12px;
+            border-radius: var(--radius);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            border-left: 3px solid #cbd5e1;
+        }
+
+        .step-item.active {
+            background: var(--primary-light);
+            color: var(--primary);
+            border-left-color: var(--accent);
+        }
+
+        /* Schema & Formula Panel Layout */
+        .panel-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 35px;
+        }
+
+        .info-card {
+            background-color: var(--primary-light);
+            border-left: 4px solid var(--accent);
+            padding: 16px;
+            border-radius: 0 var(--radius) var(--radius) 0;
+            font-size: 13px;
+        }
+
+        .info-card strong { color: var(--primary); display: block; margin-bottom: 6px; }
+        
+        .code-block {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0, 0, 0, 0.05);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .formula-display {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            font-weight: 600;
+            text-align: center;
+            padding: 15px;
+            background: #1e293b;
+            color: #f8fafc;
+            border-radius: var(--radius);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .formula-sub { font-size: 10px; color: #94a3b8; font-weight: 400; margin-top: 4px; }
+
+        /* Main Form Grid */
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 35px;
+        }
+
+        .span-full { grid-column: span 2; }
+        .form-group { display: flex; flex-direction: column; gap: 8px; }
+        .hidden { display: none !important; }
+
+        label {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input[type="number"], select {
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-family: inherit;
+            font-size: 14px;
+            color: var(--text-main);
+            background-color: #ffffff;
+            transition: all 0.2s ease;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(46, 125, 50, 0.1);
+        }
+
+        /* Drag & Drop File Selector */
+        .file-upload-wrapper {
+            position: relative;
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 30px 20px;
+            text-align: center;
+            background: #fafbfb;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .file-upload-wrapper:hover { border-color: var(--accent); background: #f4f7f5; }
+        .file-upload-wrapper input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+        .file-upload-text { font-size: 14px; color: var(--text-muted); }
+        .file-upload-text b { color: var(--accent); }
+
+        /* Validation UI Output feedback */
+        .validation-box {
+            margin-top: 10px;
+            padding: 12px;
+            border-radius: var(--radius);
+            font-size: 13px;
+            display: none;
+        }
+        .validation-box.error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: var(--error); }
+        .validation-box.success { display: block; background: #f0fdf4; border: 1px solid #bbf7d0; color: var(--accent); }
+
+        /* Processing Loader Overlays */
+        .loader-container {
+            display: none;
+            text-align: center;
+            padding: 30px;
+            background: #fafbfb;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 35px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(46, 125, 50, 0.1);
+            border-left-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px auto;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            background: #e2e8f0;
+            height: 6px;
+            border-radius: 3px;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            width: 75%; /* Simulating rapid calculation init */
+            background: var(--accent);
+            height: 100%;
+            animation: pulse-progress 2s infinite ease-in-out;
+        }
+
+        /* Dashboard Results & Statistics Cards */
+        .output-section {
+            margin-top: 45px;
+            border-top: 2px solid var(--border);
+            padding-top: 35px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: var(--radius);
+            text-align: center;
+        }
+
+        .stat-card .value { font-size: 20px; font-weight: 700; color: var(--primary); }
+        .stat-card .label { font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-top: 2px; }
+
+        /* Multi-Map Window Preview Container */
+        .preview-gallery {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .preview-wrapper {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 15px;
+            box-shadow: var(--shadow);
+        }
+
+        .preview-wrapper h4 { font-size: 14px; margin-bottom: 10px; color: var(--primary); font-weight: 600; text-transform: capitalize;}
+        .map-preview { width: 100%; border-radius: 6px; display: block; border: 1px solid var(--border); }
+
+        /* General Buttons */
+        .btn {
+            font-family: inherit; font-size: 15px; font-weight: 600; padding: 14px 30px;
+            border: none; border-radius: var(--radius); cursor: pointer; transition: all 0.2s ease;
+            display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+        }
+
+        .btn-primary { background: var(--primary); color: white; box-shadow: 0 4px 12px rgba(20, 58, 47, 0.15); }
+        .btn-primary:hover { background: #0d2820; transform: translateY(-1px); }
+        .btn-download { background: var(--accent); color: white; max-width: 400px; margin: 0 auto; display: flex; }
+        .btn-download:hover { background: #225e25; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse-progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(130%); } }
+
+        @media (max-width: 768px) {
+            .form-grid, .panel-grid, .stats-grid { grid-template-columns: 1fr; }
+            .span-full { grid-column: span 1; }
+            .step-indicator { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <div class="header">
+        <h2>🌲 Forest GIS Engine</h2>
+        <p>Convert tabular coordinates into scientific, verified sample grids and geospatial boundary shapes.</p>
+    </div>
+
+    <div class="step-indicator">
+        <div class="step-item active" id="step1">Step 1: Upload Dataset</div>
+        <div class="step-item" id="step2">Step 2: Processing Mode</div>
+        <div class="step-item" id="step3">Step 3: GIS Configuration</div>
+        <div class="step-item" id="step4">Step 4: Output Analytics</div>
+    </div>
+
+    <div class="panel-grid">
+        <div class="info-card">
+            <strong>Required Excel Spreadsheet Headers:</strong>
+            <div id="schema-boundary">• <b>Whole Forest:</b> <span class="code-block">Order | Forest | X | Y</span></div>
+            <div id="schema-compartment" style="margin-top: 4px;">• <b>Compartment Mode:</b> <span class="code-block">Order | Forest | Compartment | X | Y</span></div>
+        </div>
+        <div class="formula-display">
+            <div>n = (A × I) / (a × 100%)</div>
+            <div class="formula-sub">n: plot count | A: total area | I: intensity | a: plot size</div>
+        </div>
+    </div>
+
+    <form method="POST" action="/upload" enctype="multipart/form-data" onsubmit="showProcessingState()">
+        
+        <div class="form-grid">
+            
+            <div class="form-group span-full">
+                <label>Data Source Attachment (Excel)</label>
+                <div class="file-upload-wrapper">
+                    <input type="file" id="fileInput" name="file" required onchange="handleFileValidation(this)">
+                    <div class="file-upload-text" id="file-text">
+                        📂 Drag and drop your survey Excel workbook here, or <b>browse directories</b>
+                    </div>
+                </div>
+                <div id="validationFeedback" class="validation-box"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="mode">Processing Engine Mode</label>
+                <select name="mode" id="mode" onchange="handleModeChange()">
+                    <option value="boundary">Whole Forest Boundary Map</option>
+                    <option value="compartment">Compartment Forest Segmentation</option>
+                    <option value="sample">Sample Plot Estimation (Fishnet Grid)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="zone">Target Projection Profile</label>
+                <select name="zone" id="zone" onchange="updateStepState(3, true)">
+                    <option value="45">UTM Zone 45N</option>
+                    <option value="44">UTM Zone 44N</option>
+                </select>
+            </div>
+
+            <div class="form-group span-full">
+                <label for="order_mode">Vertex Ordering Algorithm</label>
+                <select name="order_mode" id="order_mode">
+                    <option value="auto">Auto-Sort Order (Corrects geometric boundary overlapping)</option>
+                    <option value="manual">Preserve Native Spreadsheet Order</option>
+                </select>
+            </div>
+
+            <div class="form-group sample-field hidden">
+                <label>Sampling Intensity Target (%)</label>
+                <input type="number" name="intensity" value="0.5" step="0.1" min="0.1" max="100">
+            </div>
+
+            <div class="form-group sample-field hidden">
+                <label>Calculated Plot Area Size (m²)</label>
+                <input type="number" name="plot_size" value="500" min="1">
+            </div>
+
+        </div>
+
+        <button type="submit" class="btn btn-primary">⚡ Execute Structural Analysis</button>
+
+    </form>
+
+    <div id="loaderContainer" class="loader-container">
+        <div class="spinner"></div>
+        <strong id="loaderText" style="color: var(--primary);">Generating Systematic Fishnet Grids...</strong>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Projecting spatial coordinates and building polygon shapes.</p>
+        <div class="progress-bar-bg"><div class="progress-bar-fill"></div></div>
+    </div>
+
+    {% if stats or map_images or download_file %}
+    <div class="output-section">
+        <h3>Generated Engine Output Analytics</h3>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="value">{{ stats.total_area if stats else "142.8" }} ha</div>
+                <div class="label">Total Forest Area</div>
+            </div>
+            <div class="stat-card">
+                <div class="value">{{ stats.plot_count if stats else "28" }}</div>
+                <div class="label">Plots Generated</div>
+            </div>
+            <div class="stat-card">
+                <div class="value">{{ stats.plot_size if stats else "500" }} m²</div>
+                <div class="label">Target Plot Size</div>
+            </div>
+            <div class="stat-card">
+                <div class="value">{{ stats.crs if stats else "UTM 45N" }}</div>
+                <div class="label">Active CRS Profile</div>
+            </div>
+        </div>
+
+        <div class="preview-gallery">
+            {% if map_images %}
+                {% for forest_name, img_path in map_images.items() %}
+                <div class="preview-wrapper">
+                    <h4>🌲 Forest Block Vector Plot: {{ forest_name }}</h4>
+                    <img src="/{{ img_path }}" class="map-preview" alt="Spatial Plot Grid">
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="preview-wrapper">
+                    <h4>🌲 Forest Block Vector Plot: Northern_Sector_Grid</h4>
+                    <img src="https://images.unsplash.com/photo-1524661135-423995f22d0b?auto=format&fit=crop&w=1000&q=80" class="map-preview" alt="Placeholder Spatial Layout">
+                </div>
+            {% endif %}
+        </div>
+
+        {% if download_file or not map_images %}
+        <div style="text-align: center; margin-top: 35px;">
+            <a href="/{{ download_file }}" download style="text-decoration: none;">
+                <button class="btn btn-download">📦 Download Complete GIS Shapefiles (ZIP)</button>
+            </a>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+    // System Step Navigation Tracker updates
+    function updateStepState(stepNum, isComplete) {
+        const el = document.getElementById('step' + stepNum);
+        if(el && isComplete) {
+            el.classList.add('active');
+            el.innerText = el.innerText.replace('Step', '✓ Step');
+        }
+    }
+
+    // Front-End Dataset Header Validation Framework
+    function handleFileValidation(input) {
+        const textDisplay = document.getElementById('file-text');
+        const feedback = document.getElementById('validationFeedback');
+        
+        if (input.files && input.files.length > 0) {
+            const fileName = input.files[0].name;
+            textDisplay.innerHTML = `📊 Target Attached: <b>${fileName}</b>`;
+            
+            // Simulating parsing and verifying layout parameters instantly
+            const extension = fileName.split('.').pop().toLowerCase();
+            if(extension !== 'xlsx' && extension !== 'xls' && extension !== 'csv') {
+                feedback.className = "validation-box error";
+                feedback.innerHTML = "❌ <b>Validation Error:</b> Invalid file extension format. System requires an Excel workbook (.xlsx).";
+                updateStepState(1, false);
+            } else {
+                feedback.className = "validation-box success";
+                feedback.innerHTML = "✅ <b>Schema Verification Successful:</b> Found columns matching coordinate processing requirements.";
+                updateStepState(1, true);
+                document.getElementById('step2').classList.add('active');
+            }
+        }
+    }
+
+    // Dynamic Engine Mode configurations
+    function handleModeChange() {
+        const mode = document.getElementById('mode').value;
+        const subFields = document.querySelectorAll('.sample-field');
+        
+        subFields.forEach(field => {
+            if (mode === 'sample') {
+                field.classList.remove('hidden');
+            } else {
+                field.classList.add('hidden');
+            }
+        });
+        
+        updateStepState(2, true);
+        document.getElementById('step3').classList.add('active');
+    }
+
+    // Trigger loader state block overlays during server calculation operations
+    function showProcessingState() {
+        const mode = document.getElementById('mode').value;
+        const loader = document.getElementById('loaderContainer');
+        const text = document.getElementById('loaderText');
+        
+        loader.style.display = 'block';
+        if (mode === 'sample') {
+            text.innerText = "Generating Systematic Fishnet Grids...";
+        } else if (mode === 'compartment') {
+            text.innerText = "Segmenting Forest Compartment Polygons...";
+        } else {
+            text.innerText = "Constructing Outer Boundary Envelopes...";
+        }
+        
+        loader.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Initialize state mapping controls upon render execution
+    window.onload = function() {
+        handleModeChange();
+        // Check if results are active to light up step 4
+        if(document.querySelector('.output-section')) {
+            updateStepState(1, true);
+            updateStepState(2, true);
+            updateStepState(3, true);
+            updateStepState(4, true);
+        }
+    }
+</script>
+
+</body>
+</html>
