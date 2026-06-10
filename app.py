@@ -8,7 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import Flask, render_template, request, jsonify
-from shapely.geometry import Polygon, Point, LineString, box, MultiPolygon
+from shapely.geometry import Point, LineString, Polygon, box, MultiPolygon
 
 app = Flask(__name__)
 
@@ -27,23 +27,20 @@ def get_crs(zone):
 
 
 # =====================================================
-# SAFE MULTIPOLYGON FIX
+# SAFE MULTIPOLYGON
 # =====================================================
 def normalize_geom(geom):
     if geom is None:
         return []
-
     if isinstance(geom, Polygon):
         return [geom]
-
     if isinstance(geom, MultiPolygon):
         return [g for g in geom.geoms if g.is_valid]
-
     return []
 
 
 # =====================================================
-# LOAD ZIP SHAPEFILE
+# LOAD SHAPEFILE (ZIP)
 # =====================================================
 def load_shapefile(zip_path):
     temp_dir = tempfile.mkdtemp()
@@ -68,12 +65,11 @@ def build_points(df):
     df["X"] = pd.to_numeric(df["X"], errors="coerce")
     df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
     df = df.dropna(subset=["X", "Y"])
-
     return df, [Point(xy) for xy in zip(df["X"], df["Y"])]
 
 
 # =====================================================
-# WHOLE BOUNDARY
+# 1. PROFESSIONAL BOUNDARY GENERATOR LOGIC
 # =====================================================
 def build_whole(df):
     df = df.sort_values("Order")
@@ -93,40 +89,42 @@ def build_whole(df):
 
 
 # =====================================================
-# SEGMENTED BOUNDARY
+# 2. COMPARTMENT GIS PROCESSING TOOL
 # =====================================================
-def build_segmented(df):
-    df, _ = build_points(df)
+def build_compartment(df, crs):
 
-    if "Compartment" not in df.columns:
-        return []
-
-    result = []
+    results = []
 
     for comp, g in df.groupby("Compartment"):
+
         g = g.sort_values("Order")
 
         coords = list(zip(g["X"], g["Y"]))
         if len(coords) < 3:
             continue
 
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
+        coords.append(coords[0])
 
-        poly = Polygon(coords)
+        poly = Polygon(coords).buffer(0)
         if not poly.is_valid:
-            poly = poly.buffer(0)
+            continue
 
         line = LineString(coords)
-        pts = [Point(xy) for xy in coords]
 
-        result.append((comp, pts, line, poly))
+        results.append({
+            "Comp": comp,
+            "polygon": poly,
+            "line": line,
+            "points": [Point(xy) for xy in coords],
+            "area": poly.area / 10000,
+            "perimeter": poly.length
+        })
 
-    return result
+    return results
 
 
 # =====================================================
-# SAMPLE PLOT (FISHNET)
+# 3. CLIPPED FISHNET SAMPLE GENERATOR
 # =====================================================
 def build_sample(poly, w, h, rows, cols):
 
@@ -141,8 +139,10 @@ def build_sample(poly, w, h, rows, cols):
 
             cell = box(x, y, x + w, y + h)
 
-            if cell.intersects(poly):
-                samples.append(cell.centroid)
+            clipped = cell.intersection(poly)
+
+            if not clipped.is_empty:
+                samples.append(clipped.centroid)
 
     return samples
 
@@ -169,25 +169,25 @@ def preview_whole(poly, line, pts):
     for p in pts:
         ax.scatter(p.x, p.y, s=10)
 
-    ax.set_title("WHOLE BOUNDARY")
+    ax.set_title("BOUNDARY")
     ax.set_axis_off()
     return save_plot()
 
 
-def preview_segmented(seg):
+def preview_compartment(data):
     fig, ax = plt.subplots()
 
-    for comp, pts, line, poly in seg:
-        ax.plot(*poly.exterior.xy, "red")
-        ax.plot(*line.xy, "black")
+    for d in data:
+        ax.plot(*d["polygon"].exterior.xy, "red")
+        ax.plot(*d["line"].xy, "black")
 
-        for p in pts:
+        for p in d["points"]:
             ax.scatter(p.x, p.y, s=8)
 
-        c = poly.centroid
-        ax.text(c.x, c.y, str(comp))
+        c = d["polygon"].centroid
+        ax.text(c.x, c.y, str(d["Comp"]))
 
-    ax.set_title("SEGMENTED")
+    ax.set_title("COMPARTMENT MAP")
     ax.set_axis_off()
     return save_plot()
 
@@ -195,12 +195,12 @@ def preview_segmented(seg):
 def preview_sample(poly, samples):
     fig, ax = plt.subplots()
 
-    ax.plot(*poly.exterior.xy, "red")
+    ax.plot(*poly.exterior.xy, "blue")
 
     for s in samples:
-        ax.scatter(s.x, s.y, s=12)
+        ax.scatter(s.x, s.y, s=15)
 
-    ax.set_title("SAMPLE PLOTS")
+    ax.set_title("CLIPPED SAMPLE PLOTS")
     ax.set_axis_off()
     return save_plot()
 
@@ -214,7 +214,7 @@ def home():
 
 
 # =====================================================
-# PREVIEW API
+# MAIN API
 # =====================================================
 @app.route("/preview", methods=["POST"])
 def preview():
@@ -229,7 +229,7 @@ def preview():
 
     try:
 
-        # ZIP
+        # ZIP SHAPEFILE
         if path.endswith(".zip"):
             geom = normalize_geom(load_shapefile(path))
             poly = geom[0]
@@ -243,21 +243,21 @@ def preview():
             })
 
         df = pd.read_excel(path)
+        crs = get_crs(zone)
 
-        # WHOLE
+        # 1 BOUNDARY
         if mode == "boundary":
             pts, line, poly = build_whole(df)
             return jsonify({"image": preview_whole(poly, line, pts)})
 
-        # SEGMENTED
+        # 2 COMPARTMENT GIS TOOL
         if mode == "compartment":
-            seg = build_segmented(df)
-            return jsonify({"image": preview_segmented(seg)})
+            data = build_compartment(df, crs)
+            return jsonify({"image": preview_compartment(data)})
 
-        # SAMPLE
+        # 3 CLIPPED SAMPLE
         if mode == "sample":
-
-            pts, line, poly = build_whole(df)
+            _, _, poly = build_whole(df)
 
             w = float(request.form.get("cell_width", 100))
             h = float(request.form.get("cell_height", 100))
