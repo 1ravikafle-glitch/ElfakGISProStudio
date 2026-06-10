@@ -58,9 +58,9 @@
                 <select id="computationMode" name="mode"
                     class="w-full bg-slate-900 border border-slate-800 rounded p-2.5 text-xs text-slate-200 cursor-pointer focus:outline-none focus:border-teal-500/80 transition-colors"
                     onchange="evaluateSampleFieldsVisibility()">
-                    <option value="boundary" {% if chosen_mode == 'boundary' %}selected{% endif %}>Macro Boundary Extraction</option>
-                    <option value="compartment" {% if chosen_mode == 'compartment' %}selected{% endif %}>Block / Compartment Segmentation</option>
-                    <option value="sample" {% if chosen_mode == 'sample' %}selected{% endif %}>Sample Plot Matrix Generation</option>
+                    <option value="boundary" {% if chosen_mode == 'boundary' %}selected{% endif %}>Boundary of Whole Forest</option>
+                    <option value="compartment" {% if chosen_mode == 'compartment' %}selected{% endif %}>Boundary of Segmented Forest</option>
+                    <option value="sample" {% if chosen_mode == 'sample' %}selected{% endif %}>Sample Plot Generation</option>
                 </select>
             </div>
 
