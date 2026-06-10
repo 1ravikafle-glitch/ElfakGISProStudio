@@ -5,7 +5,7 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, send_from_directory
 from shapely.geometry import Polygon, Point, LineString
 from io import BytesIO
 
@@ -29,6 +29,12 @@ def normalize_order(df):
         if c.lower() in ["sn", "s.n", "order"]:
             df = df.rename(columns={c: "Order"})
     return df
+
+
+# ================= SERVE OUTPUT =================
+@app.route("/outputs/<path:filename>")
+def outputs(filename):
+    return send_from_directory(OUTPUT, filename)
 
 
 # ================= ZIP =================
@@ -130,15 +136,15 @@ def group_b(df, crs, out):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP C (FIXED + ZIP SUPPORT) =================
+# ================= GROUP C =================
 def group_c(df, crs, w, h, rows, cols, out):
 
     poly = Polygon(list(zip(df["X"], df["Y"])))
     line = LineString(list(zip(df["X"], df["Y"])))
 
-    pts = []
-
     minx, miny, _, _ = poly.bounds
+
+    pts = []
 
     for i in range(rows):
         for j in range(cols):
@@ -219,21 +225,17 @@ def group_d(df, crs, out):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= PREVIEW (FIXED) =================
+# ================= PREVIEW =================
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
 
     fig, ax = plt.subplots()
 
-    if poly_gdf is not None:
-        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
-
-    if line_gdf is not None:
-        line_gdf.plot(ax=ax, color=lc, linewidth=1.8)
-
+    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
+    line_gdf.plot(ax=ax, color=lc, linewidth=2)
     pts_gdf.plot(ax=ax, color=ptc, markersize=8)
 
     plt.axis("off")
-    plt.savefig(path, dpi=200, bbox_inches="tight")
+    plt.savefig(path, dpi=220, bbox_inches="tight")
     plt.close()
 
 
