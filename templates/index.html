@@ -267,7 +267,7 @@ setTimeout(()=>{
 let img=document.getElementById("img");
 
 /* cache-busting + guaranteed reload */
-img.src="/outputs/"+mode+"_preview.png?"+Date.now();
+img.src = "/outputs/" + run_id + "/" + run_id + "_preview.png?" + Date.now();
 
 img.onload = () => {
     document.getElementById("text").innerText="Preview Ready ✔";
