@@ -10,14 +10,27 @@
             const mode = document.getElementById("mode").value;
             const sampleBox = document.getElementById("sampleBox");
             const orderModeContainer = document.getElementById("orderModeContainer");
+            
+            // Format Template Guides
+            const wholeForestTemplate = document.getElementById("wholeForestTemplate");
+            const segmentedForestTemplate = document.getElementById("segmentedForestTemplate");
 
-            // Show fishnet size settings ONLY for sample mode
+            // Handle Mode Visibility Transitions
             if (mode === "sample") {
                 sampleBox.classList.remove("hidden");
                 sampleBox.classList.add("grid");
+                wholeForestTemplate.classList.add("hidden");
+                segmentedForestTemplate.classList.add("hidden");
+            } else if (mode === "compartment") {
+                sampleBox.classList.remove("grid");
+                sampleBox.classList.add("hidden");
+                wholeForestTemplate.classList.add("hidden");
+                segmentedForestTemplate.classList.remove("hidden");
             } else {
                 sampleBox.classList.remove("grid");
                 sampleBox.classList.add("hidden");
+                wholeForestTemplate.classList.remove("hidden");
+                segmentedForestTemplate.classList.add("hidden");
             }
 
             // Hide boundary algorithm choices if user directly uploads a raw Shapefile zip
@@ -120,6 +133,27 @@
                             </div>
                         </div>
                         <span class="text-xs bg-emerald-100 text-emerald-800 font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap">Selected</span>
+                    </div>
+
+                    <div id="wholeForestTemplate" class="bg-amber-50/60 border border-amber-200 rounded-lg p-3.5 space-y-1.5">
+                        <span class="text-xs font-bold uppercase tracking-wider text-amber-800 block">Required Excel Header Columns</span>
+                        <div class="flex items-center space-x-1.5 font-mono text-xs text-amber-900 bg-white/80 border border-amber-100 p-2 rounded tracking-wide shadow-inner">
+                            <span class="bg-amber-200 px-1 rounded font-bold">Order</span><span class="text-amber-400">|</span>
+                            <span class="bg-amber-200 px-1 rounded font-bold">Forest</span><span class="text-amber-400">|</span>
+                            <span class="bg-amber-200 px-1 rounded font-bold">X</span><span class="text-amber-400">|</span>
+                            <span class="bg-amber-200 px-1 rounded font-bold">Y</span>
+                        </div>
+                    </div>
+
+                    <div id="segmentedForestTemplate" class="bg-indigo-50/60 border border-indigo-200 rounded-lg p-3.5 space-y-1.5 hidden">
+                        <span class="text-xs font-bold uppercase tracking-wider text-indigo-800 block">Required Excel Header Columns</span>
+                        <div class="flex items-center space-x-1.5 font-mono text-xs text-indigo-900 bg-white/80 border border-indigo-100 p-2 rounded tracking-wide shadow-inner overflow-x-auto">
+                            <span class="bg-indigo-200 px-1 rounded font-bold">Order</span><span class="text-indigo-400">|</span>
+                            <span class="bg-indigo-200 px-1 rounded font-bold">Forest</span><span class="text-indigo-400">|</span>
+                            <span class="bg-indigo-200 px-1 rounded font-bold">Compartment</span><span class="text-indigo-400">|</span>
+                            <span class="bg-indigo-200 px-1 rounded font-bold">X</span><span class="text-indigo-400">|</span>
+                            <span class="bg-indigo-200 px-1 rounded font-bold">Y</span>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
