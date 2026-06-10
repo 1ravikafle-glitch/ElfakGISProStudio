@@ -1,0 +1,8 @@
+flask
+pandas
+geopandas
+shapely
+matplotlib
+openpyxl
+fiona
+gunicorn
