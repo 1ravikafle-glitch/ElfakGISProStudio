@@ -196,32 +196,22 @@ color:#9ca3af;
 </div>
 
 <script>
-
 let mode="A";
 
 function setMode(m){
+    mode=m;
+    document.querySelectorAll(".group").forEach(g=>g.classList.remove("active"));
+    event.target.classList.add("active");
 
-mode=m;
+    document.getElementById("img").style.display="none";
+    document.getElementById("download").style.display="none";
+    document.getElementById("text").innerText="Preview Area";
 
-document.querySelectorAll(".group").forEach(g=>g.classList.remove("active"));
-event.target.classList.add("active");
+    document.getElementById("forestBox").style.display="none";
+    document.getElementById("gridBox").style.display="none";
 
-document.getElementById("img").style.display="none";
-document.getElementById("download").style.display="none";
-document.getElementById("text").innerText="Preview Area";
-
-/* reset */
-document.getElementById("forestBox").style.display="none";
-document.getElementById("gridBox").style.display="none";
-
-if(mode==="A"){
-document.getElementById("forestBox").style.display="block";
-}
-
-if(mode==="C"){
-document.getElementById("gridBox").style.display="block";
-}
-
+    if(mode==="A") document.getElementById("forestBox").style.display="block";
+    if(mode==="C") document.getElementById("gridBox").style.display="block";
 }
 
 async function run(){
@@ -234,7 +224,6 @@ return;
 document.getElementById("status").innerText="Processing...";
 
 let fd=new FormData();
-
 fd.append("file",document.getElementById("file").files[0]);
 fd.append("mode",mode);
 fd.append("zone",document.getElementById("zone").value);
@@ -250,40 +239,37 @@ fd.append("rows",document.getElementById("rows").value || 10);
 fd.append("cols",document.getElementById("cols").value || 10);
 }
 
-let res=await fetch("/upload",{method:"POST",body:fd});
-let blob=await res.blob();
+let res = await fetch("/upload", { method:"POST", body:fd });
+let data = await res.json();
+
+let run_id = data.run_id;
 
 /* DOWNLOAD */
-let url=URL.createObjectURL(blob);
+let dl = document.getElementById("download");
+dl.href = data.download;
+dl.style.display = "block";
+dl.innerText = "⬇ Download ZIP";
 
-let dl=document.getElementById("download");
-dl.href=url;
-dl.style.display="block";
-dl.innerText="⬇ Download ZIP";
-
-/* ================= FIXED PREVIEW ================= */
+/* PREVIEW */
 setTimeout(()=>{
 
-let img=document.getElementById("img");
+let img = document.getElementById("img");
 
-/* cache-busting + guaranteed reload */
-img.src = "/outputs/" + run_id + "/" + run_id + "_preview.png?" + Date.now();
+img.src = "/outputs/" + run_id + "/output.png?" + Date.now();
 
 img.onload = () => {
-    document.getElementById("text").innerText="Preview Ready ✔";
-    img.style.display="block";
+document.getElementById("text").innerText = "Preview Ready ✔";
+img.style.display="block";
 };
 
 img.onerror = () => {
-    document.getElementById("text").innerText="Preview not found ❌ (check backend)";
+document.getElementById("text").innerText = "Preview not found ❌";
 };
 
 },500);
 
 document.getElementById("status").innerText="Done";
-
 }
-
 </script>
 
 </body>
