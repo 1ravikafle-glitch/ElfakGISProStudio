@@ -5,7 +5,14 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, send_file, jsonify
+from flask import (
+    Flask,
+    render_template,
+    request,
+    send_file,
+    jsonify,
+    send_from_directory
+)
 from shapely.geometry import Polygon, Point, LineString
 from io import BytesIO
 
@@ -29,6 +36,15 @@ def normalize_order(df):
         if c.lower() in ["sn", "s.n", "order"]:
             df = df.rename(columns={c: "Order"})
     return df
+
+
+# ================= FILE SERVE =================
+@app.route("/outputs/<run_id>/<filename>")
+def outputs(run_id, filename):
+    return send_from_directory(
+        os.path.join(OUTPUT, run_id),
+        filename
+    )
 
 
 # ================= ZIP HELP =================
@@ -95,7 +111,7 @@ def group_a(df, forest, crs, out):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP B (UNCHANGED) =================
+# ================= GROUP B =================
 def group_b(df, crs, out):
     df = normalize_order(df)
 
@@ -133,34 +149,42 @@ def group_b(df, crs, out):
                     "geometry": Point(r["X"], r["Y"])
                 })
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
 
 
-# ================= GROUP C (FIXED ZIP SAFE) =================
+# ================= GROUP C (FIXED) =================
 def group_c(file, crs, w, h, rows, cols, out):
 
-    if file.filename.endswith(".zip"):
+    if file.filename.lower().endswith(".zip"):
         folder = os.path.join(UPLOAD, str(uuid.uuid4()))
         os.makedirs(folder, exist_ok=True)
-        extract_zip(file, folder)
 
+        extract_zip(file, folder)
         gdf = read_shp(folder)
+
         if gdf is None:
             raise Exception("No shapefile found in ZIP")
 
         poly = gdf.unary_union
 
+        if poly.geom_type == "MultiPolygon":
+            poly = max(poly.geoms, key=lambda p: p.area)
+
+        elif poly.geom_type == "GeometryCollection":
+            polys = [g for g in poly.geoms if g.geom_type == "Polygon"]
+            if not polys:
+                raise Exception("No polygon found")
+            poly = max(polys, key=lambda p: p.area)
+
     else:
         df = pd.read_excel(file)
-        poly = Polygon(list(zip(df["X"], df["Y"])))
+        coords = list(zip(df["X"], df["Y"]))
+        coords.append(coords[0])
+        poly = Polygon(coords)
 
     line = LineString(poly.exterior.coords)
 
@@ -183,23 +207,23 @@ def group_c(file, crs, w, h, rows, cols, out):
 
     inside = [p for p in pts if poly.contains(p)]
 
-    gdf = gpd.GeoDataFrame(
+    gdf_pts = gpd.GeoDataFrame(
         {"SN": range(1, len(inside) + 1)},
         geometry=inside,
         crs=crs
     )
 
-    gdf["X"] = gdf.geometry.x
-    gdf["Y"] = gdf.geometry.y
+    gdf_pts["X"] = gdf_pts.geometry.x
+    gdf_pts["Y"] = gdf_pts.geometry.y
 
     poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
     line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
 
     poly_gdf.to_file(os.path.join(out, "boundary.shp"))
     line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
-    gdf.to_file(os.path.join(out, "sampleplot.shp"))
+    gdf_pts.to_file(os.path.join(out, "sampleplot.shp"))
 
-    return poly_gdf, line_gdf, gdf
+    return poly_gdf, line_gdf, gdf_pts
 
 
 # ================= GROUP D =================
@@ -235,20 +259,15 @@ def group_d(df, crs, out):
                 "geometry": Point(r["X"], r["Y"])
             })
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
 
 
 # ================= PREVIEW =================
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
-
     fig, ax = plt.subplots()
 
     poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
@@ -260,27 +279,28 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
     plt.close()
 
 
-# ================= MAIN =================
+# ================= UPLOAD =================
 @app.route("/upload", methods=["POST"])
 def upload():
 
     file = request.files["file"]
     mode = request.form["mode"]
     zone = request.form["zone"]
-    forest = request.form.get("forest", "FOREST")
 
     w = float(request.form.get("w", 50))
     h = float(request.form.get("h", 50))
     rows = int(request.form.get("rows", 10))
     cols = int(request.form.get("cols", 10))
+    forest = request.form.get("forest", "FOREST")
 
     run_id = str(uuid.uuid4())
     out = os.path.join(OUTPUT, run_id)
     os.makedirs(out, exist_ok=True)
 
     crs = get_crs(zone)
-    preview_path = os.path.join(out, "output.png")   # FIXED NAME
+    preview_path = os.path.join(out, "output.png")
 
+    # PROCESS
     if mode == "A":
         poly, line, pts = group_a(pd.read_excel(file), forest, crs, out)
 
@@ -293,7 +313,11 @@ def upload():
     else:
         poly, line, pts = group_d(pd.read_excel(file), crs, out)
 
-    preview(poly, line, pts, preview_path, "red", "black", "yellow")
+    # SAFE PREVIEW
+    try:
+        preview(poly, line, pts, preview_path, "red", "black", "yellow")
+    except Exception as e:
+        print("Preview error:", e)
 
     zip_buffer = zip_folder(out)
 
@@ -303,6 +327,7 @@ def upload():
     })
 
 
+# ================= DOWNLOAD =================
 @app.route("/download/<run_id>")
 def download(run_id):
     folder = os.path.join(OUTPUT, run_id)
@@ -316,6 +341,7 @@ def download(run_id):
     )
 
 
+# ================= HOME =================
 @app.route("/")
 def home():
     return render_template("index.html")
