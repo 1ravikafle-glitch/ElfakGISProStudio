@@ -21,6 +21,7 @@ os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 os.makedirs(STATIC, exist_ok=True)
 
+
 # =====================================================
 # CRS
 # =====================================================
@@ -45,45 +46,61 @@ def load_shapefile(zip_path):
 
 
 # =====================================================
-# POINT GENERATION (CORE)
+# POINT GENERATION (Excel → Point)
 # =====================================================
 def build_points(df):
     df = df.copy()
     df["X"] = pd.to_numeric(df["X"], errors="coerce")
     df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
     df = df.dropna(subset=["X", "Y"])
-    return df, [Point(xy) for xy in zip(df["X"], df["Y"])]
+
+    points = [Point(xy) for xy in zip(df["X"], df["Y"])]
+    return df, points
 
 
 # =====================================================
-# WHOLE BOUNDARY (POINT → LINE → POLYGON)
+# WHOLE BOUNDARY (Point → Line → Polygon)
 # =====================================================
 def build_whole_boundary(df):
+
     df = df.sort_values("Order")
     df, points = build_points(df)
 
     coords = list(zip(df["X"], df["Y"]))
+
     if coords[0] != coords[-1]:
         coords.append(coords[0])
 
     line = LineString(coords)
-    poly = Polygon(coords).buffer(0)
+    polygon = Polygon(coords).buffer(0)
 
-    return df, points, line, poly
+    return df, points, line, polygon
 
 
 # =====================================================
-# SEGMENTED BOUNDARY
+# SEGMENTED BOUNDARY (FULL TKINTER LOGIC MATCH)
 # =====================================================
 def build_segmented(df):
-    df, _ = build_points(df)
 
-    result = []
+    df = df.copy()
+    df["X"] = pd.to_numeric(df["X"], errors="coerce")
+    df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
+    df = df.dropna(subset=["X", "Y"])
+
+    results = []
 
     for comp, group in df.groupby("Compartment"):
+
         group = group.sort_values("Order")
 
-        coords = list(zip(group["X"], group["Y"]))
+        # POINTS FROM ROWS (IMPORTANT FIX)
+        points = [
+            Point(row.X, row.Y)
+            for _, row in group.iterrows()
+        ]
+
+        coords = [(p.x, p.y) for p in points]
+
         if len(coords) < 3:
             continue
 
@@ -91,21 +108,22 @@ def build_segmented(df):
             coords.append(coords[0])
 
         line = LineString(coords)
-        poly = Polygon(coords).buffer(0)
+        polygon = Polygon(coords).buffer(0)
 
-        if poly.is_valid:
-            pts = [Point(xy) for xy in coords]
-            result.append((pts, line, poly))
+        if not polygon.is_valid:
+            continue
 
-    return result
+        results.append((points, line, polygon))
+
+    return results
 
 
 # =====================================================
-# SAMPLE PLOTS (FISHNET)
+# SAMPLE PLOTS (FISHNET GRID)
 # =====================================================
 def build_sample_plots(poly, cell_w, cell_h):
-    minx, miny, maxx, maxy = poly.bounds
 
+    minx, miny, maxx, maxy = poly.bounds
     samples = []
 
     x = minx
@@ -125,13 +143,13 @@ def build_sample_plots(poly, cell_w, cell_h):
 
 
 # =====================================================
-# PREVIEW ENGINE (FIXED)
+# PREVIEW ENGINE
 # =====================================================
 def make_preview(polys=None, lines=None, points=None, title="Preview"):
 
     fig, ax = plt.subplots(figsize=(7, 6))
 
-    # ---------- POLYGONS ----------
+    # ---------------- POLYGONS ----------------
     if polys is not None:
         if isinstance(polys, Polygon):
             polys = [polys]
@@ -140,7 +158,7 @@ def make_preview(polys=None, lines=None, points=None, title="Preview"):
             x, y = p.exterior.xy
             ax.plot(x, y, "r-", linewidth=1)
 
-    # ---------- LINES ----------
+    # ---------------- LINES ----------------
     if lines is not None:
         if isinstance(lines, LineString):
             lines = [lines]
@@ -149,7 +167,7 @@ def make_preview(polys=None, lines=None, points=None, title="Preview"):
             x, y = l.xy
             ax.plot(x, y, "black", linewidth=1)
 
-    # ---------- POINTS ----------
+    # ---------------- POINTS ----------------
     if points is not None:
         for p in points:
             ax.scatter(p.x, p.y, color="blue", s=10)
@@ -173,7 +191,7 @@ def home():
 
 
 # =====================================================
-# PREVIEW API (FIXED)
+# PREVIEW API
 # =====================================================
 @app.route("/preview", methods=["POST"])
 def preview():
@@ -189,7 +207,7 @@ def preview():
         # ---------------- ZIP ----------------
         if path.endswith(".zip"):
             geom = load_shapefile(path)
-            return jsonify({"image": make_preview(polys=geom, title="Shapefile")})
+            return jsonify({"image": make_preview(polys=geom, title="Shapefile Boundary")})
 
         # ---------------- EXCEL ----------------
         df = pd.read_excel(path)
@@ -203,6 +221,7 @@ def preview():
 
         # ---------------- SEGMENTED ----------------
         if mode == "compartment":
+
             seg = build_segmented(df)
 
             polys = [s[2] for s in seg]
@@ -217,6 +236,7 @@ def preview():
 
         # ---------------- SAMPLE ----------------
         if mode == "sample":
+
             df, _, _, poly = build_whole_boundary(df)
 
             cell_w = float(request.form.get("cell_width", 100))
@@ -266,7 +286,7 @@ def upload():
             df, _, _, poly = build_whole_boundary(df)
             gdf = gpd.GeoDataFrame(geometry=[poly], crs=crs)
 
-    # ---------- POINT / LINE / POLYGON ----------
+    # ---------------- POINT / LINE / POLYGON ----------------
     points = gdf.copy()
     points["geometry"] = points.centroid
 
@@ -275,7 +295,7 @@ def upload():
 
     polygons = gdf.copy()
 
-    # ---------- OUTPUT ----------
+    # ---------------- OUTPUT ----------------
     base = os.path.splitext(file.filename)[0]
     out_dir = os.path.join(OUTPUT, base)
     os.makedirs(out_dir, exist_ok=True)
