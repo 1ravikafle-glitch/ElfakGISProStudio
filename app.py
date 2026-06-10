@@ -5,14 +5,15 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, jsonify, send_file
-from shapely.geometry import Polygon, Point, LineString
+from flask import Flask, render_template, request, send_file
+from shapely.geometry import Polygon, Point
 from io import BytesIO
 
 app = Flask(__name__)
 
 UPLOAD = "uploads"
 OUTPUT = "outputs"
+
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 
@@ -22,8 +23,10 @@ def get_crs(zone):
     return "EPSG:32644" if zone == "44" else "EPSG:32645"
 
 
-# ================= ORDER =================
+# ================= ORDER NORMALIZE =================
 def normalize_order(df):
+    df.columns = [c.strip() for c in df.columns]
+
     for c in df.columns:
         if c.lower() in ["sn", "s.n", "order"]:
             df = df.rename(columns={c: "Order"})
@@ -44,13 +47,13 @@ def zip_folder(folder):
 
 # ================= GROUP A =================
 def group_a(df, forest, crs, out):
+
     df = normalize_order(df).sort_values("Order")
 
     coords = list(zip(df["X"], df["Y"]))
     coords.append(coords[0])
 
     poly = Polygon(coords)
-    line = LineString(coords)
 
     poly_gdf = gpd.GeoDataFrame([{
         "Forest": forest,
@@ -59,7 +62,11 @@ def group_a(df, forest, crs, out):
         "geometry": poly
     }], crs=crs)
 
-    pts_gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df["X"], df["Y"]), crs=crs)
+    pts_gdf = gpd.GeoDataFrame(
+        df,
+        geometry=gpd.points_from_xy(df["X"], df["Y"]),
+        crs=crs
+    )
 
     poly_gdf.to_file(os.path.join(out, "polygon.shp"))
     pts_gdf.to_file(os.path.join(out, "points.shp"))
@@ -69,12 +76,14 @@ def group_a(df, forest, crs, out):
 
 # ================= GROUP B =================
 def group_b(df, crs, out):
+
     df = normalize_order(df)
 
     polys, pts = [], []
 
     for f, g in df.groupby("Forest"):
         for c, cg in g.groupby("Compartment"):
+
             cg = cg.sort_values("Order")
 
             coords = list(zip(cg["X"], cg["Y"]))
@@ -107,8 +116,9 @@ def group_b(df, crs, out):
     return poly_gdf, pts_gdf
 
 
-# ================= FISHNET =================
+# ================= GROUP C =================
 def fishnet(poly, w, h):
+
     minx, miny, maxx, maxy = poly.bounds
     pts = []
 
@@ -116,40 +126,55 @@ def fishnet(poly, w, h):
     while y < maxy:
         x = minx
         while x < maxx:
-            cell = Polygon([(x,y),(x+w,y),(x+w,y+h),(x,y+h)])
+
+            cell = Polygon([
+                (x, y),
+                (x + w, y),
+                (x + w, y + h),
+                (x, y + h)
+            ])
+
             pts.append(cell.centroid)
             x += w
+
         y += h
 
     return pts
 
 
-# ================= GROUP C =================
 def group_c(df, crs, w, h, out):
+
+    if df.empty:
+        return None, None
+
     poly = Polygon(list(zip(df["X"], df["Y"])))
 
     centroids = fishnet(poly, w, h)
     inside = [p for p in centroids if poly.contains(p)]
 
     gdf = gpd.GeoDataFrame({
-        "SN": range(1, len(inside)+1)
+        "SN": range(1, len(inside) + 1)
     }, geometry=inside, crs=crs)
 
     gdf["X"] = gdf.geometry.x
     gdf["Y"] = gdf.geometry.y
 
+    poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
+
     gdf.to_file(os.path.join(out, "sampleplot.shp"))
 
-    return gdf, gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
+    return gdf, poly_gdf
 
 
 # ================= GROUP D =================
 def group_d(df, crs, out):
+
     df = normalize_order(df).sort_values("Order")
 
     polys, pts = [], []
 
     for f, g in df.groupby("Forest"):
+
         coords = list(zip(g["X"], g["Y"]))
         coords.append(coords[0])
 
@@ -180,6 +205,7 @@ def group_d(df, crs, out):
 
 # ================= PREVIEW =================
 def preview(poly_gdf, pts_gdf, path, pc, ptc):
+
     fig, ax = plt.subplots()
 
     poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
@@ -206,10 +232,7 @@ def upload():
     out = os.path.join(OUTPUT, run_id)
     os.makedirs(out, exist_ok=True)
 
-    path = os.path.join(UPLOAD, file.filename)
-    file.save(path)
-
-    df = pd.read_excel(path)
+    df = pd.read_excel(file)
     crs = get_crs(zone)
 
     preview_path = os.path.join(out, f"{mode}_preview.png")
