@@ -51,8 +51,8 @@
             orderModeContainer.classList.remove("hidden");
         }
 
-        // CONNECTING THE DISCONNECTED LINK: FETCH PREVIEW DATA VIA API
-        function previewData() {
+        // RESPONSIBLE ONLY FOR LOCAL UI METADATA REFRESH WHEN FILE IS STAGED
+        function updateFileBadge() {
             toggleUI();
 
             const fileInput = document.getElementById("fileInput");
@@ -71,58 +71,68 @@
                 previewType.textContent = (file.size / 1024).toFixed(1) + " KB";
                 previewContainer.classList.remove("hidden");
 
-                // Update Sandbox to Loading State
-                liveMapPreview.classList.remove("opacity-40");
-                liveMapPreview.innerHTML = `
-                    <div class="flex flex-col items-center space-y-2">
-                        <span class="text-3xl animate-spin">⏳</span>
-                        <span class="text-xs text-slate-400 font-mono">Compiling Vector Bounds...</span>
-                    </div>
-                `;
-                mapStatusText.innerHTML = "⏳ Sending spatial data layer to processing matrix endpoint...";
-
-                // Pack File into Multi-part Form Stream
-                const formData = new FormData();
-                formData.append("file", file);
-
-                // Execute live fetch request to Flask route /preview
-                fetch("/preview", {
-                    method: "POST",
-                    body: formData
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.error) {
-                        console.error(data.error);
-                        liveMapPreview.innerHTML = `<span class="text-3xl">⚠️</span>`;
-                        mapStatusText.innerHTML = `<span class="text-rose-500 font-semibold">❌ Engine Error:</span> ${data.error}`;
-                        return;
-                    }
-
-                    // Success: Inject Matplotlib generated graphic inside the canvas box
-                    // Cache buster timestamp included to force update changing files
-                    liveMapPreview.innerHTML = `
-                        <img src="${data.image}?t=${new Date().getTime()}" class="w-full h-full object-contain rounded border border-slate-800 shadow-md">
-                    `;
-                    mapStatusText.innerHTML = "✅ Preview generated successfully (Boundary + Sample Points)";
-                })
-                .catch(err => {
-                    console.error("Network Error: ", err);
-                    liveMapPreview.innerHTML = `<span class="text-3xl">📡</span>`;
-                    mapStatusText.innerHTML = "❌ Failed to reach backend engine application endpoint.";
-                });
-
-            } else {
-                // Return interface elements to baseline configurations
-                previewContainer.classList.add("hidden");
+                // Clear/Reset canvas to flat static empty state 
                 liveMapPreview.classList.add("opacity-40");
                 liveMapPreview.innerHTML = `
-                    <span class="text-3xl animate-pulse">🗺️</span>
+                    <span class="text-xs text-slate-500">Preview not generated yet</span>
                     <div class="absolute top-1 left-2 text-[9px] font-mono text-slate-600">Y-Max</div>
                     <div class="absolute bottom-1 right-2 text-[9px] font-mono text-slate-600">X-Max</div>
                 `;
-                mapStatusText.textContent = "No active source vector queued for structural preview.";
+                mapStatusText.textContent = "Source file staged. Click 'Process GIS Data' to generate preview map layers.";
+            } else {
+                previewContainer.classList.add("hidden");
             }
+        }
+
+        // STRICT INTERCEPT SUBMISSION WITH NO PRE-LOADING FLIPS
+        function handleFormSubmit(event) {
+            event.preventDefault();
+
+            const form = event.target;
+            const fileInput = document.getElementById("fileInput");
+            const liveMapPreview = document.getElementById("liveMapPreview");
+            const mapStatusText = document.getElementById("mapStatusText");
+
+            if (!fileInput || fileInput.files.length === 0) {
+                alert("Please select a valid vector data file first.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+
+            // KEEP UI IN IDLE STATE (no fake loading animation)
+            mapStatusText.textContent = "Processing started... waiting for backend preview.";
+
+            fetch("/preview", {
+                method: "POST",
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (!data.image) {
+                    liveMapPreview.innerHTML = `<span class="text-3xl">⚠️</span>`;
+                    mapStatusText.textContent = data.error || "Preview failed (no image returned).";
+                    return;
+                }
+
+                // ONLY NOW SHOW PREVIEW
+                liveMapPreview.classList.remove("opacity-40");
+                liveMapPreview.innerHTML = `
+                    <img src="${data.image}?t=${Date.now()}"
+                         class="w-full h-full object-contain rounded border border-slate-800 shadow-md">
+                `;
+
+                mapStatusText.textContent = "Preview generated successfully.";
+
+                // optional delay before final submit
+                setTimeout(() => form.submit(), 800);
+            })
+            .catch(err => {
+                console.error(err);
+                mapStatusText.textContent = "Preview endpoint error.";
+                setTimeout(() => form.submit(), 800);
+            });
         }
 
         window.addEventListener("DOMContentLoaded", toggleUI);
@@ -168,7 +178,7 @@
                         <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Configuration Input</h2>
                     </div>
                     
-                    <form action="/upload" method="POST" enctype="multipart/form-data" class="p-6 space-y-5">
+                    <form action="/upload" method="POST" enctype="multipart/form-data" onsubmit="handleFormSubmit(event)" class="p-6 space-y-5">
                         
                         <div>
                             <label class="block text-sm font-medium text-slate-700 mb-2">Boundary Vectors / Data Table</label>
@@ -182,7 +192,7 @@
                                         <span class="font-medium text-emerald-700 group-hover:underline cursor-pointer">Choose target data source</span>
                                     </div>
                                     <p class="text-xs text-slate-400">Excel tables (.xlsx) or ESRI Shapefile directories (.zip)</p>
-                                    <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.zip" onchange="previewData()" required 
+                                    <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.zip" onchange="updateFileBadge()" required 
                                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                                 </div>
                             </div>
@@ -286,7 +296,7 @@
                         <div class="absolute inset-0 opacity-[0.07] bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:20px_20px]"></div>
                         
                         <div id="liveMapPreview" class="w-full h-[270px] relative flex items-center justify-center transition-all duration-300 opacity-40 bg-slate-950/40 shadow-inner z-10">
-                            <span class="text-3xl animate-pulse">🗺️</span>
+                            <span class="text-xs text-slate-500">Preview not generated yet</span>
                             <div class="absolute top-1 left-2 text-[9px] font-mono text-slate-600">Y-Max</div>
                             <div class="absolute bottom-1 right-2 text-[9px] font-mono text-slate-600">X-Max</div>
                         </div>
