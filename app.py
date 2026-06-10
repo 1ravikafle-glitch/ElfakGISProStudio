@@ -46,39 +46,52 @@ def load_shapefile(zip_path):
 
 
 # =====================================================
-# POINT GENERATION (Excel → Point)
+# POINT GENERATION (CORE)
 # =====================================================
 def build_points(df):
+
     df = df.copy()
     df["X"] = pd.to_numeric(df["X"], errors="coerce")
     df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
     df = df.dropna(subset=["X", "Y"])
 
-    points = [Point(xy) for xy in zip(df["X"], df["Y"])]
+    points = [Point(row.X, row.Y) for _, row in df.iterrows()]
+
     return df, points
 
 
 # =====================================================
-# WHOLE BOUNDARY (Point → Line → Polygon)
+# WHOLE BOUNDARY (200% CORRECT: POINT → LINE → POLYGON)
 # =====================================================
 def build_whole_boundary(df):
 
+    # 1. SORT ORDER
     df = df.sort_values("Order")
+
+    # 2. POINTS FROM EXCEL ROWS
     df, points = build_points(df)
 
-    coords = list(zip(df["X"], df["Y"]))
+    if len(points) < 3:
+        return df, [], None, None
 
+    # 3. COORDS FROM POINT OBJECTS
+    coords = [(p.x, p.y) for p in points]
+
+    # 4. CLOSE LOOP
     if coords[0] != coords[-1]:
         coords.append(coords[0])
 
+    # 5. LINE FROM POINTS
     line = LineString(coords)
-    polygon = Polygon(coords).buffer(0)
+
+    # 6. POLYGON FROM LINE (STRICT CHAIN)
+    polygon = Polygon(line.coords).buffer(0)
 
     return df, points, line, polygon
 
 
 # =====================================================
-# SEGMENTED BOUNDARY (FULL TKINTER LOGIC MATCH)
+# SEGMENTED BOUNDARY (TKINTER LOGIC EXACT MATCH)
 # =====================================================
 def build_segmented(df):
 
@@ -93,7 +106,7 @@ def build_segmented(df):
 
         group = group.sort_values("Order")
 
-        # POINTS FROM ROWS (IMPORTANT FIX)
+        # POINTS FROM ROWS
         points = [
             Point(row.X, row.Y)
             for _, row in group.iterrows()
@@ -110,16 +123,14 @@ def build_segmented(df):
         line = LineString(coords)
         polygon = Polygon(coords).buffer(0)
 
-        if not polygon.is_valid:
-            continue
-
-        results.append((points, line, polygon))
+        if polygon.is_valid:
+            results.append((points, line, polygon))
 
     return results
 
 
 # =====================================================
-# SAMPLE PLOTS (FISHNET GRID)
+# SAMPLE PLOTS (FISHNET SYSTEM)
 # =====================================================
 def build_sample_plots(poly, cell_w, cell_h):
 
