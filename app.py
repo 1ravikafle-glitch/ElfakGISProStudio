@@ -6,7 +6,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 
 from flask import Flask, render_template, request, send_file
-from shapely.geometry import Polygon, Point, LineString
+from shapely.geometry import Polygon, Point
 
 app = Flask(__name__)
 
@@ -24,7 +24,7 @@ def get_crs(z):
     return "EPSG:32644" if str(z) == "44" else "EPSG:32645"
 
 
-# ================= SHP ZIP LOADER (FIXED) =================
+# ================= SHP ZIP LOADER =================
 def load_shapefile_from_zip(zip_path):
 
     temp_dir = tempfile.mkdtemp()
@@ -44,7 +44,7 @@ def load_shapefile_from_zip(zip_path):
 
     gdf = gpd.read_file(shp_file)
 
-    # ✅ DIRECT polygon usage (NO conversion)
+    # ✅ Direct polygon (ArcGIS compatible)
     polygon = gdf.geometry.unary_union
 
     return polygon
@@ -72,10 +72,8 @@ def fishnet_clip(polygon, cell_width, cell_height, rows, cols, crs):
                 (x1, y2)
             ])
 
-            clipped = cell.intersection(polygon)
-
-            if not clipped.is_empty:
-                cells.append(clipped)
+            # KEEP FULL GRID (ArcGIS behavior)
+            cells.append(cell)
 
     return gpd.GeoDataFrame(geometry=cells, crs=crs)
 
@@ -117,23 +115,18 @@ def process(file_path, mode, zone, cell_width, cell_height, rows, cols):
     map_images = {}
     total_plots = 0
 
-    # ================= SAMPLE MODE =================
+    # ================= SAMPLE =================
     if mode == "sample":
 
-        # ---------- CASE 1: ZIP SHAPEFILE ----------
+        # ---------- INPUT POLYGON ----------
         if file_path.endswith(".zip"):
             polygon = load_shapefile_from_zip(file_path)
 
-        # ---------- CASE 2: EXCEL ----------
         else:
             df = pd.read_excel(file_path)
 
-            if not all(col in df.columns for col in ["X", "Y"]):
-                raise Exception("Excel must contain X, Y columns")
-
             coords = list(zip(df["X"], df["Y"]))
             coords.append(coords[0])
-
             polygon = Polygon(coords)
 
         # ================= FISHNET =================
@@ -146,11 +139,17 @@ def process(file_path, mode, zone, cell_width, cell_height, rows, cols):
             crs
         )
 
+        # ================= ARC GIS STYLE FILTER =================
         fishnet["geometry"] = fishnet.centroid
+
+        # ✔ KEEP ONLY CENTROIDS INSIDE POLYGON
+        fishnet = fishnet[fishnet.within(polygon)].reset_index(drop=True)
+
         fishnet["Plot_No"] = range(1, len(fishnet) + 1)
 
         total_plots = len(fishnet)
 
+        # ================= OUTPUT =================
         shp_path = os.path.join(out_dir, "sample.shp")
         xlsx_path = os.path.join(out_dir, "sample.xlsx")
 
@@ -159,7 +158,7 @@ def process(file_path, mode, zone, cell_width, cell_height, rows, cols):
 
         map_images["sample"] = make_map(fishnet, "Sample Plot", "sample_plot")
 
-    # ================= ZIP OUTPUT =================
+    # ================= ZIP =================
     zip_name = f"{base}.zip"
     zip_path = os.path.join(OUTPUT, zip_name)
 
