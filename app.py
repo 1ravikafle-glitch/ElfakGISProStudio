@@ -78,11 +78,24 @@ def fishnet_clip(polygon, cell_width, cell_height, rows, cols, crs):
     return gpd.GeoDataFrame(geometry=cells, crs=crs)
 
 
-# ================= MAP =================
-def make_map(gdf, name, filename):
+def make_map(gdf, polygon, name, filename):
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    gdf.plot(ax=ax, edgecolor="black", alpha=0.7)
+
+    from shapely.geometry import Polygon, MultiPolygon
+
+    # --- polygon boundary (thin red line) ---
+    if isinstance(polygon, Polygon):
+        x, y = polygon.exterior.xy
+        ax.plot(x, y, color="red", linewidth=1)
+
+    elif isinstance(polygon, MultiPolygon):
+        for poly in polygon.geoms:
+            x, y = poly.exterior.xy
+            ax.plot(x, y, color="red", linewidth=1)
+
+    # --- fishnet points ---
+    gdf.plot(ax=ax, color="blue", markersize=5, alpha=0.7)
 
     ax.set_title(name)
     ax.set_axis_off()
@@ -92,7 +105,6 @@ def make_map(gdf, name, filename):
     plt.close()
 
     return filename + ".png"
-
 
 # ================= EXPORT =================
 def export_points(gdf, path):
@@ -156,7 +168,7 @@ def process(file_path, mode, zone, cell_width, cell_height, rows, cols):
         fishnet.to_file(shp_path)
         export_points(fishnet, xlsx_path)
 
-        map_images["sample"] = make_map(fishnet, "Sample Plot", "sample_plot")
+        map_images["sample"] = make_map(fishnet, polygon, "Sample Plot", "sample_plot")
 
     # ================= ZIP =================
     zip_name = f"{base}.zip"
