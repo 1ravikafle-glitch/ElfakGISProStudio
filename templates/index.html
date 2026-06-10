@@ -6,17 +6,33 @@
     <title>Forest GIS Engine</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        function toggleSample() {
+        function toggleUI() {
             const mode = document.getElementById("mode").value;
-            const box = document.getElementById("sampleBox");
+            const sampleBox = document.getElementById("sampleBox");
+            const orderModeContainer = document.getElementById("orderModeContainer");
+
+            // Show fishnet size settings ONLY for sample mode
             if (mode === "sample") {
-                box.classList.remove("hidden");
-                box.classList.add("grid");
+                sampleBox.classList.remove("hidden");
+                sampleBox.classList.add("grid");
             } else {
-                box.classList.remove("grid");
-                box.classList.add("hidden");
+                sampleBox.classList.remove("grid");
+                sampleBox.classList.add("hidden");
             }
+
+            // Hide boundary algorithm choices if user directly uploads a raw Shapefile zip
+            const fileInput = document.getElementById("fileInput");
+            if (fileInput && fileInput.files.length > 0) {
+                const fileName = fileInput.files[0].name.toLowerCase();
+                if (fileName.endsWith('.zip')) {
+                    orderModeContainer.classList.add("hidden");
+                    return;
+                }
+            }
+            orderModeContainer.classList.remove("hidden");
         }
+
+        window.addEventListener("DOMContentLoaded", toggleUI);
     </script>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-800 font-sans antialiased">
@@ -27,8 +43,8 @@
                 <span class="text-2xl">🌲</span>
                 <h1 class="text-xl font-bold tracking-tight">Forest GIS Engine</h1>
             </div>
-            <div class="text-xs bg-emerald-700 px-3 py-1.5 rounded-full border border-emerald-600 text-emerald-100">
-                v2.0 Processing Core
+            <div class="text-xs bg-emerald-700 px-3 py-1.5 rounded-full border border-emerald-600 text-emerald-100 font-medium">
+                ArcGIS Centroid Core v2.4
             </div>
         </div>
     </header>
@@ -38,8 +54,8 @@
         {% if error %}
         <div class="bg-rose-50 border-l-4 border-rose-500 p-4 mb-6 rounded-r-lg shadow-sm">
             <div class="flex items-center">
-                <span class="text-rose-500 mr-3">⚠️</span>
-                <p class="text-sm font-medium text-rose-800">Error: {{ error }}</p>
+                <span class="text-rose-500 mr-3 text-lg">⚠️</span>
+                <p class="text-sm font-medium text-rose-800">Processing Halt: {{ error }}</p>
             </div>
         </div>
         {% endif %}
@@ -48,24 +64,25 @@
             
             <div class="lg:col-span-5 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <div class="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Parameters Setup</h2>
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Configuration Input</h2>
                 </div>
                 
                 <form action="/upload" method="POST" enctype="multipart/form-data" class="p-6 space-y-5">
                     
                     <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-2">Upload Inventory Data (Excel)</label>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Boundary Vectors / Data Table</label>
                         <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-lg hover:border-emerald-500 transition-colors relative group">
                             <div class="space-y-1 text-center">
                                 <svg class="mx-auto h-10 w-10 text-slate-400 group-hover:text-emerald-600 transition-colors" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
                                     <path d="M28 8H12a4 4 0 00-4 4v20a4 4 0 004 4h16a4 4 0 004-4V12a4 4 0 00-4-4z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                                     <path d="M32 16L24 8l-8 8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                                 </svg>
-                                <div class="flex text-sm text-slate-600">
-                                    <span class="font-medium text-emerald-700 group-hover:underline">Click to browse file</span>
+                                <div class="flex text-sm text-slate-600 justify-center">
+                                    <span class="font-medium text-emerald-700 group-hover:underline cursor-pointer">Choose target data source</span>
                                 </div>
-                                <p class="text-xs text-slate-400">Supported formats: .xlsx, .xls</p>
-                                <input type="file" name="file" required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                                <p class="text-xs text-slate-400">Excel tables (.xlsx) or ESRI Shapefile directories (.zip)</p>
+                                <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.zip" onchange="toggleUI()" required 
+                                       class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                             </div>
                         </div>
                     </div>
@@ -73,10 +90,11 @@
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label for="mode" class="block text-sm font-medium text-slate-700 mb-1">Analysis Mode</label>
-                            <select id="mode" name="mode" onchange="toggleSample()" class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
-                                <option value="boundary">Boundary Generation</option>
-                                <option value="compartment">Compartment Mapping</option>
-                                <option value="sample">Sample Plot Grid</option>
+                            <select id="mode" name="mode" onchange="toggleUI()" 
+                                    class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
+                                <option value="boundary" selected>Boundary of Whole Forest</option>
+                                <option value="compartment">Boundary of Segmented Forest</option>
+                                <option value="sample">Sample Plot</option>
                             </select>
                         </div>
 
@@ -87,44 +105,41 @@
                                 <option value="45">Zone 45N (EPSG:32645)</option>
                             </select>
                         </div>
-
-                        <div class="sm:col-span-2">
-                            <label class="block text-sm font-medium text-slate-700 mb-1">Vertex Ordering Mode</label>
-                            <select name="order_mode" class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
-                                <option value="auto">Automatic Sequential Path Generation</option>
-                                <option value="manual">Manual Structure (Follow Data Index Order)</option>
-                            </select>
-                        </div>
                     </div>
 
-                    <div id="sampleBox" class="hidden grid-cols-2 gap-4 pt-4 border-t border-slate-100">
-                        <div class="col-span-2 text-xs font-bold uppercase tracking-wider text-emerald-800 mb-1">
-                            Sample Grid Configuration Matrix
+                    <div id="orderModeContainer">
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Boundary Sorting Logic</label>
+                        <select name="order_mode" class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
+                            <option value="manual" selected>Manual Mode (Follow Sheet Row Sequence)</option>
+                            <option value="auto">Auto Mode (Auto-Compute Outer Envelope Hull)</option>
+                        </select>
+                        <p class="text-[11px] text-slate-400 mt-1 leading-normal">Switch to Auto Mode if spreadsheet coordinates are unsequenced or out-of-order.</p>
+                    </div>
+
+                    <div id="sampleBox" class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100 hidden">
+                        <div class="col-span-2 text-xs font-bold uppercase tracking-wider text-emerald-800 mb-0.5">
+                            Matrix Dimensions
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Plot Target Size (m²)</label>
-                            <input type="number" name="plot_size" value="500" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Grid Cell Width (m)</label>
+                            <label class="block text-xs font-medium text-slate-500 mb-1">Cell Width (m)</label>
                             <input type="number" name="cell_width" value="100" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Grid Cell Height (m)</label>
+                            <label class="block text-xs font-medium text-slate-500 mb-1">Cell Height (m)</label>
                             <input type="number" name="cell_height" value="100" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
                         </div>
-                        <div></div> <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Sampling Matrix Rows</label>
-                            <input type="number" name="rows" value="10" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-500 mb-1">Rows</label>
+                            <input type="number" name="rows" value="15" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Sampling Matrix Columns</label>
-                            <input type="number" name="cols" value="10" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
+                            <label class="block text-xs font-medium text-slate-500 mb-1">Columns</label>
+                            <input type="number" name="cols" value="15" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
                         </div>
                     </div>
 
                     <button type="submit" class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500">
-                        ⚡ Compute & Generate GIS Data Layers
+                        🚀 Process GIS Data
                     </button>
                 </form>
             </div>
@@ -133,43 +148,34 @@
                 
                 {% if not stats and not map_images %}
                 <div class="bg-slate-100 border-2 border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-400">
-                    <p class="text-xl">📊 No Active Dataset Found</p>
-                    <p class="text-xs mt-1">Configure the spatial parameter profiles on the left to initialize calculations.</p>
+                    <p class="text-xl font-medium">No Data Processed</p>
+                    <p class="text-xs mt-1">Submit coordinate tables or zipped shape directories to render spatial structures.</p>
                 </div>
                 {% endif %}
 
                 {% if stats %}
                 <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     <div class="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Calculated Vector Estimates</h2>
-                        
+                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Calculated Metrics</h2>
                         {% if download_file %}
                         <a href="/download/{{ download_file }}" class="inline-flex items-center space-x-1.5 text-xs bg-indigo-600 text-white font-medium px-3 py-1.5 rounded shadow hover:bg-indigo-700 transition-colors">
-                            <span>📥 Download Spatial Files (.ZIP)</span>
+                            <span>📦 Download Vector Pack ZIP</span>
                         </a>
                         {% endif %}
                     </div>
                     
-                    <div class="p-6 grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    <div class="p-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                            <span class="block text-xs font-medium text-slate-400 uppercase">Computed Area</span>
-                            <span class="text-lg font-bold text-slate-800">{{ stats.total_area }}</span>
+                            <span class="block text-xs font-medium text-slate-400 uppercase">Target CRS</span>
+                            <span class="text-base font-bold text-slate-800 block mt-1 truncate" title="{{ stats.crs }}">{{ stats.crs }}</span>
                         </div>
                         <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                            <span class="block text-xs font-medium text-slate-400 uppercase">Calculated Edge</span>
-                            <span class="text-lg font-bold text-slate-800">{{ stats.total_perimeter }}</span>
-                        </div>
-                        <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                            <span class="block text-xs font-medium text-slate-400 uppercase">Extracted Node CRS</span>
-                            <span class="text-sm font-bold text-slate-800 block mt-1 truncate" title="{{ stats.crs }}">{{ stats.crs }}</span>
-                        </div>
-                        <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                            <span class="block text-xs font-medium text-slate-400 uppercase">Assigned Grid Plots</span>
+                            <span class="block text-xs font-medium text-slate-400 uppercase">Centroids Retained</span>
                             <span class="text-lg font-bold text-slate-800">{{ stats.plot_count }}</span>
                         </div>
-                        <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 col-span-2">
-                            <span class="block text-xs font-medium text-slate-400 uppercase">Plot Unit Dimensions</span>
-                            <span class="text-lg font-bold text-slate-800">{{ stats.plot_size }}</span>
+                        <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                            <span class="block text-xs font-medium text-slate-400 uppercase">Sampling Pitch</span>
+                            <span class="text-sm font-bold text-slate-800 block mt-1">{{ stats.plot_size }}</span>
                         </div>
                     </div>
                 </div>
@@ -178,18 +184,18 @@
                 {% if map_images %}
                 <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     <div class="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Spatial Render Outputs</h2>
+                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Map Output Visualization</h2>
                     </div>
                     <div class="p-6">
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div class="grid grid-cols-1 gap-6">
                             {% for name, img in map_images.items() %}
-                            <div class="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden group hover:shadow-md transition-shadow">
+                            <div class="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
                                 <div class="bg-slate-200/60 px-4 py-2 text-xs font-bold text-slate-700 border-b border-slate-200 flex justify-between items-center">
-                                    <span>Layer: {{ name }}</span>
-                                    <span class="text-[10px] text-slate-400 font-mono">PNG Output</span>
+                                    <span>Layer Context: {{ name }}</span>
+                                    <span class="text-[10px] text-slate-400 font-mono">PNG Engine Render</span>
                                 </div>
-                                <div class="p-2 bg-white flex items-center justify-center min-h-[220px]">
-                                    <img src="/static/{{ img }}" alt="Map Preview Vector Structure for {{ name }}" class="max-w-full h-auto rounded transition-transform group-hover:scale-[1.01]">
+                                <div class="p-4 bg-white flex items-center justify-center">
+                                    <img src="/static/{{ img }}" alt="Engine Spatial Output Render" class="max-w-full h-auto rounded shadow-sm">
                                 </div>
                             </div>
                             {% endfor %}
