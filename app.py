@@ -23,10 +23,8 @@ def get_crs(zone):
     return "EPSG:32644" if zone == "44" else "EPSG:32645"
 
 
-# ================= ORDER NORMALIZE =================
+# ================= ORDER =================
 def normalize_order(df):
-    df.columns = [c.strip() for c in df.columns]
-
     for c in df.columns:
         if c.lower() in ["sn", "s.n", "order"]:
             df = df.rename(columns={c: "Order"})
@@ -102,7 +100,7 @@ def group_b(df, crs, out):
             for _, r in cg.iterrows():
                 pts.append({
                     "Forest": f,
-                    "Comp": c,
+                    "Compartment": c,
                     "Order": r["Order"],
                     "geometry": Point(r["X"], r["Y"])
                 })
@@ -116,16 +114,17 @@ def group_b(df, crs, out):
     return poly_gdf, pts_gdf
 
 
-# ================= GROUP C =================
-def fishnet(poly, w, h):
+# ================= GROUP C (CONTROLLED GRID) =================
+def fishnet(poly, w, h, rows, cols):
 
     minx, miny, maxx, maxy = poly.bounds
     pts = []
 
-    y = miny
-    while y < maxy:
-        x = minx
-        while x < maxx:
+    for i in range(rows):
+        for j in range(cols):
+
+            x = minx + j * w
+            y = miny + i * h
 
             cell = Polygon([
                 (x, y),
@@ -135,21 +134,16 @@ def fishnet(poly, w, h):
             ])
 
             pts.append(cell.centroid)
-            x += w
-
-        y += h
 
     return pts
 
 
-def group_c(df, crs, w, h, out):
-
-    if df.empty:
-        return None, None
+def group_c(df, crs, w, h, rows, cols, out):
 
     poly = Polygon(list(zip(df["X"], df["Y"])))
 
-    centroids = fishnet(poly, w, h)
+    centroids = fishnet(poly, w, h, rows, cols)
+
     inside = [p for p in centroids if poly.contains(p)]
 
     gdf = gpd.GeoDataFrame({
@@ -227,6 +221,8 @@ def upload():
 
     w = float(request.form.get("w", 50))
     h = float(request.form.get("h", 50))
+    rows = int(request.form.get("rows", 10))
+    cols = int(request.form.get("cols", 10))
 
     run_id = str(uuid.uuid4())
     out = os.path.join(OUTPUT, run_id)
@@ -246,7 +242,7 @@ def upload():
         preview(poly, pts, preview_path, "blue", "orange")
 
     elif mode == "C":
-        pts, poly = group_c(df, crs, w, h, out)
+        pts, poly = group_c(df, crs, w, h, rows, cols, out)
         preview(poly, pts, preview_path, "red", "yellow")
 
     else:
