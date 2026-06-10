@@ -1,5 +1,6 @@
 import os
 import zipfile
+import math
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -17,42 +18,46 @@ os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 os.makedirs(STATIC, exist_ok=True)
 
-
 # ================= CRS =================
 def get_crs(z):
     return "EPSG:32644" if z == "44" else "EPSG:32645"
 
 
+# ================= AREA =================
+def calculate_n(area_ha, intensity, plot_size_m2):
+    a_ha = plot_size_m2 / 10000
+    n = (area_ha * intensity) / (a_ha * 100)
+    return max(1, int(round(n)))
+
+
 # ================= FISHNET + CLIP =================
-def fishnet_clip(polygon, plot_size_m2, crs):
-
-    import math
-
-    cell = math.sqrt(plot_size_m2)
+def fishnet_clip(polygon, n, crs):
 
     minx, miny, maxx, maxy = polygon.bounds
+    area_m2 = polygon.area
+    spacing = math.sqrt(area_m2 / (n + 1))
 
     cells = []
-
     x = minx
+
     while x < maxx:
         y = miny
         while y < maxy:
 
-            poly = Polygon([
+            cell = Polygon([
                 (x, y),
-                (x + cell, y),
-                (x + cell, y + cell),
-                (x, y + cell)
+                (x + spacing, y),
+                (x + spacing, y + spacing),
+                (x, y + spacing)
             ])
 
-            clipped = poly.intersection(polygon)
+            clipped = cell.intersection(polygon)
 
             if not clipped.is_empty:
-                cells.append(clipped)
+                cells.append(clipped.centroid)
 
-            y += cell
-        x += cell
+            y += spacing
+        x += spacing
 
     return gpd.GeoDataFrame(geometry=cells, crs=crs)
 
@@ -61,9 +66,7 @@ def fishnet_clip(polygon, plot_size_m2, crs):
 def make_map(gdf, name):
 
     fig, ax = plt.subplots(figsize=(10, 6))
-
     gdf.plot(ax=ax, color="lightgreen", edgecolor="black")
-
     ax.set_title(name)
     ax.set_axis_off()
 
@@ -105,8 +108,7 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
                 poly = Polygon(coords)
 
                 gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
-                path_shp = os.path.join(out_dir, f"{forest}_poly.shp")
-                gdf.to_file(path_shp)
+                gdf.to_file(os.path.join(out_dir, f"{forest}_poly.shp"))
 
                 preview_img = make_map(gdf, forest)
 
@@ -130,12 +132,11 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
                     })
 
                 gdf = gpd.GeoDataFrame(polys, crs=crs)
-
                 gdf.to_file(os.path.join(out_dir, f"{forest}_compartment.shp"))
 
                 preview_img = make_map(gdf, forest)
 
-    # ================= SAMPLE =================
+    # ================= SAMPLE (FIXED + EXCEL + SHP) =================
     if mode == "sample":
 
         for forest, group in df.groupby("Forest"):
@@ -149,14 +150,34 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
 
             poly = Polygon(coords)
 
-            grid = fishnet_clip(poly, plot_size, crs)
+            # AREA
+            area_ha = poly.area / 10000
 
-            # OPTIONAL: convert to centroid points (BEST FOR FIELD WORK)
-            grid_points = grid.copy()
-            grid_points["geometry"] = grid_points.centroid
+            # NUMBER OF PLOTS
+            n = calculate_n(area_ha, intensity, plot_size)
 
+            # FISHNET
+            grid_points = fishnet_clip(poly, n, crs)
+
+            # RESET S.N
+            grid_points = grid_points.reset_index(drop=True)
+            grid_points["S.N"] = range(1, len(grid_points) + 1)
+            grid_points["Forest"] = forest
+
+            # ================= SHP OUTPUT =================
             shp_path = os.path.join(out_dir, f"{forest}_sample.shp")
             grid_points.to_file(shp_path)
+
+            # ================= EXCEL OUTPUT =================
+            excel_df = pd.DataFrame({
+                "S.N": grid_points["S.N"],
+                "Forest": grid_points["Forest"],
+                "X": grid_points.geometry.x,
+                "Y": grid_points.geometry.y
+            })
+
+            excel_path = os.path.join(out_dir, f"{forest}_sample.xlsx")
+            excel_df.to_excel(excel_path, index=False)
 
             preview_img = make_map(grid_points, forest)
 
