@@ -9,7 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import Flask, render_template, request, send_file, jsonify
-from shapely.geometry import Polygon, Point, LineString, box
+from shapely.geometry import Polygon, Point, LineString, box, MultiPolygon
 
 app = Flask(__name__)
 
@@ -30,6 +30,22 @@ def get_crs(zone):
 
 
 # =====================================================
+# MULTIPOLYGON SAFE HANDLER (FIX YOUR ERROR)
+# =====================================================
+def normalize_geom(geom):
+    if geom is None:
+        return []
+
+    if isinstance(geom, Polygon):
+        return [geom]
+
+    if isinstance(geom, MultiPolygon):
+        return list(geom.geoms)
+
+    return []
+
+
+# =====================================================
 # LOAD SHAPEFILE FROM ZIP
 # =====================================================
 def load_shapefile(zip_path):
@@ -46,7 +62,7 @@ def load_shapefile(zip_path):
 
 
 # =====================================================
-# POINT GENERATION (EXCEL → POINT CORE)
+# POINT GENERATION
 # =====================================================
 def build_points(df):
     df = df.copy()
@@ -77,13 +93,12 @@ def build_whole_boundary(df):
 
 
 # =====================================================
-# SEGMENTED BOUNDARY (EXACT LOGIC)
+# SEGMENTED BOUNDARY (COMPARTMENT LOGIC)
 # =====================================================
 def build_segmented(df):
-
     df, _ = build_points(df)
 
-    results = []
+    result = []
 
     for comp, group in df.groupby("Compartment"):
         group = group.sort_values("Order")
@@ -103,18 +118,18 @@ def build_segmented(df):
 
         pts = [Point(xy) for xy in coords]
 
-        results.append({
+        result.append({
             "comp": comp,
             "points": pts,
             "line": line,
             "polygon": poly
         })
 
-    return results
+    return result
 
 
 # =====================================================
-# SAMPLE PLOT (FISHNET GRID)
+# SAMPLE FISHNET PLOT
 # =====================================================
 def build_sample(poly, cell_w, cell_h):
 
@@ -139,8 +154,7 @@ def build_sample(poly, cell_w, cell_h):
 
 
 # =====================================================
-# ================= PREVIEW 1 =========================
-# WHOLE BOUNDARY PREVIEW
+# PREVIEW 1 - WHOLE BOUNDARY
 # =====================================================
 def preview_whole(poly, line, points):
 
@@ -155,7 +169,7 @@ def preview_whole(poly, line, points):
     for p in points:
         ax.scatter(p.x, p.y, color="blue", s=10)
 
-    ax.set_title("WHOLE BOUNDARY (Point → Line → Polygon)")
+    ax.set_title("WHOLE BOUNDARY")
     ax.set_axis_off()
 
     path = os.path.join(STATIC, "preview.png")
@@ -166,8 +180,7 @@ def preview_whole(poly, line, points):
 
 
 # =====================================================
-# ================= PREVIEW 2 =========================
-# SEGMENTED PREVIEW
+# PREVIEW 2 - SEGMENTED
 # =====================================================
 def preview_segmented(seg):
 
@@ -186,7 +199,7 @@ def preview_segmented(seg):
         c = s["polygon"].centroid
         ax.text(c.x, c.y, str(s["comp"]), fontsize=8)
 
-    ax.set_title("SEGMENTED FOREST BOUNDARY")
+    ax.set_title("SEGMENTED FOREST")
     ax.set_axis_off()
 
     path = os.path.join(STATIC, "preview.png")
@@ -197,8 +210,7 @@ def preview_segmented(seg):
 
 
 # =====================================================
-# ================= PREVIEW 3 =========================
-# SAMPLE PLOT PREVIEW
+# PREVIEW 3 - SAMPLE
 # =====================================================
 def preview_sample(poly, samples):
 
@@ -210,7 +222,7 @@ def preview_sample(poly, samples):
     for p in samples:
         ax.scatter(p.x, p.y, color="blue", s=12)
 
-    ax.set_title("SAMPLE PLOT (FISHNET GRID)")
+    ax.set_title("SAMPLE FISHNET")
     ax.set_axis_off()
 
     path = os.path.join(STATIC, "preview.png")
@@ -229,7 +241,7 @@ def home():
 
 
 # =====================================================
-# PREVIEW API (3 DIFFERENT OUTPUTS)
+# PREVIEW API
 # =====================================================
 @app.route("/preview", methods=["POST"])
 def preview():
@@ -242,29 +254,33 @@ def preview():
 
     try:
 
-        # ---------------- ZIP ----------------
+        # ================= ZIP =================
         if path.endswith(".zip"):
-            geom = load_shapefile(path)
+            geom = normalize_geom(load_shapefile(path))
+            poly = geom[0]
 
             return jsonify({
-                "image": preview_whole(geom, LineString(geom.exterior.coords),
-                                       [Point(xy) for xy in geom.exterior.coords])
+                "image": preview_whole(
+                    poly,
+                    LineString(poly.exterior.coords),
+                    [Point(xy) for xy in poly.exterior.coords]
+                )
             })
 
-        # ---------------- EXCEL ----------------
+        # ================= EXCEL =================
         df = pd.read_excel(path)
 
-        # ================= WHOLE =================
+        # ---------------- WHOLE ----------------
         if mode == "boundary":
             df, pts, line, poly = build_whole_boundary(df)
             return jsonify({"image": preview_whole(poly, line, pts)})
 
-        # ================= SEGMENTED =================
+        # ---------------- SEGMENTED ----------------
         if mode == "compartment":
             seg = build_segmented(df)
             return jsonify({"image": preview_segmented(seg)})
 
-        # ================= SAMPLE =================
+        # ---------------- SAMPLE ----------------
         if mode == "sample":
             df, _, _, poly = build_whole_boundary(df)
 
