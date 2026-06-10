@@ -192,16 +192,22 @@ def preview_compartment(data):
     return save_plot()
 
 
+# =====================================================
+# UPDATED MODE 3 PREVIEW (BOUNDARY + SAMPLES TOGETHER)
+# =====================================================
 def preview_sample(poly, samples):
     fig, ax = plt.subplots()
 
-    ax.plot(*poly.exterior.xy, "blue")
+    # boundary
+    ax.plot(*poly.exterior.xy, "blue", linewidth=2, label="Boundary")
 
+    # clipped fishnet sample points
     for s in samples:
-        ax.scatter(s.x, s.y, s=15)
+        ax.scatter(s.x, s.y, s=15, color="red")
 
-    ax.set_title("CLIPPED SAMPLE PLOTS")
+    ax.set_title("BOUNDARY + CLIPPED SAMPLE PLOTS")
     ax.set_axis_off()
+
     return save_plot()
 
 
@@ -255,7 +261,7 @@ def preview():
             data = build_compartment(df, crs)
             return jsonify({"image": preview_compartment(data)})
 
-        # 3 CLIPPED SAMPLE
+        # 3 CLIPPED SAMPLE (UPDATED PREVIEW)
         if mode == "sample":
             _, _, poly = build_whole(df)
 
