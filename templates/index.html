@@ -15,22 +15,28 @@
             const wholeForestTemplate = document.getElementById("wholeForestTemplate");
             const segmentedForestTemplate = document.getElementById("segmentedForestTemplate");
 
+            // Map Preview Context Elements
+            const previewMapContext = document.getElementById("previewMapContext");
+
             // Handle Mode Visibility Transitions
             if (mode === "sample") {
                 sampleBox.classList.remove("hidden");
                 sampleBox.classList.add("grid");
                 wholeForestTemplate.classList.add("hidden");
                 segmentedForestTemplate.classList.add("hidden");
+                if(previewMapContext) previewMapContext.textContent = "Sample Plot Grid Space";
             } else if (mode === "compartment") {
                 sampleBox.classList.remove("grid");
                 sampleBox.classList.add("hidden");
                 wholeForestTemplate.classList.add("hidden");
                 segmentedForestTemplate.classList.remove("hidden");
+                if(previewMapContext) previewMapContext.textContent = "Segmented Forest Compartments";
             } else {
                 sampleBox.classList.remove("grid");
                 sampleBox.classList.add("hidden");
                 wholeForestTemplate.classList.remove("hidden");
                 segmentedForestTemplate.classList.add("hidden");
+                if(previewMapContext) previewMapContext.textContent = "Whole Forest Convex Envelope";
             }
 
             // Hide boundary algorithm choices if user directly uploads a raw Shapefile zip
@@ -51,14 +57,22 @@
             const previewContainer = document.getElementById("previewContainer");
             const previewFileName = document.getElementById("previewFileName");
             const previewType = document.getElementById("previewType");
+            const liveMapPreview = document.getElementById("liveMapPreview");
+            const mapStatusText = document.getElementById("mapStatusText");
             
             if (fileInput && fileInput.files.length > 0) {
                 const file = fileInput.files[0];
                 previewFileName.textContent = file.name;
                 previewType.textContent = (file.size / 1024).toFixed(1) + " KB";
                 previewContainer.classList.remove("hidden");
+
+                // Update Map Preview state to reflect loaded data stage
+                if(liveMapPreview) liveMapPreview.classList.remove("opacity-40");
+                if(mapStatusText) mapStatusText.innerHTML = `⚠️ Vector canvas ready. Press <span class="font-semibold text-emerald-700">Process GIS Data</span> to compute spatial shapes.`;
             } else {
                 previewContainer.classList.add("hidden");
+                if(liveMapPreview) liveMapPreview.classList.add("opacity-40");
+                if(mapStatusText) mapStatusText.textContent = "No active source vector queued for structural preview.";
             }
         }
 
@@ -99,118 +113,141 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             
-            <div class="lg:col-span-5 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div class="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Configuration Input</h2>
-                </div>
-                
-                <form action="/upload" method="POST" enctype="multipart/form-data" class="p-6 space-y-5">
+            <div class="lg:col-span-5 space-y-6">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-slate-50 px-6 py-4 border-b border-slate-200">
+                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Configuration Input</h2>
+                    </div>
                     
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-2">Boundary Vectors / Data Table</label>
-                        <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-lg hover:border-emerald-500 transition-colors relative group">
-                            <div class="space-y-1 text-center">
-                                <svg class="mx-auto h-10 w-10 text-slate-400 group-hover:text-emerald-600 transition-colors" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
-                                    <path d="M28 8H12a4 4 0 00-4 4v20a4 4 0 004 4h16a4 4 0 004-4V12a4 4 0 00-4-4z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                                    <path d="M32 16L24 8l-8 8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                                </svg>
-                                <div class="flex text-sm text-slate-600 justify-center">
-                                    <span class="font-medium text-emerald-700 group-hover:underline cursor-pointer">Choose target data source</span>
+                    <form action="/upload" method="POST" enctype="multipart/form-data" class="p-6 space-y-5">
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-2">Boundary Vectors / Data Table</label>
+                            <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-lg hover:border-emerald-500 transition-colors relative group">
+                                <div class="space-y-1 text-center">
+                                    <svg class="mx-auto h-10 w-10 text-slate-400 group-hover:text-emerald-600 transition-colors" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                                        <path d="M28 8H12a4 4 0 00-4 4v20a4 4 0 004 4h16a4 4 0 004-4V12a4 4 0 00-4-4z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                        <path d="M32 16L24 8l-8 8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                    <div class="flex text-sm text-slate-600 justify-center">
+                                        <span class="font-medium text-emerald-700 group-hover:underline cursor-pointer">Choose target data source</span>
+                                    </div>
+                                    <p class="text-xs text-slate-400">Excel tables (.xlsx) or ESRI Shapefile directories (.zip)</p>
+                                    <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.zip" onchange="previewData()" required 
+                                           class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                                 </div>
-                                <p class="text-xs text-slate-400">Excel tables (.xlsx) or ESRI Shapefile directories (.zip)</p>
-                                <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.zip" onchange="previewData()" required 
-                                       class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                             </div>
                         </div>
-                    </div>
 
-                    <div id="previewContainer" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-4 flex items-center justify-between transition-all duration-200">
-                        <div class="flex items-center space-x-3 truncate">
-                            <span class="text-xl">📁</span>
-                            <div class="truncate">
-                                <p id="previewFileName" class="text-sm font-medium text-slate-700 truncate">filename.xlsx</p>
-                                <p id="previewType" class="text-xs text-slate-400">0.0 KB</p>
+                        <div id="previewContainer" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-4 flex items-center justify-between transition-all duration-200">
+                            <div class="flex items-center space-x-3 truncate">
+                                <span class="text-xl">📁</span>
+                                <div class="truncate">
+                                    <p id="previewFileName" class="text-sm font-medium text-slate-700 truncate">filename.xlsx</p>
+                                    <p id="previewType" class="text-xs text-slate-400">0.0 KB</p>
+                                </div>
+                            </div>
+                            <span class="text-xs bg-emerald-100 text-emerald-800 font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap">Selected</span>
+                        </div>
+
+                        <div id="wholeForestTemplate" class="bg-amber-50/60 border border-amber-200 rounded-lg p-3.5 space-y-1.5">
+                            <span class="text-xs font-bold uppercase tracking-wider text-amber-800 block">Required Excel Header Columns</span>
+                            <div class="flex items-center space-x-1.5 font-mono text-xs text-amber-900 bg-white/80 border border-amber-100 p-2 rounded tracking-wide shadow-inner">
+                                <span class="bg-amber-200 px-1 rounded font-bold">Order</span><span class="text-amber-400">|</span>
+                                <span class="bg-amber-200 px-1 rounded font-bold">Forest</span><span class="text-amber-400">|</span>
+                                <span class="bg-amber-200 px-1 rounded font-bold">X</span><span class="text-amber-400">|</span>
+                                <span class="bg-amber-200 px-1 rounded font-bold">Y</span>
                             </div>
                         </div>
-                        <span class="text-xs bg-emerald-100 text-emerald-800 font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap">Selected</span>
-                    </div>
 
-                    <div id="wholeForestTemplate" class="bg-amber-50/60 border border-amber-200 rounded-lg p-3.5 space-y-1.5">
-                        <span class="text-xs font-bold uppercase tracking-wider text-amber-800 block">Required Excel Header Columns</span>
-                        <div class="flex items-center space-x-1.5 font-mono text-xs text-amber-900 bg-white/80 border border-amber-100 p-2 rounded tracking-wide shadow-inner">
-                            <span class="bg-amber-200 px-1 rounded font-bold">Order</span><span class="text-amber-400">|</span>
-                            <span class="bg-amber-200 px-1 rounded font-bold">Forest</span><span class="text-amber-400">|</span>
-                            <span class="bg-amber-200 px-1 rounded font-bold">X</span><span class="text-amber-400">|</span>
-                            <span class="bg-amber-200 px-1 rounded font-bold">Y</span>
+                        <div id="segmentedForestTemplate" class="bg-indigo-50/60 border border-indigo-200 rounded-lg p-3.5 space-y-1.5 hidden">
+                            <span class="text-xs font-bold uppercase tracking-wider text-indigo-800 block">Required Excel Header Columns</span>
+                            <div class="flex items-center space-x-1.5 font-mono text-xs text-indigo-900 bg-white/80 border border-indigo-100 p-2 rounded tracking-wide shadow-inner overflow-x-auto">
+                                <span class="bg-indigo-200 px-1 rounded font-bold">Order</span><span class="text-indigo-400">|</span>
+                                <span class="bg-indigo-200 px-1 rounded font-bold">Forest</span><span class="text-indigo-400">|</span>
+                                <span class="bg-indigo-200 px-1 rounded font-bold">Compartment</span><span class="text-indigo-400">|</span>
+                                <span class="bg-indigo-200 px-1 rounded font-bold">X</span><span class="text-indigo-400">|</span>
+                                <span class="bg-indigo-200 px-1 rounded font-bold">Y</span>
+                            </div>
                         </div>
-                    </div>
 
-                    <div id="segmentedForestTemplate" class="bg-indigo-50/60 border border-indigo-200 rounded-lg p-3.5 space-y-1.5 hidden">
-                        <span class="text-xs font-bold uppercase tracking-wider text-indigo-800 block">Required Excel Header Columns</span>
-                        <div class="flex items-center space-x-1.5 font-mono text-xs text-indigo-900 bg-white/80 border border-indigo-100 p-2 rounded tracking-wide shadow-inner overflow-x-auto">
-                            <span class="bg-indigo-200 px-1 rounded font-bold">Order</span><span class="text-indigo-400">|</span>
-                            <span class="bg-indigo-200 px-1 rounded font-bold">Forest</span><span class="text-indigo-400">|</span>
-                            <span class="bg-indigo-200 px-1 rounded font-bold">Compartment</span><span class="text-indigo-400">|</span>
-                            <span class="bg-indigo-200 px-1 rounded font-bold">X</span><span class="text-indigo-400">|</span>
-                            <span class="bg-indigo-200 px-1 rounded font-bold">Y</span>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label for="mode" class="block text-sm font-medium text-slate-700 mb-1">Analysis Mode</label>
+                                <select id="mode" name="mode" onchange="toggleUI()" 
+                                        class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
+                                    <option value="boundary" selected>Boundary of Whole Forest</option>
+                                    <option value="compartment">Boundary of Segmented Forest</option>
+                                    <option value="sample">Sample Plot</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">UTM Target Zone</label>
+                                <select name="zone" class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
+                                    <option value="44">Zone 44N (EPSG:32644)</option>
+                                    <option value="45">Zone 45N (EPSG:32645)</option>
+                                </select>
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                            <label for="mode" class="block text-sm font-medium text-slate-700 mb-1">Analysis Mode</label>
-                            <select id="mode" name="mode" onchange="toggleUI()" 
-                                    class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
-                                <option value="boundary" selected>Boundary of Whole Forest</option>
-                                <option value="compartment">Boundary of Segmented Forest</option>
-                                <option value="sample">Sample Plot</option>
+                        <div id="orderModeContainer">
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Boundary Sorting Logic</label>
+                            <select name="order_mode" class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
+                                <option value="manual" selected>Manual Mode (Follow Sheet Row Sequence)</option>
+                                <option value="auto">Auto Mode (Auto-Compute Outer Envelope Hull)</option>
                             </select>
+                            <p class="text-[11px] text-slate-400 mt-1 leading-normal">Switch to Auto Mode if spreadsheet coordinates are unsequenced or out-of-order.</p>
                         </div>
 
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-1">UTM Target Zone</label>
-                            <select name="zone" class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
-                                <option value="44">Zone 44N (EPSG:32644)</option>
-                                <option value="45">Zone 45N (EPSG:32645)</option>
-                            </select>
+                        <div id="sampleBox" class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100 hidden">
+                            <div class="col-span-2 text-xs font-bold uppercase tracking-wider text-emerald-800 mb-0.5">
+                                Matrix Dimensions
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Cell Width (m)</label>
+                                <input type="number" name="cell_width" value="100" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Cell Height (m)</label>
+                                <input type="number" name="cell_height" value="100" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Rows</label>
+                                <input type="number" name="rows" value="15" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Columns</label>
+                                <input type="number" name="cols" value="15" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500">
+                            🚀 Process GIS Data
+                        </button>
+                    </form>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center justify-between">
+                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Map Canvas Sandbox</h2>
+                        <span id="previewMapContext" class="text-[11px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium">Whole Forest Convex Envelope</span>
+                    </div>
+                    <div class="p-4 bg-slate-900 flex flex-col items-center justify-center relative min-h-[260px] border-b border-slate-100">
+                        <div class="absolute inset-0 opacity-[0.07] bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:20px_20px]"></div>
+                        
+                        <div id="liveMapPreview" class="w-full max-w-[240px] h-40 border border-slate-700/60 rounded-md relative flex items-center justify-center transition-all duration-300 opacity-40 bg-slate-950/40 shadow-inner z-10">
+                            <span class="text-3xl animate-pulse">🗺️</span>
+                            <div class="absolute top-1 left-2 text-[9px] font-mono text-slate-600">Y-Max</div>
+                            <div class="absolute bottom-1 right-2 text-[9px] font-mono text-slate-600">X-Max</div>
                         </div>
                     </div>
-
-                    <div id="orderModeContainer">
-                        <label class="block text-sm font-medium text-slate-700 mb-1">Boundary Sorting Logic</label>
-                        <select name="order_mode" class="w-full bg-white border border-slate-300 text-slate-700 py-2 px-3 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm">
-                            <option value="manual" selected>Manual Mode (Follow Sheet Row Sequence)</option>
-                            <option value="auto">Auto Mode (Auto-Compute Outer Envelope Hull)</option>
-                        </select>
-                        <p class="text-[11px] text-slate-400 mt-1 leading-normal">Switch to Auto Mode if spreadsheet coordinates are unsequenced or out-of-order.</p>
+                    <div class="bg-slate-50 px-5 py-3 border-t border-slate-100 text-center">
+                        <p id="mapStatusText" class="text-xs text-slate-500 leading-normal">
+                            No active source vector queued for structural preview.
+                        </p>
                     </div>
-
-                    <div id="sampleBox" class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100 hidden">
-                        <div class="col-span-2 text-xs font-bold uppercase tracking-wider text-emerald-800 mb-0.5">
-                            Matrix Dimensions
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Cell Width (m)</label>
-                            <input type="number" name="cell_width" value="100" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Cell Height (m)</label>
-                            <input type="number" name="cell_height" value="100" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Rows</label>
-                            <input type="number" name="rows" value="15" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-500 mb-1">Columns</label>
-                            <input type="number" name="cols" value="15" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 shadow-sm">
-                        </div>
-                    </div>
-
-                    <button type="submit" class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500">
-                        🚀 Process GIS Data
-                    </button>
-                </form>
+                </div>
             </div>
 
             <div class="lg:col-span-7 space-y-6">
