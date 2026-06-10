@@ -261,16 +261,22 @@ dl.href=url;
 dl.style.display="block";
 dl.innerText="⬇ Download ZIP";
 
-/* PREVIEW */
+/* ================= FIXED PREVIEW ================= */
 setTimeout(()=>{
 
 let img=document.getElementById("img");
 
-/* IMPORTANT: backend must save preview */
-img.src="/outputs/"+mode+"_preview.png";
-img.style.display="block";
+/* cache-busting + guaranteed reload */
+img.src="/outputs/"+mode+"_preview.png?"+Date.now();
 
-document.getElementById("text").innerText="Preview Ready ✔";
+img.onload = () => {
+    document.getElementById("text").innerText="Preview Ready ✔";
+    img.style.display="block";
+};
+
+img.onerror = () => {
+    document.getElementById("text").innerText="Preview not found ❌ (check backend)";
+};
 
 },500);
 
