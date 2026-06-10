@@ -1,130 +1,288 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>CF Boundary Generator</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GIS Engine Pro</title>
 
-    <style>
-        body {
-            font-family: Arial;
-            background: #f4f6f7;
-            margin: 0;
-        }
+<style>
+  /* Reset default styles for better consistency */
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
 
-        .container {
-            width: 600px;
-            margin: 40px auto;
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0px 0px 10px rgba(0,0,0,0.15);
-        }
+  body {
+    margin: 0;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    background: #f8f8f8; /* Light creamy background */
+    color: #333; /* Darker text for contrast */
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
 
-        h2 {
-            text-align: center;
-            margin-bottom: 20px;
-        }
+  /* Top header styles with green, white, and orange accents */
+  .header {
+    padding: 16px;
+    background: linear-gradient(135deg, #a8dadc, #ffd6a5); /* Soft green to orange gradient */
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
 
-        .box {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-        }
+  .header-title {
+    font-size: 24px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #1d3557; /* Deep blue for contrast */
+    text-shadow: 0 0 10px #ffffff88;
+  }
 
-        label {
-            display: block;
-            margin: 8px 0;
-        }
+  .header-sub {
+    font-size: 12px;
+    color: #6c757d; /* Grayish */
+    margin-top: 4px;
+    margin-bottom: 12px;
+  }
 
-        input[type="file"] {
-            width: 100%;
-        }
+  /* Buttons container with orange accents */
+  .buttons-container {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
 
-        button {
-            width: 100%;
-            padding: 12px;
-            background: #2E86C1;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 16px;
-            cursor: pointer;
-        }
+  /* Group cards with green and orange gradients and hover effects */
+  .card {
+    padding: 14px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #4caf50, #81c784); /* Green gradient */
+    border: 1px solid rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: #fff;
+  }
 
-        button:hover {
-            background: #1b4f72;
-        }
+  .card:hover {
+    background: linear-gradient(135deg, #66bb6a, #a5d6a7);
+    transform: translateY(-2px);
+  }
 
-        .title {
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
+  .card.active {
+    background: linear-gradient(135deg, #2e7d32, #388e3c); /* Darker green for active */
+    border-color: #ffd6a5; /* Light orange border */
+    box-shadow: 0 0 15px #388e3c66;
+  }
 
-        .status {
-            text-align: center;
-            margin-top: 10px;
-            color: green;
-        }
-    </style>
+  /* Panel styles */
+  #panel {
+    margin-top: 20px;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.4s ease;
+  }
+
+  #panel.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Sections styles */
+  .section {
+    display: none;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Inputs styles with white and orange accents */
+  input, select {
+    width: 100%;
+    padding: 12px;
+    margin-top: 10px;
+    border-radius: 10px;
+    background: #ffffff; /* White background for inputs */
+    border: 1px solid rgba(0,0,0,0.2);
+    color: #333;
+    outline: none;
+    font-size: 14px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  input:focus, select:focus {
+    border-color: #ff7f50; /* Coral orange outline */
+    box-shadow: 0 0 8px #ff7f5066;
+  }
+
+  /* Button styles with orange gradient and glow */
+  .btn {
+    width: 100%;
+    margin-top: 15px;
+    padding: 12px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #ff7f50, #ffb347); /* Orange shades */
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s ease, box-shadow 0.2s ease;
+  }
+
+  .btn:hover {
+    background: linear-gradient(135deg, #ffb347, #ff7f50);
+    box-shadow: 0 0 15px #ff7f5066;
+    transform: scale(1.02);
+  }
+
+  /* Preview container styles with glow effect */
+  .preview {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background-color: #fafafa; /* Slightly off-white for contrast */
+  }
+
+  .box {
+    width: 85%;
+    height: 80%;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 16px;
+    text-align: center;
+    color: #1d3557; /* Deep blue text for contrast */
+    box-shadow: 0 0 10px #ff7f5066;
+  }
+</style>
 </head>
-
 <body>
 
-<div class="container">
+<!-- Top Header -->
+<div class="header">
+  <div class="header-title">
+    🌲 Elfak GIS Engine Pro
+  </div>
+  <div class="header-sub">Professional Spatial Processing System V2.0</div>
+  <div class="buttons-container">
+    <div class="card" onclick="setGroup('A')">🌲 Group A — Forest Boundary</div>
+    <div class="card" onclick="setGroup('B')">🏞️ Group B — Compartment Mapping</div>
+    <div class="card" onclick="setGroup('C')">🧪 Group C — Sample Grid Engine</div>
+    <div class="card" onclick="setGroup('D')">🌳 Group D — Auto Forest Detection</div>
+  </div>
+</div>
 
-    <h2>Community Forest GIS Tool</h2>
+<!-- Bottom Area: Processing Panel and Preview -->
+<div style="display:flex; flex:1; flex-direction:column;">
+  <!-- Processing Panel -->
+  <div id="panel" class="panel" style="padding: 16px;">
+    <!-- File Upload -->
+    <input type="file" id="file" />
 
-    <form action="/upload" method="post" enctype="multipart/form-data">
-
-        <!-- FILE -->
-        <div class="box">
-            <div class="title">1. Upload Excel File</div>
-            <input type="file" name="file" required>
-        </div>
-
-        <!-- MODE -->
-        <div class="box">
-            <div class="title">2. Select Mode</div>
-
-            <label>
-                <input type="radio" name="mode" value="whole" checked>
-                Whole Forest Boundary (Point → Line → Polygon)
-            </label>
-
-            <label>
-                <input type="radio" name="mode" value="part">
-                Part Forest Boundary (Compartment Wise)
-            </label>
-        </div>
-
-        <!-- ZONE -->
-        <div class="box">
-            <div class="title">3. UTM Zone</div>
-
-            <label>
-                <input type="radio" name="zone" value="44">
-                Zone 44N (EPSG:32644)
-            </label>
-
-            <label>
-                <input type="radio" name="zone" value="45" checked>
-                Zone 45N (EPSG:32645)
-            </label>
-        </div>
-
-        <!-- SUBMIT -->
-        <div class="box">
-            <button type="submit">Run Processing</button>
-        </div>
-
-    </form>
-
-    <div class="status">
-        Ready
+    <!-- Group A Section -->
+    <div id="aBox" class="section">
+      <small>Forest Name (required only for Group A)</small>
+      <input id="forest" placeholder="Enter forest name" />
     </div>
 
+    <!-- UTM Zone -->
+    <select id="zone">
+      <option value="44">UTM 44N</option>
+      <option value="45">UTM 45N</option>
+    </select>
+
+    <!-- Group C Grid Settings -->
+    <div id="cBox" class="section">
+      <small>Input Source (required)</small>
+      <select id="source">
+        <option value="A">Group A Data</option>
+        <option value="B">Group B Data</option>
+        <option value="ZIP">Shapefile ZIP</option>
+      </select>
+
+      <small>Grid Settings</small>
+      <input id="w" placeholder="Cell Width (m)" />
+      <input id="h" placeholder="Cell Height (m)" />
+      <input id="rows" placeholder="Rows" />
+      <input id="cols" placeholder="Columns" />
+    </div>
+
+    <!-- Run Button -->
+    <button class="btn" onclick="run()">Run Processing</button>
+  </div>
+
+  <!-- Preview Area -->
+  <div class="preview">
+    <div class="box" id="preview">
+      Preview Area
+    </div>
+  </div>
 </div>
+
+<script>
+  let mode = null;
+
+  function setGroup(m) {
+    mode = m;
+
+    document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+    event.target.classList.add('active');
+
+    document.getElementById("panel").classList.add("show");
+
+    // Reset sections visibility
+    document.getElementById("aBox").style.display = "none";
+    document.getElementById("cBox").style.display = "none";
+
+    // Show relevant section
+    if (mode === "A") {
+      document.getElementById("aBox").style.display = "block";
+    }
+    if (mode === "C") {
+      document.getElementById("cBox").style.display = "block";
+    }
+  }
+
+  async function run() {
+    let fd = new FormData();
+    fd.append("file", document.getElementById("file").files[0]);
+    fd.append("mode", mode);
+    fd.append("zone", document.getElementById("zone").value);
+
+    if (mode === "A") {
+      fd.append("forest", document.getElementById("forest").value);
+    }
+
+    if (mode === "C") {
+      fd.append("source", document.getElementById("source").value);
+      fd.append("w", document.getElementById("w").value);
+      fd.append("h", document.getElementById("h").value);
+      fd.append("rows", document.getElementById("rows").value);
+      fd.append("cols", document.getElementById("cols").value);
+    }
+
+    try {
+      let res = await fetch("/upload", { method: "POST", body: fd });
+      let blob = await res.blob();
+      document.getElementById("preview").innerHTML = "✔ Processing Complete - Download Ready";
+    } catch (error) {
+      document.getElementById("preview").innerHTML = "❌ Error during processing.";
+      console.error(error);
+    }
+  }
+</script>
 
 </body>
 </html>
