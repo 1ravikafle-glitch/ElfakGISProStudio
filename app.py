@@ -5,9 +5,8 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, send_file, send_from_directory
+from flask import Flask, render_template, request, send_file, jsonify
 from shapely.geometry import Polygon, Point, LineString
-from shapely.ops import unary_union
 from io import BytesIO
 
 app = Flask(__name__)
@@ -32,13 +31,24 @@ def normalize_order(df):
     return df
 
 
-# ================= SERVE PREVIEW =================
-@app.route("/outputs/<run_id>/<filename>")
-def serve_output(run_id, filename):
-    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
+# ================= ZIP HELP =================
+def extract_zip(file, folder):
+    zip_path = os.path.join(folder, "input.zip")
+    file.save(zip_path)
+
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(folder)
 
 
-# ================= ZIP =================
+def read_shp(folder):
+    for root, _, files in os.walk(folder):
+        for f in files:
+            if f.endswith(".shp"):
+                return gpd.read_file(os.path.join(root, f))
+    return None
+
+
+# ================= ZIP OUTPUT =================
 def zip_folder(folder):
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -50,43 +60,107 @@ def zip_folder(folder):
     return buf
 
 
-# ================= SAFE POLYGON FIX =================
-def safe_polygon(gdf):
-    geom = unary_union(gdf.geometry)
+# ================= GROUP A =================
+def group_a(df, forest, crs, out):
+    df = normalize_order(df).sort_values("Order")
 
-    if geom.geom_type == "MultiPolygon":
-        geom = max(geom.geoms, key=lambda g: g.area)
+    coords = list(zip(df["X"], df["Y"]))
+    coords.append(coords[0])
 
-    if geom.geom_type == "GeometryCollection":
-        geom = [g for g in geom.geoms if g.geom_type in ["Polygon", "MultiPolygon"]]
-        geom = unary_union(geom)
+    poly = Polygon(coords)
+    line = LineString(coords)
 
-    return geom
+    poly_gdf = gpd.GeoDataFrame([{
+        "Forest": forest,
+        "Area": poly.area / 10000,
+        "Perim": poly.length,
+        "geometry": poly
+    }], crs=crs)
+
+    line_gdf = gpd.GeoDataFrame([{
+        "Forest": forest,
+        "geometry": line
+    }], crs=crs)
+
+    pts_gdf = gpd.GeoDataFrame(
+        df,
+        geometry=gpd.points_from_xy(df["X"], df["Y"]),
+        crs=crs
+    )
+
+    poly_gdf.to_file(os.path.join(out, "polygon.shp"))
+    line_gdf.to_file(os.path.join(out, "line.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP C (ZIP FIXED) =================
+# ================= GROUP B (UNCHANGED) =================
+def group_b(df, crs, out):
+    df = normalize_order(df)
+
+    polys, lines, pts = [], [], []
+
+    for f, g in df.groupby("Forest"):
+        for c, cg in g.groupby("Compartment"):
+
+            cg = cg.sort_values("Order")
+            coords = list(zip(cg["X"], cg["Y"]))
+            coords.append(coords[0])
+
+            poly = Polygon(coords)
+            line = LineString(coords)
+
+            polys.append({
+                "Forest": f,
+                "Compartment": c,
+                "Area": poly.area / 10000,
+                "Perim": poly.length,
+                "geometry": poly
+            })
+
+            lines.append({
+                "Forest": f,
+                "Compartment": c,
+                "geometry": line
+            })
+
+            for _, r in cg.iterrows():
+                pts.append({
+                    "Forest": f,
+                    "Compartment": c,
+                    "Order": r["Order"],
+                    "geometry": Point(r["X"], r["Y"])
+                })
+
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
+
+
+# ================= GROUP C (FIXED ZIP SAFE) =================
 def group_c(file, crs, w, h, rows, cols, out):
 
-    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
-    os.makedirs(folder, exist_ok=True)
+    if file.filename.endswith(".zip"):
+        folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+        os.makedirs(folder, exist_ok=True)
+        extract_zip(file, folder)
 
-    zip_path = os.path.join(folder, "input.zip")
-    file.save(zip_path)
+        gdf = read_shp(folder)
+        if gdf is None:
+            raise Exception("No shapefile found in ZIP")
 
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(folder)
+        poly = gdf.unary_union
 
-    shp = None
-    for root, _, files in os.walk(folder):
-        for f in files:
-            if f.endswith(".shp"):
-                shp = gpd.read_file(os.path.join(root, f))
-                break
-
-    if shp is None:
-        raise Exception("No shapefile found in ZIP")
-
-    poly = safe_polygon(shp)
+    else:
+        df = pd.read_excel(file)
+        poly = Polygon(list(zip(df["X"], df["Y"])))
 
     line = LineString(poly.exterior.coords)
 
@@ -121,28 +195,69 @@ def group_c(file, crs, w, h, rows, cols, out):
     poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
     line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
 
-    run_id = str(uuid.uuid4())
-    out = os.path.join(OUTPUT, run_id)
-    os.makedirs(out, exist_ok=True)
-
     poly_gdf.to_file(os.path.join(out, "boundary.shp"))
-    line_gdf.to_file(os.path.join(out, "line.shp"))
+    line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
     gdf.to_file(os.path.join(out, "sampleplot.shp"))
 
-    preview_name = f"{run_id}_preview.png"
-    preview_path = os.path.join(out, preview_name)
+    return poly_gdf, line_gdf, gdf
+
+
+# ================= GROUP D =================
+def group_d(df, crs, out):
+    df = normalize_order(df).sort_values("Order")
+
+    polys, lines, pts = [], [], []
+
+    for f, g in df.groupby("Forest"):
+
+        coords = list(zip(g["X"], g["Y"]))
+        coords.append(coords[0])
+
+        poly = Polygon(coords)
+        line = LineString(coords)
+
+        polys.append({
+            "Forest": f,
+            "Area": poly.area / 10000,
+            "Perim": poly.length,
+            "geometry": poly
+        })
+
+        lines.append({
+            "Forest": f,
+            "geometry": line
+        })
+
+        for _, r in g.iterrows():
+            pts.append({
+                "Forest": f,
+                "Order": r["Order"],
+                "geometry": Point(r["X"], r["Y"])
+            })
+
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
+
+
+# ================= PREVIEW =================
+def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
 
     fig, ax = plt.subplots()
 
-    poly_gdf.plot(ax=ax, facecolor="none", edgecolor="red")
-    line_gdf.plot(ax=ax, color="yellow")
-    gdf.plot(ax=ax, color="cyan", markersize=8)
+    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
+    line_gdf.plot(ax=ax, color=lc, linewidth=2)
+    pts_gdf.plot(ax=ax, color=ptc, markersize=8)
 
     plt.axis("off")
-    plt.savefig(preview_path, dpi=220)
+    plt.savefig(path, dpi=220, bbox_inches="tight")
     plt.close()
-
-    return run_id, preview_name
 
 
 # ================= MAIN =================
@@ -152,49 +267,46 @@ def upload():
     file = request.files["file"]
     mode = request.form["mode"]
     zone = request.form["zone"]
+    forest = request.form.get("forest", "FOREST")
 
     w = float(request.form.get("w", 50))
     h = float(request.form.get("h", 50))
     rows = int(request.form.get("rows", 10))
     cols = int(request.form.get("cols", 10))
 
-    crs = get_crs(zone)
-
     run_id = str(uuid.uuid4())
     out = os.path.join(OUTPUT, run_id)
     os.makedirs(out, exist_ok=True)
 
-    preview_name = f"{run_id}_preview.png"
-    preview_path = os.path.join(out, preview_name)
+    crs = get_crs(zone)
+    preview_path = os.path.join(out, "output.png")   # FIXED NAME
 
-    # ================= GROUP C =================
-    if mode == "C":
-        run_id, preview_name = group_c(file, crs, w, h, rows, cols, out)
+    if mode == "A":
+        poly, line, pts = group_a(pd.read_excel(file), forest, crs, out)
+
+    elif mode == "B":
+        poly, line, pts = group_b(pd.read_excel(file), crs, out)
+
+    elif mode == "C":
+        poly, line, pts = group_c(file, crs, w, h, rows, cols, out)
 
     else:
-        df = pd.read_excel(file)
+        poly, line, pts = group_d(pd.read_excel(file), crs, out)
 
-        coords = list(zip(df["X"], df["Y"]))
-        coords.append(coords[0])
-
-        poly = Polygon(coords)
-        line = LineString(coords)
-
-        poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
-        line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
-
-        poly_gdf.to_file(os.path.join(out, "poly.shp"))
-        line_gdf.to_file(os.path.join(out, "line.shp"))
-
-        fig, ax = plt.subplots()
-        poly_gdf.plot(ax=ax, facecolor="none", edgecolor="red")
-        line_gdf.plot(ax=ax, color="yellow")
-
-        plt.axis("off")
-        plt.savefig(preview_path, dpi=220)
-        plt.close()
+    preview(poly, line, pts, preview_path, "red", "black", "yellow")
 
     zip_buffer = zip_folder(out)
+
+    return jsonify({
+        "run_id": run_id,
+        "download": "/download/" + run_id
+    })
+
+
+@app.route("/download/<run_id>")
+def download(run_id):
+    folder = os.path.join(OUTPUT, run_id)
+    zip_buffer = zip_folder(folder)
 
     return send_file(
         zip_buffer,
