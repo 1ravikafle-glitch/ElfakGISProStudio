@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>ElfakGIS Engine Workspace</title>
     <script src="https://cdn.tailwindcss.com"></script>
+
     <style>
         body {
             background: linear-gradient(135deg, #0f3d2e, #14532d);
@@ -29,16 +30,15 @@
             <!-- FILE -->
             <div>
                 <label class="font-semibold">Upload Excel File</label>
-                <input type="file" name="file" required
-                    class="w-full border p-2 rounded">
+                <input type="file" name="file" required class="w-full border p-2 rounded">
             </div>
 
             <!-- MODE -->
             <div>
                 <label class="font-semibold">Processing Mode</label>
-                <select name="mode" class="w-full border p-2 rounded">
-                    <option value="boundary">Forest Boundary</option>
-                    <option value="compartment">Compartment Mapping</option>
+                <select name="mode" id="mode" class="w-full border p-2 rounded">
+                    <option value="boundary">Boundary of Whole Forest</option>
+                    <option value="compartment">Boundary of Segmented Forest</option>
                     <option value="sample">Sample Plot Design</option>
                 </select>
             </div>
@@ -61,19 +61,22 @@
                 </select>
             </div>
 
-            <!-- INTENSITY -->
-            <div>
-                <label class="font-semibold">Sampling Intensity (0–1)</label>
-                <input type="number" step="0.1" min="0" max="1"
-                    name="intensity" value="0.5"
-                    class="w-full border p-2 rounded">
-            </div>
+            <!-- SAMPLE SETTINGS (HIDDEN BY DEFAULT) -->
+            <div id="sample-settings" class="hidden space-y-4">
 
-            <!-- PLOT SIZE -->
-            <div>
-                <label class="font-semibold">Plot Size (m²)</label>
-                <input type="number" name="plot_size" value="500"
-                    class="w-full border p-2 rounded">
+                <div>
+                    <label class="font-semibold">Sampling Intensity (0–1)</label>
+                    <input type="number" step="0.1" min="0" max="1"
+                        name="intensity" value="0.5"
+                        class="w-full border p-2 rounded">
+                </div>
+
+                <div>
+                    <label class="font-semibold">Plot Size (m²)</label>
+                    <input type="number" name="plot_size" value="500"
+                        class="w-full border p-2 rounded">
+                </div>
+
             </div>
 
             <!-- SUBMIT -->
@@ -93,77 +96,28 @@
                 <li>✔ System generates GIS outputs</li>
                 <li>✔ Download ZIP + view map</li>
             </ul>
-
-            <hr class="my-3">
-
-            <h2 class="font-bold text-lg mb-2">📊 Output includes</h2>
-            <ul class="text-sm space-y-2">
-                <li>🗺️ Map image (PNG)</li>
-                <li>📦 Shapefiles (.shp)</li>
-                <li>📄 Excel point data</li>
-                <li>📁 ZIP download</li>
-            </ul>
         </div>
 
     </div>
-
-    <!-- RESULTS -->
-    {% if stats %}
-    <div class="mt-6 bg-white text-black p-6 rounded-2xl shadow-xl">
-
-        <h2 class="text-xl font-bold mb-3">📊 Results Summary</h2>
-
-        <div class="grid md:grid-cols-4 gap-4 text-center">
-
-            <div class="bg-green-100 p-3 rounded">
-                <p class="font-bold">Area</p>
-                <p>{{ stats.total_area }}</p>
-            </div>
-
-            <div class="bg-green-100 p-3 rounded">
-                <p class="font-bold">Perimeter</p>
-                <p>{{ stats.total_perimeter }}</p>
-            </div>
-
-            <div class="bg-green-100 p-3 rounded">
-                <p class="font-bold">Plots</p>
-                <p>{{ stats.plot_count }}</p>
-            </div>
-
-            <div class="bg-green-100 p-3 rounded">
-                <p class="font-bold">CRS</p>
-                <p>{{ stats.crs }}</p>
-            </div>
-
-        </div>
-
-        {% if download_file %}
-        <div class="mt-4 text-center">
-            <a href="{{ download_file }}"
-               class="bg-blue-600 text-white px-4 py-2 rounded-lg">
-                📥 Download ZIP Output
-            </a>
-        </div>
-        {% endif %}
-
-    </div>
-    {% endif %}
-
-    <!-- MAP OUTPUT -->
-    {% if map_images %}
-    <div class="mt-6 grid md:grid-cols-2 gap-4">
-
-        {% for name, img in map_images.items() %}
-        <div class="bg-white p-3 rounded-xl text-black shadow">
-            <h3 class="font-bold mb-2">🗺️ {{ name }}</h3>
-            <img src="/static/{{ img.split('/')[-1] }}" class="w-full rounded">
-        </div>
-        {% endfor %}
-
-    </div>
-    {% endif %}
 
 </div>
+
+<!-- ================= JS TOGGLE ================= -->
+<script>
+    const mode = document.getElementById("mode");
+    const sampleBox = document.getElementById("sample-settings");
+
+    function toggleSample() {
+        if (mode.value === "sample") {
+            sampleBox.classList.remove("hidden");
+        } else {
+            sampleBox.classList.add("hidden");
+        }
+    }
+
+    mode.addEventListener("change", toggleSample);
+    window.onload = toggleSample;
+</script>
 
 </body>
 </html>
