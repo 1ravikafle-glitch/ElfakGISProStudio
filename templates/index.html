@@ -712,116 +712,134 @@
   }
 
   // ── FILE INPUT ──
-  const fileInput  = document.getElementById('fileInput');
-  const dropZone   = document.getElementById('dropZone');
-  const dropFn     = document.getElementById('dropFilename');
-  const statusDot  = document.getElementById('statusDot');
-  const statusText = document.getElementById('statusText');
-  const runBtn     = document.getElementById('runBtn');
+const fileInput  = document.getElementById('fileInput');
+const dropZone   = document.getElementById('dropZone');
+const dropFn     = document.getElementById('dropFilename');
+const statusDot  = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const runBtn     = document.getElementById('runBtn');
 
-  function onFileSelected(f) {
-    dropFn.textContent = f.name;
-    statusDot.className = 'status-dot ready';
-    statusText.textContent = f.name;
-    runBtn.disabled = false;
+let isZipFile = false;
 
-    // .zip = backend ignores mode and always does whole boundary — lock UI accordingly
-    const isZip = f.name.toLowerCase().endsWith('.zip');
-    document.querySelectorAll('.mode-tab').forEach(t => {
-      t.disabled = isZip;
-      t.style.opacity = isZip ? '0.4' : '';
-      t.style.pointerEvents = isZip ? 'none' : '';
+function onFileSelected(f) {
+  dropFn.textContent = f.name;
+  statusDot.className = 'status-dot ready';
+  statusText.textContent = f.name;
+  runBtn.disabled = false;
+
+  isZipFile = f.name.toLowerCase().endsWith('.zip');
+
+  // Show ZIP notice only (simple + stable)
+  const zipNotice = document.getElementById('zipNotice');
+  if (isZipFile) {
+    zipNotice.style.display = 'flex';
+    zipNotice.innerHTML = "⚠ Shapefile detected — will process full boundary geometry";
+  } else {
+    zipNotice.style.display = 'none';
+  }
+
+  // DO NOT disable modes (your requirement: allow sample + zip)
+  document.querySelectorAll('.mode-tab').forEach(t => {
+    t.disabled = false;
+    t.style.opacity = '';
+    t.style.pointerEvents = '';
+  });
+}
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  if (f) onFileSelected(f);
+});
+
+// Drag & drop
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('drag-over');
+});
+
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+
+  const f = e.dataTransfer.files[0];
+  if (f) {
+    const dt = new DataTransfer();
+    dt.items.add(f);
+    fileInput.files = dt.files;
+    onFileSelected(f);
+  }
+});
+
+// ── RUN ──
+async function runAnalysis() {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const loading = document.getElementById('loadingOverlay');
+  const errorBox = document.getElementById('errorBox');
+  const img = document.getElementById('preview-img');
+  const emptyState = document.getElementById('emptyState');
+
+  runBtn.classList.add('loading');
+  runBtn.disabled = true;
+  loading.classList.add('visible');
+  errorBox.classList.remove('show');
+  img.classList.remove('show');
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('mode', currentMode);
+  fd.append('zone', document.getElementById('zone').value);
+
+  // boundary only options
+  if (currentMode === 'boundary') {
+    fd.append('order_mode', document.getElementById('order_mode').value);
+  }
+
+  // sample mode options
+  if (currentMode === 'sample') {
+    fd.append('cell_width', document.getElementById('cell_width').value || 0);
+    fd.append('cell_height', document.getElementById('cell_height').value || 0);
+    fd.append('rows', document.getElementById('rows').value || 10);
+    fd.append('cols', document.getElementById('cols').value || 10);
+  }
+
+  try {
+    const res = await fetch('/preview', {
+      method: 'POST',
+      body: fd
     });
-    if (isZip) {
-      setMode('boundary', document.querySelector('.mode-tab[data-mode="boundary"]'));
-      document.getElementById('zipNotice').style.display = 'flex';
-    } else {
-      document.getElementById('zipNotice').style.display = 'none';
-      document.querySelectorAll('.mode-tab').forEach(t => {
-        t.style.opacity = ''; t.style.pointerEvents = '';
-      });
+
+    const data = await res.json();
+
+    if (!data.image) {
+      throw new Error(data.error || 'Processing failed');
     }
+
+    emptyState.style.display = 'none';
+    img.src = data.image + '?t=' + Date.now();
+
+    img.onload = () => img.classList.add('show');
+
+    statusDot.className = 'status-dot ready';
+    statusText.textContent = 'Preview ready';
+
+  } catch (err) {
+    errorBox.textContent = '⚠ ' + err.message;
+    errorBox.classList.add('show');
+
+    statusDot.className = 'status-dot error';
+    statusText.textContent = 'Error — check file';
+  } finally {
+    loading.classList.remove('visible');
+    runBtn.classList.remove('loading');
+    runBtn.disabled = false;
   }
-
-  fileInput.addEventListener('change', () => {
-    const f = fileInput.files[0];
-    if (f) onFileSelected(f);
-  });
-
-  // Drag & drop
-  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    const f = e.dataTransfer.files[0];
-    if (f) {
-      const dt = new DataTransfer();
-      dt.items.add(f);
-      fileInput.files = dt.files;
-      onFileSelected(f);
-    }
-  });
-
-  // ── RUN ──
-  async function runAnalysis() {
-    const file = fileInput.files[0];
-    if (!file) return;
-
-    const loading = document.getElementById('loadingOverlay');
-    const errorBox = document.getElementById('errorBox');
-    const img = document.getElementById('preview-img');
-    const emptyState = document.getElementById('emptyState');
-
-    // UI → loading
-    runBtn.classList.add('loading');
-    runBtn.disabled = true;
-    loading.classList.add('visible');
-    errorBox.classList.remove('show');
-    img.classList.remove('show');
-
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('mode', currentMode);
-    fd.append('zone', document.getElementById('zone').value);
-
-    // order_mode only used by backend for boundary mode
-    if (currentMode === 'boundary') {
-      fd.append('order_mode', document.getElementById('order_mode').value);
-    }
-
-    if (currentMode === 'sample') {
-      // Send 0 for cell_width/height when blank — backend treats 0 as "auto-calc from bounds"
-      fd.append('cell_width',  document.getElementById('cell_width').value  || 0);
-      fd.append('cell_height', document.getElementById('cell_height').value || 0);
-      fd.append('rows',        document.getElementById('rows').value        || 10);
-      fd.append('cols',        document.getElementById('cols').value        || 10);
-    }
-
-    try {
-      const res  = await fetch('/preview', { method: 'POST', body: fd });
-      const data = await res.json();
-
-      if (data.image) {
-        emptyState.style.display = 'none';
-        img.src = data.image + '?t=' + Date.now();
-        img.onload = () => img.classList.add('show');
-        statusDot.className = 'status-dot ready';
-        statusText.textContent = 'Preview ready';
-      } else {
-        throw new Error(data.error || 'Unknown error');
-      }
-    } catch (err) {
-      errorBox.textContent = '⚠ ' + err.message;
-      errorBox.classList.add('show');
-      statusDot.className = 'status-dot error';
-      statusText.textContent = 'Error — check input file';
-    } finally {
-      loading.classList.remove('visible');
-      runBtn.classList.remove('loading');
-      runBtn.disabled = false;
-    }
-  }
+}
 </script>
 
 </body>
