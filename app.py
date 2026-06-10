@@ -1,277 +1,248 @@
 import os
 import zipfile
-import tempfile
 import pandas as pd
 import geopandas as gpd
-import matplotlib
-matplotlib.use("Agg")
+import streamlit as st
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, jsonify, send_file
-from shapely.geometry import Point, LineString, Polygon, box, MultiPolygon
+from shapely.geometry import Point, LineString, Polygon
+from io import BytesIO
 
-app = Flask(__name__)
+# =========================
+# APP CONFIG
+# =========================
+st.set_page_config(page_title="Community Forest GIS Tool", layout="centered")
 
-UPLOAD = "uploads"
-STATIC = "static"
-OUTPUT = "output"
+OUTPUT_FOLDER = "OUTPUT"
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-os.makedirs(UPLOAD, exist_ok=True)
-os.makedirs(STATIC, exist_ok=True)
-os.makedirs(OUTPUT, exist_ok=True)
+st.title("🌲 Community Forest GIS Tool (Unified App)")
 
-# =====================================================
-# CRS
-# =====================================================
+
+# =========================
+# CRS FUNCTION
+# =========================
 def get_crs(zone):
-    return "EPSG:32644" if str(zone) == "44" else "EPSG:32645"
+    return "EPSG:32644" if zone == "44" else "EPSG:32645"
 
 
-# =====================================================
-# SAFE GEOMETRY
-# =====================================================
-def normalize_geom(geom):
-    if geom is None:
-        return []
-    if isinstance(geom, Polygon):
-        return [geom]
-    if isinstance(geom, MultiPolygon):
-        return [g for g in geom.geoms if g.is_valid]
-    return []
+# =========================
+# ZIP FUNCTION
+# =========================
+def make_zip(folder_path):
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
+    zip_buffer.seek(0)
+    return zip_buffer
 
 
-# =====================================================
-# LOAD SHAPEFILE ZIP
-# =====================================================
-def load_shapefile(zip_path):
-    temp_dir = tempfile.mkdtemp()
+# =========================
+# MODE SELECTION
+# =========================
+mode = st.radio(
+    "Select Processing Mode",
+    [
+        "🌳 Whole Forest Boundary",
+        "🌲 Segmented Forest (Compartment-wise)"
+    ]
+)
 
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(temp_dir)
-
-    shp = None
-    for f in os.listdir(temp_dir):
-        if f.endswith(".shp"):
-            shp = os.path.join(temp_dir, f)
-            break
-
-    if shp is None:
-        return None
-
-    gdf = gpd.read_file(shp)
-    return gdf.geometry.unary_union
+uploaded_file = st.file_uploader("📤 Upload Excel File", type=["xlsx", "xls"])
+zone = st.radio("UTM Zone", ["44", "45"], index=1)
 
 
-# =====================================================
-# BUILD POINTS
-# =====================================================
-def build_points(df):
-    df["X"] = pd.to_numeric(df["X"], errors="coerce")
-    df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
-    df = df.dropna(subset=["X", "Y"])
-    return df, [Point(xy) for xy in zip(df["X"], df["Y"])]
+# ============================================================
+# MODE 1: WHOLE FOREST BOUNDARY
+# ============================================================
+def process_whole_forest(file, zone):
+    df = pd.read_excel(file)
 
-
-# =====================================================
-# BUILD POLYGON
-# =====================================================
-def build_polygon(coords):
-    if len(coords) < 3:
-        return None
-
-    if coords[0] != coords[-1]:
-        coords.append(coords[0])
-
-    poly = Polygon(coords).buffer(0)
-    if not poly.is_valid:
-        return None
-
-    line = LineString(coords)
-    return poly, line
-
-
-# =====================================================
-# SAMPLE GRID
-# =====================================================
-def build_sample(poly, w, h, rows, cols):
-    if poly is None or poly.is_empty:
-        return []
-
-    minx, miny, maxx, maxy = poly.bounds
-    samples = []
-
-    for i in range(cols):
-        for j in range(rows):
-
-            x = minx + i * w
-            y = miny + j * h
-
-            cell = box(x, y, x + w, y + h)
-
-            if not cell.intersects(poly):
-                continue
-
-            clipped = cell.intersection(poly)
-            if not clipped.is_empty:
-                samples.append(clipped.centroid)
-
-    return samples
-
-
-# =====================================================
-# SAVE MAP (PROFESSIONAL STYLE)
-# =====================================================
-def save_map(fig, name):
-    path = os.path.join(STATIC, f"{name}.png")
-    fig.savefig(path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return f"/static/{name}.png"
-
-
-# =====================================================
-# FOREST EXPORT (NEW FEATURE FROM TKINTER)
-# =====================================================
-def export_forest(df, crs, forest_name):
-
-    forest_folder = os.path.join(OUTPUT, forest_name)
-    os.makedirs(forest_folder, exist_ok=True)
-
-    all_points = []
-    all_lines = []
-    all_polygons = []
-
-    for comp, g in df.groupby("Compartment"):
-
-        g = g.sort_values("Order")
-
-        coords = list(zip(g["X"], g["Y"]))
-        poly_line = build_polygon(coords)
-
-        if not poly_line:
-            continue
-
-        poly, line = poly_line
-
-        all_polygons.append({
-            "Forest": forest_name,
-            "Comp": comp,
-            "Area_Ha": poly.area / 10000,
-            "geometry": poly
-        })
-
-        all_lines.append({
-            "Forest": forest_name,
-            "Comp": comp,
-            "geometry": line
-        })
-
-        for _, r in g.iterrows():
-            all_points.append({
-                "Forest": forest_name,
-                "Comp": comp,
-                "geometry": Point(r["X"], r["Y"])
-            })
-
-    if not all_polygons:
-        return None
-
-    gdf_p = gpd.GeoDataFrame(all_points, crs=crs)
-    gdf_l = gpd.GeoDataFrame(all_lines, crs=crs)
-    gdf_poly = gpd.GeoDataFrame(all_polygons, crs=crs)
-
-    p1 = os.path.join(forest_folder, "points.shp")
-    p2 = os.path.join(forest_folder, "lines.shp")
-    p3 = os.path.join(forest_folder, "polygons.shp")
-
-    gdf_p.to_file(p1)
-    gdf_l.to_file(p2)
-    gdf_poly.to_file(p3)
-
-    # ZIP
-    zip_path = os.path.join(OUTPUT, f"{forest_name}.zip")
-    with zipfile.ZipFile(zip_path, "w") as z:
-        for f in os.listdir(forest_folder):
-            z.write(os.path.join(forest_folder, f), arcname=f)
-
-    return zip_path
-
-
-# =====================================================
-# ROUTE
-# =====================================================
-@app.route("/preview", methods=["POST"])
-def preview():
-
-    file = request.files["file"]
-    mode = request.form.get("mode")
-    zone = request.form.get("zone", "45")
-
-    path = os.path.join(UPLOAD, file.filename)
-    file.save(path)
+    required = ["Forest", "X", "Y", "Order"]
+    for c in required:
+        if c not in df.columns:
+            st.error(f"Missing column: {c}")
+            return {}
 
     crs = get_crs(zone)
+    grouped = df.groupby("Forest")
 
-    try:
+    results = {}
 
-        # ================= ZIP =================
-        if path.endswith(".zip"):
-            geom = load_shapefile(path)
-            geom_list = normalize_geom(geom)
+    for forest, group in grouped:
+        group = group.sort_values("Order")
+        group["X"] = pd.to_numeric(group["X"], errors="coerce")
+        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+        group = group.dropna()
 
-            if not geom_list:
-                return jsonify({"error": "Invalid shapefile"})
+        coords = list(zip(group["X"], group["Y"]))
+        if len(coords) < 3:
+            continue
 
-            poly = geom_list[0]
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
 
-        # ================= EXCEL =================
+        polygon = Polygon(coords).buffer(0)
+        if not polygon.is_valid:
+            continue
+
+        line = LineString(coords)
+
+        area_ha = polygon.area / 10000
+
+        gdf_points = gpd.GeoDataFrame(
+            group.copy(),
+            geometry=[Point(xy) for xy in coords[:len(group)]],
+            crs=crs
+        )
+
+        gdf_line = gpd.GeoDataFrame(geometry=[line], crs=crs)
+
+        gdf_poly = gpd.GeoDataFrame(
+            {"Forest": [forest], "Area_Ha": [round(area_ha, 4)]},
+            geometry=[polygon],
+            crs=crs
+        )
+
+        folder = os.path.join(OUTPUT_FOLDER, f"whole_{forest}")
+        os.makedirs(folder, exist_ok=True)
+
+        gdf_points.to_file(os.path.join(folder, "points.shp"))
+        gdf_line.to_file(os.path.join(folder, "line.shp"))
+        gdf_poly.to_file(os.path.join(folder, "polygon.shp"))
+
+        results[forest] = make_zip(folder)
+
+    return results
+
+
+# ============================================================
+# MODE 2: SEGMENTED FOREST
+# ============================================================
+def process_segmented(file, zone):
+    df = pd.read_excel(file)
+
+    required = ["Forest", "Compartment", "X", "Y", "Order"]
+    for c in required:
+        if c not in df.columns:
+            st.error(f"Missing column: {c}")
+            return {}
+
+    crs = get_crs(zone)
+    grouped = df.groupby("Forest")
+
+    results = {}
+
+    for forest_name, group in grouped:
+
+        all_points = []
+        all_lines = []
+        all_polygons = []
+
+        group["X"] = pd.to_numeric(group["X"], errors="coerce")
+        group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+        group = group.dropna(subset=["X", "Y"])
+
+        for comp, comp_group in group.groupby("Compartment"):
+            comp_group = comp_group.sort_values("Order")
+
+            coords = list(zip(comp_group["X"], comp_group["Y"]))
+            if len(coords) < 3:
+                continue
+
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])
+
+            polygon = Polygon(coords).buffer(0)
+            if not polygon.is_valid:
+                continue
+
+            line = LineString(coords)
+
+            area_ha = polygon.area / 10000
+            perimeter = polygon.length
+
+            all_polygons.append({
+                "Forest": str(forest_name),
+                "Comp": str(comp),
+                "Area_Ha": round(area_ha, 4),
+                "Perim_M": round(perimeter, 2),
+                "geometry": polygon
+            })
+
+            all_lines.append({
+                "Forest": str(forest_name),
+                "Comp": str(comp),
+                "geometry": line
+            })
+
+            for _, r in comp_group.iterrows():
+                all_points.append({
+                    "Forest": str(forest_name),
+                    "Comp": str(comp),
+                    "Order": r["Order"],
+                    "geometry": Point(r["X"], r["Y"])
+                })
+
+        if not all_polygons:
+            continue
+
+        gdf_points = gpd.GeoDataFrame(all_points, crs=crs)
+        gdf_lines = gpd.GeoDataFrame(all_lines, crs=crs)
+        gdf_polygons = gpd.GeoDataFrame(all_polygons, crs=crs)
+
+        folder = os.path.join(OUTPUT_FOLDER, f"seg_{forest_name}")
+        os.makedirs(folder, exist_ok=True)
+
+        gdf_points.to_file(os.path.join(folder, "points.shp"))
+        gdf_lines.to_file(os.path.join(folder, "lines.shp"))
+        gdf_polygons.to_file(os.path.join(folder, "polygons.shp"))
+
+        # Map preview
+        fig, ax = plt.subplots(figsize=(6, 6))
+        gdf_polygons.plot(ax=ax, alpha=0.4, edgecolor="black")
+        gdf_points.plot(ax=ax, color="red", markersize=15)
+
+        for _, row in gdf_polygons.iterrows():
+            c = row.geometry.centroid
+            ax.text(c.x, c.y, str(row["Comp"]), fontsize=8)
+
+        ax.set_title(forest_name)
+        ax.axis("off")
+
+        st.pyplot(fig)
+
+        results[forest_name] = make_zip(folder)
+
+    return results
+
+
+# =========================
+# RUN APP
+# =========================
+if uploaded_file:
+
+    if st.button("🚀 Run Processing"):
+
+        if mode == "🌳 Whole Forest Boundary":
+            results = process_whole_forest(uploaded_file, zone)
+
         else:
-            df = pd.read_excel(path)
+            results = process_segmented(uploaded_file, zone)
 
-        # ================= COMPARTMENT =================
-        if mode == "compartment":
+        if not results:
+            st.warning("No valid outputs generated.")
+        else:
+            st.success("Processing completed!")
 
-            if df is None:
-                return jsonify({"error": "Excel required"})
-
-            forest_name = "FOREST"
-            zip_file = export_forest(df, crs, forest_name)
-
-            if not zip_file:
-                return jsonify({"error": "No valid geometry"})
-
-            return jsonify({"download": f"/download/{os.path.basename(zip_file)}"})
-
-        # ================= SAMPLE =================
-        if mode == "sample":
-
-            base_poly = poly if "poly" in locals() else build_polygon(list(zip(df["X"], df["Y"])))[0]
-
-            w = float(request.form.get("cell_width", 100))
-            h = float(request.form.get("cell_height", 100))
-
-            samples = build_sample(base_poly, w, h, 10, 10)
-
-            fig, ax = plt.subplots()
-
-            ax.plot(*base_poly.exterior.xy, "blue")
-            for s in samples:
-                ax.scatter(s.x, s.y, color="red")
-
-            return jsonify({"image": save_map(fig, "sample")})
-
-        return jsonify({"error": "Invalid mode"})
-
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-
-# =====================================================
-# DOWNLOAD ROUTE (NEW)
-# =====================================================
-@app.route("/download/<filename>")
-def download(filename):
-    return send_file(os.path.join(OUTPUT, filename), as_attachment=True)
-
-
-if __name__ == "__main__":
-    app.run(debug=True)
+            for name, zip_buffer in results.items():
+                st.download_button(
+                    label=f"⬇ Download {name} ZIP",
+                    data=zip_buffer,
+                    file_name=f"{name}.zip",
+                    mime="application/zip"
+                )
