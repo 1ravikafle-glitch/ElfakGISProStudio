@@ -127,12 +127,25 @@ def build_compartment(df, crs):
 
 
 # =====================================================
-# SAMPLE FISHNET
+# SAMPLE FISHNET (SAFE FIXED)
 # =====================================================
 def build_sample(poly, w, h, rows, cols):
 
+    if poly is None or poly.is_empty:
+        return []
+
+    if not poly.is_valid:
+        poly = poly.buffer(0)
+
     minx, miny, maxx, maxy = poly.bounds
     samples = []
+
+    # auto-limit grid to avoid empty output
+    max_cols = max(1, int((maxx - minx) // w) + 1)
+    max_rows = max(1, int((maxy - miny) // h) + 1)
+
+    cols = min(cols, max_cols)
+    rows = min(rows, max_rows)
 
     for i in range(cols):
         for j in range(rows):
@@ -141,6 +154,10 @@ def build_sample(poly, w, h, rows, cols):
             y = miny + j * h
 
             cell = box(x, y, x + w, y + h)
+
+            if not cell.intersects(poly):
+                continue
+
             clipped = cell.intersection(poly)
 
             if not clipped.is_empty:
@@ -233,6 +250,7 @@ def preview():
         line = None
         pts = None
         df = None
+        crs = get_crs(zone)
 
         # ================= ZIP =================
         if path.endswith(".zip"):
@@ -253,7 +271,6 @@ def preview():
         # ================= EXCEL =================
         else:
             df = pd.read_excel(path)
-            crs = get_crs(zone)
 
         # ================= BOUNDARY =================
         if mode == "boundary":
@@ -273,13 +290,13 @@ def preview():
             data = build_compartment(df, crs)
             return jsonify({"image": preview_compartment(data)})
 
-        # ================= SAMPLE (FIXED FOR ZIP + EXCEL) =================
+        # ================= SAMPLE (FIXED) =================
         if mode == "sample":
 
-            if poly:
-                base_poly = poly
-            else:
-                _, _, base_poly = build_whole(df)
+            base_poly = poly if poly else build_whole(df)[2]
+
+            if base_poly is None:
+                return jsonify({"error": "No boundary found for sampling"})
 
             w = float(request.form.get("cell_width", 100))
             h = float(request.form.get("cell_height", 100))
@@ -287,6 +304,9 @@ def preview():
             cols = int(request.form.get("cols", 10))
 
             samples = build_sample(base_poly, w, h, rows, cols)
+
+            if len(samples) == 0:
+                return jsonify({"error": "No sample points generated. Adjust grid size."})
 
             return jsonify({"image": preview_sample(base_poly, samples)})
 
