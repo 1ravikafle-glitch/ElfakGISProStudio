@@ -1,70 +1,401 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>Forest GIS Tool</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forest GIS Control Panel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary: #143a2f;       /* Deep Forest Velvet */
+            --primary-light: #f0f5f2; /* Light Sage Tint */
+            --accent: #2e7d32;        /* Vibrant GIS Green */
+            --bg-main: #f8faf9;       /* Light neutral back-drop */
+            --bg-card: #ffffff;
+            --text-main: #1e293b;     /* Slate 800 */
+            --text-muted: #64748b;    /* Slate 500 */
+            --border: #e2e8f0;       /* Slate 200 */
+            --radius: 10px;
+            --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05), 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+        }
 
-<style>
-body {font-family: Arial; background:#eef5ee; text-align:center;}
-.container {width:60%; margin:auto; background:white; padding:20px; border-radius:10px;}
-input, select {padding:10px; width:80%; margin:8px;}
-button {background:green; color:white; padding:10px 20px; border:none;}
-</style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 50px 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--bg-card);
+            padding: 45px;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+
+        /* Header Architecture */
+        .header {
+            text-align: left;
+            margin-bottom: 35px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 25px;
+        }
+
+        .header h2 {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 6px;
+        }
+
+        .header p {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        /* Schema Guide Grid */
+        .schema-container {
+            margin-bottom: 35px;
+        }
+
+        .schema-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.75px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .schema-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .schema-card {
+            background-color: var(--primary-light);
+            border-left: 4px solid var(--accent);
+            padding: 14px 18px;
+            border-radius: 4px var(--radius) var(--radius) 4px;
+            font-size: 13px;
+        }
+
+        .schema-card strong {
+            color: var(--primary);
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .schema-code {
+            font-family: 'Courier New', Courier, monospace;
+            background: rgba(0, 0, 0, 0.05);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        /* 2-Column Responsive Form Layout */
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 35px;
+        }
+
+        .span-full {
+            grid-column: span 2;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        label {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Interactive Inputs styling */
+        input[type="text"],
+        input[type="number"],
+        select {
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-family: inherit;
+            font-size: 14px;
+            color: var(--text-main);
+            background-color: #ffffff;
+            transition: all 0.2s ease-in-out;
+            width: 100%;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(46, 125, 50, 0.1);
+        }
+
+        /* Elegant Drag & Drop Box */
+        .file-upload-wrapper {
+            position: relative;
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 35px 20px;
+            text-align: center;
+            background: #fafbfb;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .file-upload-wrapper:hover {
+            border-color: var(--accent);
+            background: #f4f7f5;
+        }
+
+        .file-upload-wrapper input[type="file"] {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .file-upload-text {
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+        
+        .file-upload-text b {
+            color: var(--accent);
+        }
+
+        /* Action Buttons */
+        .btn {
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            padding: 14px 30px;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 12px rgba(20, 58, 47, 0.15);
+        }
+
+        .btn-primary:hover {
+            background: #0d2820;
+            transform: translateY(-1px);
+        }
+
+        .btn-download {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-download:hover {
+            background: #225e25;
+        }
+
+        /* Results Display Window */
+        .output-section {
+            margin-top: 45px;
+            border-top: 1px solid var(--border);
+            padding-top: 35px;
+        }
+
+        .output-section h3 {
+            font-size: 18px;
+            color: var(--primary);
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+
+        .map-preview {
+            max-width: 100%;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            display: block;
+            margin-bottom: 25px;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .form-grid, .schema-grid {
+                grid-template-columns: 1fr;
+            }
+            .span-full {
+                grid-column: span 1;
+            }
+            body {
+                padding: 20px 10px;
+            }
+            .container {
+                padding: 25px 20px;
+            }
+        }
+    </style>
 </head>
-
 <body>
 
 <div class="container">
 
-<h2>🌲 Forest GIS Engine</h2>
+    <div class="header">
+        <h2>🌲 Forest GIS Engine</h2>
+        <p>Convert structured tabular data into validated geospatial shapefiles and coordinate grids.</p>
+    </div>
 
-<h4>Excel Format Required:</h4>
-<p>
-<b>Whole:</b> Order | Forest | X | Y <br>
-<b>Compartment:</b> Order | Forest | Compartment | X | Y
-</p>
+    <div class="schema-container">
+        <div class="schema-title">Required Excel Layout Structure</div>
+        <div class="schema-grid">
+            <div class="schema-card">
+                <strong>Whole Forest Mode</strong>
+                <span class="schema-code">Order | Forest | X | Y</span>
+            </div>
+            <div class="schema-card">
+                <strong>Compartment Mode</strong>
+                <span class="schema-code">Order | Forest | Compartment | X | Y</span>
+            </div>
+        </div>
+    </div>
 
-<form method="POST" action="/upload" enctype="multipart/form-data">
+    <form method="POST" action="/upload" enctype="multipart/form-data">
+        
+        <div class="form-grid">
+            
+            <div class="form-group span-full">
+                <label>Data Source Attachment</label>
+                <div class="file-upload-wrapper">
+                    <input type="file" name="file" required onchange="updateFileName(this)">
+                    <div class="file-upload-text" id="file-text">
+                        📂 Drag and drop your target Excel file here, or <b>browse directories</b>
+                    </div>
+                </div>
+            </div>
 
-<input type="file" name="file" required><br>
+            <div class="form-group">
+                <label for="mode">Processing Engine Mode</label>
+                <select name="mode" id="mode" onchange="toggleSamplingFields()">
+                    <option value="boundary">Whole Forest Boundary Map</option>
+                    <option value="compartment">Compartment Forest Segmentation</option>
+                    <option value="sample">Sample Plot Estimation (Fishnet Grid)</option>
+                </select>
+            </div>
 
-<select name="mode">
-<option value="boundary">Whole Forest</option>
-<option value="compartment">Compartment Forest</option>
-<option value="sample">Sample Plot (Fishnet)</option>
-</select><br>
+            <div class="form-group">
+                <label for="zone">Target Projection Profile</label>
+                <select name="zone" id="zone">
+                    <option value="45">UTM Zone 45N</option>
+                    <option value="44">UTM Zone 44N</option>
+                </select>
+            </div>
 
-<select name="zone">
-<option value="45">UTM 45N</option>
-<option value="44">UTM 44N</option>
-</select><br>
+            <div class="form-group span-full">
+                <label for="order_mode">Vertex Ordering Algorithm</label>
+                <select name="order_mode" id="order_mode">
+                    <option value="auto">Auto-Sort Order (Corrects overlapping lines automatically)</option>
+                    <option value="manual">Preserve Hardcoded Spreadsheet Sequence</option>
+                </select>
+            </div>
 
-<select name="order_mode">
-<option value="auto">Auto Reset Order</option>
-<option value="manual">Keep Excel Order</option>
-</select><br>
+            <div class="form-group sample-field hidden">
+                <label>Sampling Intensity Target (%)</label>
+                <input type="number" name="intensity" value="0.5" step="0.1" min="0.1" max="100" placeholder="e.g., 0.5">
+            </div>
 
-<input type="number" name="intensity" value="0.5" step="0.1" placeholder="Sampling Intensity %">
-<input type="number" name="plot_size" value="500" placeholder="Plot size m²">
+            <div class="form-group sample-field hidden">
+                <label>Calculated Plot Area Size (m²)</label>
+                <input type="number" name="plot_size" value="500" min="1" placeholder="e.g., 500">
+            </div>
 
-<br><br>
+        </div>
 
-<button type="submit">Generate GIS Output</button>
+        <button type="submit" class="btn btn-primary">⚡ Execute Structural Analysis</button>
 
-</form>
+    </form>
 
-{% if map_image %}
-<h3>Preview</h3>
-<img src="/{{ map_image }}">
-{% endif %}
+    {% if map_image %}
+    <div class="output-section">
+        <h3>Generated Structural Spatial Map</h3>
+        <img src="/{{ map_image }}" class="map-preview" alt="Generated Forest Spatial Output">
+    </div>
+    {% endif %}
 
-{% if download_file %}
-<br><br>
-<a href="/{{ download_file }}" download>
-<button>Download ZIP</button>
-</a>
-{% endif %}
+    {% if download_file %}
+    <div class="output-section" style="text-align: center; border-top: none; padding-top: 0;">
+        <a href="/{{ download_file }}" download style="display: inline-block; width: 100%; max-width: 400px; text-decoration: none;">
+            <button class="btn btn-download">📦 Download Comprehensive Spatial Package (ZIP)</button>
+        </a>
+    </div>
+    {% endif %}
 
 </div>
+
+<script>
+    // Handles clear text updates when spreadsheets are detached/attached
+    function updateFileName(input) {
+        const textDisplay = document.getElementById('file-text');
+        if (input.files && input.files.length > 0) {
+            textDisplay.innerHTML = `📊 Target Attached: <b>${input.files[0].name}</b>`;
+        } else {
+            textDisplay.innerHTML = `📂 Drag and drop your target Excel file here, or <b>browse directories</b>`;
+        }
+    }
+
+    // Displays contextual measurement inputs only when "Sample Plot" calculations are selected
+    function toggleSamplingFields() {
+        const selectedMode = document.getElementById('mode').value;
+        const subFields = document.querySelectorAll('.sample-field');
+        
+        subFields.forEach(field => {
+            if (selectedMode === 'sample') {
+                field.classList.remove('hidden');
+            } else {
+                field.classList.add('hidden');
+            }
+        });
+    }
+
+    // Verify initial layout parameters match engine configurations on page render
+    window.onload = toggleSamplingFields;
+</script>
 
 </body>
 </html>
