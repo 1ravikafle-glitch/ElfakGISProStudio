@@ -5,8 +5,8 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import math
 
-from flask import Flask, render_template, request
-from shapely.geometry import Polygon, Point   # FIX: Point was missing
+from flask import Flask, render_template, request, send_file
+from shapely.geometry import Polygon, Point
 
 app = Flask(__name__)
 
@@ -87,7 +87,9 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
     out_dir = os.path.join(OUTPUT, base)
     os.makedirs(out_dir, exist_ok=True)
 
-    zip_path = os.path.join(OUTPUT, f"{base}.zip")
+    zip_name = f"{base}.zip"
+    zip_path = os.path.join(OUTPUT, zip_name)
+
     map_images = {}
 
     total_area_m2 = 0.0
@@ -133,7 +135,7 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
             map_images[forest] = make_map(gdf, forest, f"{forest}_boundary")
 
 
-    # ================= COMPARTMENT (FIXED + WORKING) =================
+    # ================= COMPARTMENT =================
     elif mode == "compartment":
 
         for forest, group in df.groupby("Forest"):
@@ -265,7 +267,8 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
     with zipfile.ZipFile(zip_path, "w") as z:
         for root, _, files in os.walk(out_dir):
             for f in files:
-                z.write(os.path.join(root, f), arcname=f)
+                full_path = os.path.join(root, f)
+                z.write(full_path, arcname=f)
 
     stats = {
         "total_area": f"{round(total_area_m2 / 10000, 2)} ha",
@@ -275,7 +278,7 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
         "crs": f"UTM {zone}N"
     }
 
-    return zip_path, map_images, stats
+    return zip_name, map_images, stats
 
 
 # ================= ROUTES =================
@@ -313,6 +316,12 @@ def upload():
         chosen_intensity=intensity,
         chosen_plot_size=plot_size
     )
+
+
+# ================= DOWNLOAD ROUTE (FIX) =================
+@app.route("/download/<filename>")
+def download(filename):
+    return send_file(os.path.join(OUTPUT, filename), as_attachment=True)
 
 
 if __name__ == "__main__":
