@@ -3,10 +3,12 @@ import zipfile
 import tempfile
 import pandas as pd
 import geopandas as gpd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import Flask, render_template, request, send_file, jsonify
-from shapely.geometry import Polygon, Point, LineString, MultiPolygon
+from shapely.geometry import Polygon, Point, LineString
 
 app = Flask(__name__)
 
@@ -20,79 +22,72 @@ os.makedirs(STATIC, exist_ok=True)
 
 
 # ================= CRS =================
-def get_crs(z):
-    return "EPSG:32644" if str(z) == "44" else "EPSG:32645"
+def get_crs(zone):
+    return "EPSG:32644" if str(zone) == "44" else "EPSG:32645"
 
 
-# ================= LOAD ZIP SHAPEFILE =================
-def load_shapefile_from_zip(zip_path):
+# ================= ZIP SHAPEFILE LOADER =================
+def load_shapefile(zip_path):
     temp_dir = tempfile.mkdtemp()
 
     with zipfile.ZipFile(zip_path, "r") as z:
         z.extractall(temp_dir)
 
-    shp_file = None
     for f in os.listdir(temp_dir):
         if f.endswith(".shp"):
-            shp_file = os.path.join(temp_dir, f)
-            break
+            return gpd.read_file(os.path.join(temp_dir, f)).geometry.unary_union
 
-    if shp_file is None:
-        raise Exception("No .shp found in ZIP")
-
-    gdf = gpd.read_file(shp_file)
-    return gdf.geometry.unary_union
+    raise Exception("No shapefile found")
 
 
-# ================= BUILD POLYGON (WHOLE) =================
-def build_polygon_excel(df):
+# ================= WHOLE BOUNDARY (EXACT ORDER LOGIC) =================
+def build_whole_boundary(df):
+    df = df.sort_values("Order")
+
     coords = list(zip(df["X"], df["Y"]))
-    coords.append(coords[0])
-    return Polygon(coords)
+    if coords[0] != coords[-1]:
+        coords.append(coords[0])
+
+    poly = Polygon(coords).buffer(0)
+    return poly
 
 
-# ================= SEGMENTED POLYGONS =================
-def build_segmented_polygons(df):
-    """
-    Uses Compartment grouping:
-    C1 -> rows 1-7
-    C2 -> rows 8-15 etc.
-    """
+# ================= SEGMENTED BOUNDARY (TKINTER-ACCURATE LOGIC) =================
+def build_segmented(df):
+    polygons = []
 
-    polygons = {}
+    df = df.copy()
+    df["X"] = pd.to_numeric(df["X"], errors="coerce")
+    df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
+    df = df.dropna(subset=["X", "Y"])
 
     for comp, group in df.groupby("Compartment"):
         group = group.sort_values("Order")
 
         coords = list(zip(group["X"], group["Y"]))
-        coords.append(coords[0])
 
-        polygons[comp] = Polygon(coords)
+        if len(coords) < 3:
+            continue
+
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+
+        poly = Polygon(coords).buffer(0)
+
+        if not poly.is_valid:
+            continue
+
+        polygons.append(poly)
 
     return polygons
 
 
-# ================= GEOMETRY EXPORT (POINT/LINE/POLYGON) =================
-def export_layers(gdf, out_dir, name):
-    point_gdf = gdf.copy()
-    line_gdf = gdf.copy()
-    poly_gdf = gdf.copy()
-
-    point_gdf["geometry"] = point_gdf.centroid
-    line_gdf["geometry"] = LineString(list(gdf.geometry.iloc[0].coords)) if hasattr(gdf.geometry.iloc[0], "coords") else None
-    poly_gdf = gdf.copy()
-
-    point_path = os.path.join(out_dir, f"{name}_point.shp")
-    line_path = os.path.join(out_dir, f"{name}_line.shp")
-    poly_path = os.path.join(out_dir, f"{name}_polygon.shp")
-
-    point_gdf.to_file(point_path)
-    poly_gdf.to_file(poly_path)
-
-    if line_gdf.geometry.iloc[0] is not None:
-        line_gdf.to_file(line_path)
-
-    return point_path, line_path, poly_path
+# ================= SAMPLE PLOT (KEEP AS-IS SIMPLE) =================
+def build_sample(df):
+    df = df.sort_values("Order")
+    coords = list(zip(df["X"], df["Y"]))
+    coords.append(coords[0])
+    return Polygon(coords)
 
 
 # ================= PREVIEW =================
@@ -101,12 +96,15 @@ def make_preview(geom, title):
 
     if isinstance(geom, Polygon):
         x, y = geom.exterior.xy
-        ax.plot(x, y, "r")
+        ax.plot(x, y, "r-", linewidth=2)
 
-    elif isinstance(geom, MultiPolygon):
-        for g in geom.geoms:
+    elif isinstance(geom, list):  # segmented
+        for g in geom:
             x, y = g.exterior.xy
-            ax.plot(x, y, "r")
+            ax.plot(x, y, "g-", linewidth=2)
+
+    elif isinstance(geom, gpd.GeoSeries):
+        geom.plot(ax=ax, color="red")
 
     ax.set_title(title)
     ax.set_axis_off()
@@ -118,13 +116,13 @@ def make_preview(geom, title):
     return "/static/preview.png"
 
 
-# ================= ROUTE =================
+# ================= HOME =================
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# ================= PREVIEW API (MODE CONTROLLED) =================
+# ================= PREVIEW API =================
 @app.route("/preview", methods=["POST"])
 def preview():
     file = request.files["file"]
@@ -134,27 +132,25 @@ def preview():
     file.save(path)
 
     try:
+        # ZIP
         if path.endswith(".zip"):
-            geom = load_shapefile_from_zip(path)
-            return jsonify({"image": make_preview(geom, "Shapefile Boundary Preview")})
+            geom = load_shapefile(path)
+            return jsonify({"image": make_preview(geom, "Shapefile Boundary")})
 
+        # EXCEL
         df = pd.read_excel(path)
 
-        # ================= WHOLE FOREST =================
         if mode == "boundary":
-            poly = build_polygon_excel(df)
+            poly = build_whole_boundary(df)
             return jsonify({"image": make_preview(poly, "Whole Forest Boundary")})
 
-        # ================= SEGMENTED =================
         if mode == "compartment":
-            comps = build_segmented_polygons(df)
-            union = gpd.GeoSeries(list(comps.values())).unary_union
-            return jsonify({"image": make_preview(union, "Segmented Forest Boundary")})
+            polys = build_segmented(df)
+            return jsonify({"image": make_preview(polys, "Segmented Forest Boundary")})
 
-        # ================= SAMPLE PLOT =================
         if mode == "sample":
-            poly = build_polygon_excel(df)
-            return jsonify({"image": make_preview(poly, "Sample Plot Preview")})
+            poly = build_sample(df)
+            return jsonify({"image": make_preview(poly, "Sample Plot")})
 
         return jsonify({"error": "Invalid mode"})
 
@@ -172,71 +168,62 @@ def upload():
     path = os.path.join(UPLOAD, file.filename)
     file.save(path)
 
-    try:
+    crs = get_crs(zone)
 
-        # ================= ZIP INPUT =================
-        if path.endswith(".zip"):
-            geom = load_shapefile_from_zip(path)
+    # ================= INPUT =================
+    if path.endswith(".zip"):
+        geom = load_shapefile(path)
+        gdf = gpd.GeoDataFrame(geometry=[geom], crs=crs)
 
-            gdf = gpd.GeoDataFrame(geometry=[geom], crs=get_crs(zone))
+    else:
+        df = pd.read_excel(path)
 
-        # ================= EXCEL INPUT =================
+        df["X"] = pd.to_numeric(df["X"], errors="coerce")
+        df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
+        df = df.dropna(subset=["X", "Y"])
+
+        if mode == "compartment":
+            gdf = gpd.GeoDataFrame(geometry=build_segmented(df), crs=crs)
+        elif mode == "sample":
+            gdf = gpd.GeoDataFrame(geometry=[build_sample(df)], crs=crs)
         else:
-            df = pd.read_excel(path)
+            gdf = gpd.GeoDataFrame(geometry=[build_whole_boundary(df)], crs=crs)
 
-            if mode == "compartment":
-                comps = build_segmented_polygons(df)
-                gdf = gpd.GeoDataFrame(geometry=list(comps.values()), crs=get_crs(zone))
+    # ================= POINT / LINE / POLYGON =================
+    points = gdf.copy()
+    points["geometry"] = points.centroid
 
-            else:
-                poly = build_polygon_excel(df)
-                gdf = gpd.GeoDataFrame(geometry=[poly], crs=get_crs(zone))
+    lines = gdf.copy()
+    lines["geometry"] = gdf.geometry.apply(lambda g: LineString(g.exterior.coords))
 
-        # ================= DERIVED LAYERS =================
-        points = gdf.copy()
-        points["geometry"] = points.centroid
+    polygons = gdf.copy()
 
-        lines = gdf.copy()
-        lines["geometry"] = gdf.geometry.apply(lambda g: LineString(g.exterior.coords))
+    # ================= OUTPUT =================
+    base = os.path.splitext(file.filename)[0]
+    out_dir = os.path.join(OUTPUT, base)
+    os.makedirs(out_dir, exist_ok=True)
 
-        polygons = gdf.copy()
+    points.to_file(os.path.join(out_dir, "points.shp"))
+    lines.to_file(os.path.join(out_dir, "lines.shp"))
+    polygons.to_file(os.path.join(out_dir, "polygons.shp"))
 
-        # ================= OUTPUT =================
-        base = os.path.splitext(file.filename)[0]
-        out_dir = os.path.join(OUTPUT, base)
-        os.makedirs(out_dir, exist_ok=True)
+    # ZIP
+    zip_name = f"{base}.zip"
+    zip_path = os.path.join(OUTPUT, zip_name)
 
-        point_path = os.path.join(out_dir, "point.shp")
-        line_path = os.path.join(out_dir, "line.shp")
-        poly_path = os.path.join(out_dir, "polygon.shp")
+    with zipfile.ZipFile(zip_path, "w") as z:
+        for f in os.listdir(out_dir):
+            z.write(os.path.join(out_dir, f), arcname=f)
 
-        points.to_file(point_path)
-        lines.to_file(line_path)
-        polygons.to_file(poly_path)
-
-        xlsx_path = os.path.join(out_dir, "output.xlsx")
-        polygons.drop(columns="geometry").to_excel(xlsx_path, index=False)
-
-        # ZIP
-        zip_name = f"{base}.zip"
-        zip_path = os.path.join(OUTPUT, zip_name)
-
-        with zipfile.ZipFile(zip_path, "w") as z:
-            for f in os.listdir(out_dir):
-                z.write(os.path.join(out_dir, f), arcname=f)
-
-        return render_template(
-            "index.html",
-            download_file=zip_name,
-            stats={
-                "plot_count": len(gdf),
-                "crs": f"UTM {zone}N",
-                "mode": mode
-            }
-        )
-
-    except Exception as e:
-        return render_template("index.html", error=str(e))
+    return render_template(
+        "index.html",
+        download_file=zip_name,
+        stats={
+            "count": len(gdf),
+            "crs": crs,
+            "mode": mode
+        }
+    )
 
 
 # ================= DOWNLOAD =================
@@ -246,4 +233,4 @@ def download(filename):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
