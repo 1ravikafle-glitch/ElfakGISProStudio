@@ -1,2 +1,4 @@
-Order | Forest | X | Y
+For single whole boundry map: Order | Forest | X | Y
   order:S.N, Forest:ForestName(or name) , x= x-cord(utmwgs45/44n-in meter), y=y-cord(ord(utmwgs45/44n-in meter)
+For part block boundry map: Order | Forest | Compartment | X | Y
+  order:S.N, Forest:ForestName(or name), Compartment=1,2,3,4.... , x= x-cord(utmwgs45/44n-in meter), y=y-cord(ord(utmwgs45/44n-in meter)
