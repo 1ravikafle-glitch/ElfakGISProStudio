@@ -5,68 +5,64 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 
 from flask import Flask, render_template, request
-from shapely.geometry import Point, Polygon, LineString
+from shapely.geometry import Point, Polygon
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "outputs"
-STATIC_FOLDER = "static"
+UPLOAD = "uploads"
+OUTPUT = "outputs"
+STATIC = "static"
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-os.makedirs(STATIC_FOLDER, exist_ok=True)
+os.makedirs(UPLOAD, exist_ok=True)
+os.makedirs(OUTPUT, exist_ok=True)
+os.makedirs(STATIC, exist_ok=True)
 
 
 # ================= CRS =================
-def get_crs(zone):
-    return "EPSG:32644" if zone == "44" else "EPSG:32645"
+def get_crs(z):
+    return "EPSG:32644" if z == "44" else "EPSG:32645"
 
 
-# ================= SAMPLE PLOT (FISHNET) =================
-def fishnet(bounds, plot_size, crs):
+# ================= FISHNET =================
+def fishnet(poly, step, crs):
 
-    minx, miny, maxx, maxy = bounds
-    step = plot_size ** 0.5
+    minx, miny, maxx, maxy = poly.bounds
+    size = step ** 0.5
 
-    grids = []
+    cells = []
 
     x = minx
     while x < maxx:
         y = miny
         while y < maxy:
 
-            grids.append(Polygon([
+            cell = Polygon([
                 (x, y),
-                (x + step, y),
-                (x + step, y + step),
-                (x, y + step)
-            ]))
+                (x+size, y),
+                (x+size, y+size),
+                (x, y+size)
+            ])
 
-            y += step
-        x += step
+            if cell.intersects(poly):
+                cells.append(cell)
 
-    return gpd.GeoDataFrame(geometry=grids, crs=crs)
+            y += size
+        x += size
+
+    return gpd.GeoDataFrame(geometry=cells, crs=crs)
 
 
 # ================= MAP =================
-def make_map(poly, points, lines, name):
+def make_map(gdf, name):
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    if poly is not None:
-        poly.plot(ax=ax, color="lightgreen", edgecolor="darkgreen")
-
-    if lines is not None:
-        lines.plot(ax=ax, color="black")
-
-    if points is not None:
-        points.plot(ax=ax, color="red", markersize=15)
+    gdf.plot(ax=ax, color="lightgreen", edgecolor="black")
 
     ax.set_title(name)
     ax.set_axis_off()
 
-    path = os.path.join(STATIC_FOLDER, "preview.png")
+    path = os.path.join(STATIC, "preview.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
 
@@ -74,25 +70,27 @@ def make_map(poly, points, lines, name):
 
 
 # ================= PROCESS =================
-def process(file_path, mode, zone, intensity, plot_size):
+def process(file_path, mode, zone, order_mode, intensity, plot_size):
 
     crs = get_crs(zone)
     base = os.path.splitext(os.path.basename(file_path))[0]
 
     df = pd.read_excel(file_path)
 
-    out_folder = os.path.join(OUTPUT_FOLDER, base)
-    os.makedirs(out_folder, exist_ok=True)
+    out_dir = os.path.join(OUTPUT, base)
+    os.makedirs(out_dir, exist_ok=True)
 
-    all_polygons = []
+    zip_path = os.path.join(OUTPUT, f"{base}.zip")
 
-    # ================= MODE 1 + 2 =================
+    preview_img = None
+
+    # ================= BOUNDARY =================
     if mode in ["boundary", "compartment"]:
 
         for forest, group in df.groupby("Forest"):
 
-            group["X"] = pd.to_numeric(group["X"], errors="coerce")
-            group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+            group["X"] = pd.to_numeric(group["X"])
+            group["Y"] = pd.to_numeric(group["Y"])
             group = group.dropna()
 
             if mode == "boundary":
@@ -101,46 +99,39 @@ def process(file_path, mode, zone, intensity, plot_size):
                 coords.append(coords[0])
 
                 poly = Polygon(coords)
-                line = LineString(coords)
-                pts = [Point(xy) for xy in coords]
 
-                poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
-                line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
-                point_gdf = gpd.GeoDataFrame(geometry=pts, crs=crs)
+                gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
+                gdf.to_file(os.path.join(out_dir, f"{forest}_poly.shp"))
 
-                poly_gdf.to_file(os.path.join(out_folder, f"{forest}_poly.shp"))
-                line_gdf.to_file(os.path.join(out_folder, f"{forest}_line.shp"))
-                point_gdf.to_file(os.path.join(out_folder, f"{forest}_pts.shp"))
+                preview_img = make_map(gdf, forest)
 
-                img = make_map(poly_gdf, point_gdf, line_gdf, forest)
-
-            # ================= COMPARTMENT MODE =================
             else:
 
                 polys = []
 
                 for comp, cgroup in group.groupby("Compartment"):
 
-                    cgroup = cgroup.sort_values("Order").reset_index(drop=True)
-                    cgroup["Order"] = range(1, len(cgroup) + 1)
+                    if order_mode == "auto":
+                        cgroup = cgroup.sort_values("Order").reset_index(drop=True)
+                        cgroup["Order"] = range(1, len(cgroup)+1)
+                    else:
+                        cgroup = cgroup.sort_values("Order")
 
                     coords = list(zip(cgroup["X"], cgroup["Y"]))
                     coords.append(coords[0])
 
-                    poly = Polygon(coords)
-
                     polys.append({
                         "Forest": forest,
                         "Compartment": comp,
-                        "geometry": poly
+                        "geometry": Polygon(coords)
                     })
 
                 gdf = gpd.GeoDataFrame(polys, crs=crs)
-                gdf.to_file(os.path.join(out_folder, f"{forest}_compartment.shp"))
+                gdf.to_file(os.path.join(out_dir, f"{forest}_compartment.shp"))
 
-                img = make_map(gdf, None, None, forest)
+                preview_img = make_map(gdf, forest)
 
-    # ================= SAMPLE MODE =================
+    # ================= SAMPLE =================
     if mode == "sample":
 
         for forest, group in df.groupby("Forest"):
@@ -154,25 +145,25 @@ def process(file_path, mode, zone, intensity, plot_size):
 
             poly = Polygon(coords)
 
-            fish = fishnet(poly.bounds, plot_size, crs)
+            intensity_area = poly.area * (intensity / 100)
+            step = max(plot_size, intensity_area)
 
-            fish = fish[fish.intersects(poly)]
+            grid = fishnet(poly, step, crs)
 
-            fish.to_file(os.path.join(out_folder, f"{forest}_sample.shp"))
+            grid = grid[grid.intersects(poly)]
 
-            poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
+            grid.to_file(os.path.join(out_dir, f"{forest}_sample.shp"))
 
-            img = make_map(poly_gdf, None, None, forest)
+            preview_img = make_map(grid, forest)
 
-    # ================= ZIP OUTPUT =================
-    zip_path = os.path.join(OUTPUT_FOLDER, f"{base}.zip")
+    # ================= ZIP =================
+    with zipfile.ZipFile(zip_path, "w") as z:
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-        for root, _, files in os.walk(out_folder):
+        for root, _, files in os.walk(out_dir):
             for f in files:
                 z.write(os.path.join(root, f), arcname=f)
 
-    return zip_path, img
+    return zip_path, preview_img
 
 
 # ================= ROUTES =================
@@ -187,19 +178,20 @@ def upload():
     file = request.files["file"]
     mode = request.form["mode"]
     zone = request.form["zone"]
+    order_mode = request.form.get("order_mode", "auto")
 
     intensity = float(request.form.get("intensity", 0.5))
     plot_size = float(request.form.get("plot_size", 500))
 
-    path = os.path.join(UPLOAD_FOLDER, file.filename)
+    path = os.path.join(UPLOAD, file.filename)
     file.save(path)
 
-    zip_file, img = process(path, mode, zone, intensity, plot_size)
+    zip_file, img = process(path, mode, zone, order_mode, intensity, plot_size)
 
     return render_template("index.html",
                            map_image=img,
                            download_file=zip_file)
-
+    
 
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=True)
