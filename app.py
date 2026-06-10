@@ -3,6 +3,7 @@ import zipfile
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import math
 
 from flask import Flask, render_template, request
 from shapely.geometry import Polygon
@@ -68,7 +69,7 @@ def make_map(gdf, name, filename):
     return path
 
 
-# ================= EXCEL EXPORT =================
+# ================= EXPORT =================
 def export_points(gdf, path):
     df = gdf.copy()
     df["X"] = df.geometry.x
@@ -90,102 +91,143 @@ def process(file_path, mode, zone, order_mode, intensity, plot_size):
     zip_path = os.path.join(OUTPUT, f"{base}.zip")
 
     map_images = {}
-    stats = {
-        "total_area": 0,
-        "plot_count": 0,
-        "plot_size": plot_size,
-        "crs": zone
-    }
+
+    # ================= METRICS =================
+    total_area_m2 = 0.0
+    total_perimeter_m = 0.0
+    total_plots = 0
 
     # ================= BOUNDARY / COMPARTMENT =================
     if mode in ["boundary", "compartment"]:
 
         for forest, group in df.groupby("Forest"):
 
-            group["X"] = pd.to_numeric(group["X"])
-            group["Y"] = pd.to_numeric(group["Y"])
-            group = group.dropna()
+            group["X"] = pd.to_numeric(group["X"], errors="coerce")
+            group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+            group = group.dropna(subset=["X", "Y"])
 
+            if group.empty:
+                continue
+
+            # ---------------- BOUNDARY ----------------
             if mode == "boundary":
+
+                if order_mode == "auto":
+                    group = group.sort_values("Order")
 
                 coords = list(zip(group["X"], group["Y"]))
                 coords.append(coords[0])
 
                 poly = Polygon(coords)
 
-                gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
+                total_area_m2 += poly.area
+                total_perimeter_m += poly.length
+
+                gdf = gpd.GeoDataFrame([{
+                    "Forest": forest,
+                    "Area_ha": poly.area / 10000,
+                    "Perimeter_m": poly.length,
+                    "geometry": poly
+                }], crs=crs)
 
                 shp = os.path.join(out_dir, f"{forest}_boundary.shp")
-                xlsx = os.path.join(out_dir, f"{forest}_boundary.xlsx")
+                gpkg = shp.replace(".shp", ".gpkg")
 
                 gdf.to_file(shp)
-                gdf.to_file(xlsx.replace(".xlsx", ".gpkg"))
+                gdf.to_file(gpkg)
 
                 map_images[forest] = make_map(gdf, forest, f"{forest}_boundary")
 
-                stats["total_area"] += poly.area
-
+            # ---------------- COMPARTMENT ----------------
             else:
 
-                polys = []
+                comp_list = []
 
-                for i, (comp, cgroup) in enumerate(group.groupby("Compartment")):
+                for comp, cgroup in group.groupby("Compartment"):
 
                     if order_mode == "auto":
-                        cgroup = cgroup.sort_values("Order").reset_index(drop=True)
+                        cgroup = cgroup.sort_values("Order")
 
                     coords = list(zip(cgroup["X"], cgroup["Y"]))
                     coords.append(coords[0])
 
-                    polys.append({
+                    poly = Polygon(coords)
+
+                    total_area_m2 += poly.area
+                    total_perimeter_m += poly.length
+
+                    comp_list.append({
                         "Forest": forest,
                         "Compartment": comp,
-                        "geometry": Polygon(coords)
+                        "Area_ha": round(poly.area / 10000, 4),
+                        "Perimeter_m": round(poly.length, 2),
+                        "geometry": poly
                     })
 
-                gdf = gpd.GeoDataFrame(polys, crs=crs)
+                gdf = gpd.GeoDataFrame(comp_list, crs=crs)
 
                 shp = os.path.join(out_dir, f"{forest}_compartment.shp")
+                gpkg = shp.replace(".shp", ".gpkg")
+
                 gdf.to_file(shp)
+                gdf.to_file(gpkg)
 
                 map_images[forest] = make_map(gdf, forest, f"{forest}_compartment")
 
-    # ================= SAMPLE (FISHNET + CLIP) =================
-    if mode == "sample":
+    # ================= SAMPLE MODE =================
+    elif mode == "sample":
 
         for forest, group in df.groupby("Forest"):
 
-            group["X"] = pd.to_numeric(group["X"])
-            group["Y"] = pd.to_numeric(group["Y"])
-            group = group.dropna()
+            group["X"] = pd.to_numeric(group["X"], errors="coerce")
+            group["Y"] = pd.to_numeric(group["Y"], errors="coerce")
+            group = group.dropna(subset=["X", "Y"])
+
+            if group.empty:
+                continue
+
+            if order_mode == "auto":
+                group = group.sort_values("Order")
 
             coords = list(zip(group["X"], group["Y"]))
             coords.append(coords[0])
 
             poly = Polygon(coords)
 
-            cell_size = float(plot_size)
+            total_area_m2 += poly.area
+            total_perimeter_m += poly.length
 
+            cell_size = math.sqrt(float(plot_size))
             grid = fishnet_clip(poly, cell_size, crs)
 
-            points = grid.copy()
-            points["geometry"] = points.centroid
+            if not grid.empty:
+                points = grid.copy()
+                points["geometry"] = points.centroid
 
-            shp = os.path.join(out_dir, f"{forest}_sample.shp")
-            xlsx = os.path.join(out_dir, f"{forest}_sample.xlsx")
+                total_plots += len(points)
 
-            points.to_file(shp)
-            export_points(points, xlsx)
+                shp = os.path.join(out_dir, f"{forest}_sample.shp")
+                xlsx = os.path.join(out_dir, f"{forest}_sample.xlsx")
 
-            map_images[forest] = make_map(points, forest, f"{forest}_sample")
+                points.to_file(shp)
+                export_points(points, xlsx)
 
-            stats["plot_count"] += len(points)
+                map_images[forest] = make_map(points, forest, f"{forest}_sample")
 
     # ================= ZIP =================
     with zipfile.ZipFile(zip_path, "w") as z:
         for root, _, files in os.walk(out_dir):
             for f in files:
                 z.write(os.path.join(root, f), arcname=f)
+
+    # ================= FINAL STATS =================
+    stats = {
+        "total_area": f"{round(total_area_m2 / 10000, 2)} ha",
+        "total_perimeter": f"{round(total_perimeter_m, 2)} m",
+        "plot_count": str(total_plots) if mode == "sample" else "N/A",
+        "plot_size": f"{int(plot_size)} m²" if mode == "sample" else "N/A",
+        "crs": f"UTM {zone}N"
+    }
 
     return zip_path, map_images, stats
 
