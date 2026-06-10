@@ -7,17 +7,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify
 from shapely.geometry import Polygon, Point, LineString, box, MultiPolygon
 
 app = Flask(__name__)
 
 UPLOAD = "uploads"
-OUTPUT = "outputs"
 STATIC = "static"
 
 os.makedirs(UPLOAD, exist_ok=True)
-os.makedirs(OUTPUT, exist_ok=True)
 os.makedirs(STATIC, exist_ok=True)
 
 
@@ -29,33 +27,49 @@ def get_crs(zone):
 
 
 # =====================================================
-# SAFE MULTIPOLYGON HANDLER (FIX CRASH)
+# SAFE MULTIPOLYGON FIX
 # =====================================================
-def normalize_polygon(poly):
-    if poly is None or poly.is_empty:
-        return None
+def normalize_geom(geom):
+    if geom is None:
+        return []
 
-    if isinstance(poly, Polygon):
-        return poly
+    if isinstance(geom, Polygon):
+        return [geom]
 
-    if isinstance(poly, MultiPolygon):
-        # take largest polygon safely
-        return max(poly.geoms, key=lambda g: g.area)
+    if isinstance(geom, MultiPolygon):
+        return [g for g in geom.geoms if g.is_valid]
 
-    return None
+    return []
 
 
 # =====================================================
-# POINTS
+# LOAD ZIP SHAPEFILE
+# =====================================================
+def load_shapefile(zip_path):
+    temp_dir = tempfile.mkdtemp()
+
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(temp_dir)
+
+    shp = None
+    for f in os.listdir(temp_dir):
+        if f.endswith(".shp"):
+            shp = os.path.join(temp_dir, f)
+            break
+
+    gdf = gpd.read_file(shp)
+    return gdf.geometry.unary_union
+
+
+# =====================================================
+# BUILD POINTS
 # =====================================================
 def build_points(df):
-    df = df.copy()
     df["X"] = pd.to_numeric(df["X"], errors="coerce")
     df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
     df = df.dropna(subset=["X", "Y"])
 
-    points = [Point(xy) for xy in zip(df["X"], df["Y"])]
-    return df, points
+    return df, [Point(xy) for xy in zip(df["X"], df["Y"])]
 
 
 # =====================================================
@@ -66,20 +80,20 @@ def build_whole(df):
     df, pts = build_points(df)
 
     coords = list(zip(df["X"], df["Y"]))
-    if len(coords) < 3:
-        return None, None, None, None
-
     if coords[0] != coords[-1]:
         coords.append(coords[0])
 
-    line = LineString(coords)
-    poly = normalize_polygon(Polygon(coords).buffer(0))
+    poly = Polygon(coords)
+    if not poly.is_valid:
+        poly = poly.buffer(0)
 
-    return df, pts, line, poly
+    line = LineString(coords)
+
+    return pts, line, poly
 
 
 # =====================================================
-# SEGMENTED BOUNDARY (SAFE)
+# SEGMENTED BOUNDARY
 # =====================================================
 def build_segmented(df):
     df, _ = build_points(df)
@@ -87,7 +101,7 @@ def build_segmented(df):
     if "Compartment" not in df.columns:
         return []
 
-    results = []
+    result = []
 
     for comp, g in df.groupby("Compartment"):
         g = g.sort_values("Order")
@@ -99,49 +113,42 @@ def build_segmented(df):
         if coords[0] != coords[-1]:
             coords.append(coords[0])
 
-        poly = normalize_polygon(Polygon(coords).buffer(0))
-        if poly is None:
-            continue
+        poly = Polygon(coords)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
 
         line = LineString(coords)
         pts = [Point(xy) for xy in coords]
 
-        results.append({
-            "comp": comp,
-            "polygon": poly,
-            "line": line,
-            "points": pts
-        })
+        result.append((comp, pts, line, poly))
 
-    return results
+    return result
 
 
 # =====================================================
-# SAMPLE FISHNET
+# SAMPLE PLOT (FISHNET)
 # =====================================================
-def build_sample(poly, w, h):
-    poly = normalize_polygon(poly)
-    if poly is None:
-        return []
+def build_sample(poly, w, h, rows, cols):
 
     minx, miny, maxx, maxy = poly.bounds
     samples = []
 
-    x = minx
-    while x < maxx:
-        y = miny
-        while y < maxy:
+    for i in range(cols):
+        for j in range(rows):
+
+            x = minx + i * w
+            y = miny + j * h
+
             cell = box(x, y, x + w, y + h)
+
             if cell.intersects(poly):
                 samples.append(cell.centroid)
-            y += h
-        x += w
 
     return samples
 
 
 # =====================================================
-# PLOT SAVE
+# SAVE PLOT
 # =====================================================
 def save_plot():
     path = os.path.join(STATIC, "preview.png")
@@ -153,98 +160,122 @@ def save_plot():
 # =====================================================
 # PREVIEWS
 # =====================================================
-
 def preview_whole(poly, line, pts):
-    fig, ax = plt.subplots(figsize=(7, 6))
+    fig, ax = plt.subplots()
 
-    if poly:
-        x, y = poly.exterior.xy
-        ax.plot(x, y, "green")
-
-    if line:
-        x, y = line.xy
-        ax.plot(x, y, "black")
+    ax.plot(*poly.exterior.xy, "green")
+    ax.plot(*line.xy, "black")
 
     for p in pts:
-        ax.scatter(p.x, p.y, s=8)
+        ax.scatter(p.x, p.y, s=10)
 
-    ax.set_axis_off()
     ax.set_title("WHOLE BOUNDARY")
+    ax.set_axis_off()
     return save_plot()
 
 
 def preview_segmented(seg):
-    fig, ax = plt.subplots(figsize=(7, 6))
+    fig, ax = plt.subplots()
 
-    for s in seg:
-        p = s["polygon"]
-        x, y = p.exterior.xy
-        ax.plot(x, y, "red", linewidth=1)
+    for comp, pts, line, poly in seg:
+        ax.plot(*poly.exterior.xy, "red")
+        ax.plot(*line.xy, "black")
 
-        x, y = s["line"].xy
-        ax.plot(x, y, "black")
+        for p in pts:
+            ax.scatter(p.x, p.y, s=8)
 
-        for pt in s["points"]:
-            ax.scatter(pt.x, pt.y, s=6)
+        c = poly.centroid
+        ax.text(c.x, c.y, str(comp))
 
-        c = p.centroid
-        ax.text(c.x, c.y, str(s["comp"]))
-
+    ax.set_title("SEGMENTED")
     ax.set_axis_off()
-    ax.set_title("SEGMENTED BOUNDARY")
     return save_plot()
 
 
 def preview_sample(poly, samples):
-    fig, ax = plt.subplots(figsize=(7, 6))
+    fig, ax = plt.subplots()
 
-    if poly:
-        x, y = poly.exterior.xy
-        ax.plot(x, y, "red")
+    ax.plot(*poly.exterior.xy, "red")
 
-    for p in samples:
-        ax.scatter(p.x, p.y, s=10)
+    for s in samples:
+        ax.scatter(s.x, s.y, s=12)
 
+    ax.set_title("SAMPLE PLOTS")
     ax.set_axis_off()
-    ax.set_title("SAMPLE GRID")
     return save_plot()
 
 
 # =====================================================
-# ROUTES
+# HOME
 # =====================================================
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
+# =====================================================
+# PREVIEW API
+# =====================================================
 @app.route("/preview", methods=["POST"])
 def preview():
+
     file = request.files["file"]
-    mode = request.form.get("mode", "boundary")
+    mode = request.form.get("mode")
 
     path = os.path.join(UPLOAD, file.filename)
     file.save(path)
 
-    df = pd.read_excel(path)
+    zone = request.form.get("zone", "45")
 
-    if mode == "boundary":
-        df, pts, line, poly = build_whole(df)
-        return jsonify({"image": preview_whole(poly, line, pts)})
+    try:
 
-    if mode == "compartment":
-        seg = build_segmented(df)
-        return jsonify({"image": preview_segmented(seg)})
+        # ZIP
+        if path.endswith(".zip"):
+            geom = normalize_geom(load_shapefile(path))
+            poly = geom[0]
 
-    if mode == "sample":
-        df, pts, line, poly = build_whole(df)
-        w = float(request.form.get("cell_width", 100))
-        h = float(request.form.get("cell_height", 100))
-        samples = build_sample(poly, w, h)
-        return jsonify({"image": preview_sample(poly, samples)})
+            return jsonify({
+                "image": preview_whole(
+                    poly,
+                    LineString(poly.exterior.coords),
+                    [Point(xy) for xy in poly.exterior.coords]
+                )
+            })
 
-    return jsonify({"error": "Invalid mode"})
+        df = pd.read_excel(path)
+
+        # WHOLE
+        if mode == "boundary":
+            pts, line, poly = build_whole(df)
+            return jsonify({"image": preview_whole(poly, line, pts)})
+
+        # SEGMENTED
+        if mode == "compartment":
+            seg = build_segmented(df)
+            return jsonify({"image": preview_segmented(seg)})
+
+        # SAMPLE
+        if mode == "sample":
+
+            pts, line, poly = build_whole(df)
+
+            w = float(request.form.get("cell_width", 100))
+            h = float(request.form.get("cell_height", 100))
+            rows = int(request.form.get("rows", 10))
+            cols = int(request.form.get("cols", 10))
+
+            samples = build_sample(poly, w, h, rows, cols)
+
+            return jsonify({"image": preview_sample(poly, samples)})
+
+        return jsonify({"error": "invalid mode"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 
+# =====================================================
+# RUN
+# =====================================================
 if __name__ == "__main__":
     app.run(debug=True)
