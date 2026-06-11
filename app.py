@@ -148,21 +148,12 @@ def group_b(df, crs, out):
                     "Order": r["Order"],
                     "geometry": Point(r["X"], r["Y"])
                 })
-
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
-
-
-# ================= GROUP C (FIXED) =================
+# ================= GROUP C (UNIVERSAL FIXED) =================
 def group_c(file, crs, w, h, rows, cols, out):
 
+    polygons = []
+
+    # ================= ZIP INPUT =================
     if file.filename.lower().endswith(".zip"):
 
         folder = os.path.join(UPLOAD, str(uuid.uuid4()))
@@ -174,43 +165,62 @@ def group_c(file, crs, w, h, rows, cols, out):
         if gdf is None:
             raise Exception("No shapefile found in ZIP")
 
-        poly = gdf.unary_union
+        geom = gdf.unary_union
 
-        if poly.geom_type == "MultiPolygon":
-            poly = max(poly.geoms, key=lambda p: p.area)
+        if geom.geom_type == "Polygon":
+            polygons = [geom]
 
-        elif poly.geom_type == "GeometryCollection":
-            polys = [g for g in poly.geoms if g.geom_type == "Polygon"]
-            if not polys:
-                raise Exception("No polygon found")
-            poly = max(polys, key=lambda p: p.area)
+        elif geom.geom_type == "MultiPolygon":
+            polygons = list(geom.geoms)
 
+        elif geom.geom_type == "GeometryCollection":
+            polygons = [g for g in geom.geoms if g.geom_type == "Polygon"]
+
+        if not polygons:
+            raise Exception("No valid polygons found")
+
+    # ================= EXCEL INPUT =================
     else:
         df = pd.read_excel(file)
 
-        # ✅ FIX: support BOTH Group A and Group B formats
         is_group_b = ("Forest" in df.columns and "Compartment" in df.columns)
 
+        # ---------- GROUP B ----------
         if is_group_b:
-            all_coords = []
-
             for (f, c), g in df.groupby(["Forest", "Compartment"]):
                 g = g.sort_values("Order")
                 coords = list(zip(g["X"], g["Y"]))
                 coords.append(coords[0])
-                all_coords.extend(coords)
 
-            poly = Polygon(all_coords)
+                polygons.append(Polygon(coords))
 
+        # ---------- GROUP A ----------
         else:
             df = normalize_order(df).sort_values("Order")
             coords = list(zip(df["X"], df["Y"]))
             coords.append(coords[0])
-            poly = Polygon(coords)
 
-    line = LineString(poly.exterior.coords)
+            polygons.append(Polygon(coords))
 
-    minx, miny, _, _ = poly.bounds
+    # ================= SAFE MULTIPOLYGON (NO LOSS) =================
+    poly_gdf = gpd.GeoDataFrame(
+        [{"geometry": p} for p in polygons],
+        crs=crs
+    )
+
+    # dissolve only for spatial check (NOT for drawing lines)
+    poly_union = unary_union(polygons)
+
+    # ================= LINES (PER POLYGON) =================
+    lines = [
+        {"geometry": LineString(p.exterior.coords)}
+        for p in polygons
+    ]
+
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+
+    # ================= GRID SAMPLING =================
+    minx, miny, _, _ = poly_union.bounds
 
     inside_points = []
     sn = 1
@@ -223,7 +233,8 @@ def group_c(file, crs, w, h, rows, cols, out):
 
             center = Point(x + (w / 2), y + (h / 2))
 
-            if poly.contains(center):
+            # works for MultiPolygon too
+            if poly_union.contains(center):
                 inside_points.append({
                     "SN": sn,
                     "X": center.x,
@@ -234,18 +245,18 @@ def group_c(file, crs, w, h, rows, cols, out):
 
     pts_gdf = gpd.GeoDataFrame(inside_points, crs=crs)
 
-    poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
-    line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "boundary.shp"))
-    line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
+    # ================= OUTPUT =================
+    poly_gdf.to_file(os.path.join(out, "boundary_polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "boundary_lines.shp"))
     pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
-    # ================= EXCEL OUTPUT =================
-    excel_path = os.path.join(out, "sampleplot.xlsx")
-    pd.DataFrame(inside_points)[["SN", "X", "Y"]].to_excel(excel_path, index=False)
+
+    # Excel output
+    pd.DataFrame(inside_points)[["SN", "X", "Y"]].to_excel(
+        os.path.join(out, "sampleplot.xlsx"),
+        index=False
+    )
 
     return poly_gdf, line_gdf, pts_gdf
-
 
 # ================= GROUP D =================
 def group_d(df, crs, out):
