@@ -247,20 +247,14 @@ let mode = "A";
 
 /* MODE SWITCH */
 function setMode(m, el){
-
 mode = m;
 
 document.querySelectorAll(".group").forEach(g=>g.classList.remove("active"));
 el.classList.add("active");
 
-document.getElementById("gridBox").style.display =
-(m==="C") ? "block" : "none";
-
-document.getElementById("columnBox").style.display =
-(m==="A"||m==="B"||m==="D") ? "block" : "none";
-
-document.getElementById("groupBFields").style.display =
-(m==="B") ? "block" : "none";
+document.getElementById("gridBox").style.display = (m==="C") ? "block" : "none";
+document.getElementById("columnBox").style.display = (m==="A"||m==="B"||m==="D") ? "block" : "none";
+document.getElementById("groupBFields").style.display = (m==="B") ? "block" : "none";
 }
 
 /* LOAD COLUMNS */
@@ -315,36 +309,55 @@ async function run(){
 let file = document.getElementById("file").files[0];
 if(!file) return alert("Upload file");
 
+let progress = document.getElementById("progress");
+let status = document.getElementById("status");
+let download = document.getElementById("download");
+let img = document.getElementById("img");
+let text = document.getElementById("text");
+
+progress.style.width="10%";
+status.innerText="Processing...";
+
 let fd = new FormData();
 fd.append("file", file);
 fd.append("mode", mode);
 fd.append("zone", document.getElementById("zone").value);
 
 let mapping = {
-X: xCol.value,
-Y: yCol.value,
-Order: orderCol.value
+X: document.getElementById("xCol").value,
+Y: document.getElementById("yCol").value,
+Order: document.getElementById("orderCol").value
 };
 
 if(mode==="B"){
-mapping.Forest = forestCol.value;
-mapping.Compartment = compCol.value;
+mapping.Forest = document.getElementById("forestCol").value;
+mapping.Compartment = document.getElementById("compCol").value;
 }
 
 fd.append("mapping", JSON.stringify(mapping));
 
 let res = await fetch("/upload",{method:"POST",body:fd});
+
+if(!res.ok){
+status.innerText="Error ❌";
+progress.style.width="0%";
+return;
+}
+
 let data = await res.json();
 
 progress.style.width="100%";
 status.innerText="Done ✔";
 
-download.href=data.download;
-download.style.display="block";
+/* DOWNLOAD */
+download.href = data.download;
+download.style.display = "block";
 
-img.src="/outputs/"+data.run_id+"/output.png?t="+Date.now();
-img.style.display="block";
-text.innerText="Preview Ready ✔";
+/* PREVIEW IMAGE */
+img.src = "/outputs/"+data.run_id+"/output.png?t="+Date.now();
+img.style.display = "block";
+
+text.innerText = "Preview Ready ✔";
 }
 
 </script>
