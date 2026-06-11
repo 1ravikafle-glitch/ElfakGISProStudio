@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GIS Engine Pro</title>
+<title> Elfak GIS Engine Pro</title>
 
 <style>
 body{
@@ -161,10 +161,10 @@ color:#9ca3af;
 
 <h1>🌲 GIS Engine Pro</h1>
 
-<div class="group active" onclick="setMode('A', this)">Group A — Forest Boundary</div>
-<div class="group" onclick="setMode('B', this)">Group B — Compartment Mapping</div>
-<div class="group" onclick="setMode('C', this)">Group C — Sample Grid</div>
-<div class="group" onclick="setMode('D', this)">Group D — Auto Forest Split</div>
+<div class="group active" onclick="setMode('A', this)">Group A — Whole Forest Boundary Map</div>
+<div class="group" onclick="setMode('B', this)">Group B — Segmented Forest Boundary Map</div>
+<div class="group" onclick="setMode('C', this)">Group C — Sample Plot</div>
+<div class="group" onclick="setMode('D', this)">Group D — Complex Version of Group'A'</div>
 
 <input type="file" id="file">
 
@@ -178,8 +178,15 @@ color:#9ca3af;
 <option value="45">UTM 45N</option>
 </select>
 
+<!-- ✅ FIX: Group C type selector added -->
 <div id="gridBox" class="section">
 <small>Grid Settings (Group C only)</small>
+
+<select id="c_type">
+    <option value="auto">Auto Detect (A / B)</option>
+    <option value="A">Force Group A Style</option>
+    <option value="B">Force Group B Style</option>
+</select>
 
 <input type="number" id="w" value="50">
 <input type="number" id="h" value="50">
@@ -346,6 +353,9 @@ async function run(){
         fd.append("h", document.getElementById("h").value || 50);
         fd.append("rows", document.getElementById("rows").value || 10);
         fd.append("cols", document.getElementById("cols").value || 10);
+
+        // ✅ FIX: send data type selection
+        fd.append("c_type", document.getElementById("c_type").value);
     }
 
     status.innerText = "Processing...";
