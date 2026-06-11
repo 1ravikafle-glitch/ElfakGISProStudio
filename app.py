@@ -1,6 +1,7 @@
 import os
 import uuid
 import zipfile
+import shutil
 import json
 import pandas as pd
 import geopandas as gpd
@@ -340,13 +341,20 @@ def upload():
         "run_id": run_id,
         "download": "/download/" + run_id
     })
-
+    
+def zip_folder(folder_path):
+    zip_path = folder_path + ".zip"
+    shutil.make_archive(folder_path, 'zip', folder_path)
+    return zip_path
 
 @app.route("/download/<run_id>")
 def download(run_id):
     folder = os.path.join(OUTPUT, run_id)
+
+    zip_path = zip_folder(folder)
+
     return send_file(
-        zip_folder(folder),
+        zip_path,
         mimetype="application/zip",
         as_attachment=True,
         download_name="output.zip"
