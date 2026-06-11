@@ -112,7 +112,6 @@ def group_a(df, forest, crs, out):
 
 
 # ================= GROUP B =================
-# ================= GROUP B =================
 def group_b(df, crs, out):
     df = normalize_order(df)
 
@@ -160,11 +159,10 @@ def group_b(df, crs, out):
 
     return poly_gdf, line_gdf, pts_gdf
 
+
 # ================= GROUP C (FIXED) =================
-# ================= GROUP C =================
 def group_c(file, crs, w, h, rows, cols, out):
 
-    # ---------- Read boundary ----------
     if file.filename.lower().endswith(".zip"):
 
         folder = os.path.join(UPLOAD, str(uuid.uuid4()))
@@ -182,45 +180,48 @@ def group_c(file, crs, w, h, rows, cols, out):
             poly = max(poly.geoms, key=lambda p: p.area)
 
         elif poly.geom_type == "GeometryCollection":
-            polys = [
-                g for g in poly.geoms
-                if g.geom_type == "Polygon"
-            ]
-
+            polys = [g for g in poly.geoms if g.geom_type == "Polygon"]
             if not polys:
                 raise Exception("No polygon found")
-
             poly = max(polys, key=lambda p: p.area)
 
     else:
         df = pd.read_excel(file)
 
-        coords = list(zip(df["X"], df["Y"]))
-        coords.append(coords[0])
+        # ✅ FIX: support BOTH Group A and Group B formats
+        is_group_b = ("Forest" in df.columns and "Compartment" in df.columns)
 
-        poly = Polygon(coords)
+        if is_group_b:
+            all_coords = []
 
-    # ---------- Boundary ----------
+            for (f, c), g in df.groupby(["Forest", "Compartment"]):
+                g = g.sort_values("Order")
+                coords = list(zip(g["X"], g["Y"]))
+                coords.append(coords[0])
+                all_coords.extend(coords)
+
+            poly = Polygon(all_coords)
+
+        else:
+            df = normalize_order(df).sort_values("Order")
+            coords = list(zip(df["X"], df["Y"]))
+            coords.append(coords[0])
+            poly = Polygon(coords)
+
     line = LineString(poly.exterior.coords)
 
     minx, miny, _, _ = poly.bounds
 
-    # ---------- Systematic Grid ----------
     inside_points = []
     sn = 1
 
     for r in range(rows):
         for c in range(cols):
 
-            # Cell origin
             x = minx + (c * w)
             y = miny + (r * h)
 
-            # Plot center
-            center = Point(
-                x + (w / 2),
-                y + (h / 2)
-            )
+            center = Point(x + (w / 2), y + (h / 2))
 
             if poly.contains(center):
                 inside_points.append({
@@ -231,35 +232,17 @@ def group_c(file, crs, w, h, rows, cols, out):
                 })
                 sn += 1
 
-    # ---------- Outputs ----------
-    pts_gdf = gpd.GeoDataFrame(
-        inside_points,
-        crs=crs
-    )
+    pts_gdf = gpd.GeoDataFrame(inside_points, crs=crs)
 
-    poly_gdf = gpd.GeoDataFrame(
-        [{"geometry": poly}],
-        crs=crs
-    )
+    poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
+    line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
 
-    line_gdf = gpd.GeoDataFrame(
-        [{"geometry": line}],
-        crs=crs
-    )
-
-    poly_gdf.to_file(
-        os.path.join(out, "boundary.shp")
-    )
-
-    line_gdf.to_file(
-        os.path.join(out, "boundary_line.shp")
-    )
-
-    pts_gdf.to_file(
-        os.path.join(out, "sampleplot.shp")
-    )
+    poly_gdf.to_file(os.path.join(out, "boundary.shp"))
+    line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
+    pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
 
     return poly_gdf, line_gdf, pts_gdf
+
 
 # ================= GROUP D =================
 def group_d(df, crs, out):
@@ -339,7 +322,6 @@ def upload():
     crs = get_crs(zone)
     preview_path = os.path.join(out, "output.png")
 
-    # PROCESS
     if mode == "A":
         poly, line, pts = group_a(pd.read_excel(file), forest, crs, out)
 
@@ -352,7 +334,6 @@ def upload():
     else:
         poly, line, pts = group_d(pd.read_excel(file), crs, out)
 
-    # SAFE PREVIEW
     try:
         preview(poly, line, pts, preview_path, "red", "black", "yellow")
     except Exception as e:
@@ -366,7 +347,6 @@ def upload():
     })
 
 
-# ================= DOWNLOAD =================
 @app.route("/download/<run_id>")
 def download(run_id):
     folder = os.path.join(OUTPUT, run_id)
@@ -380,7 +360,6 @@ def download(run_id):
     )
 
 
-# ================= HOME =================
 @app.route("/")
 def home():
     return render_template("index.html")
