@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title> Elfak GIS Engine Pro</title>
+<title>Elfak GIS Engine Pro</title>
 
 <style>
 body{
@@ -178,20 +178,23 @@ color:#9ca3af;
 <option value="45">UTM 45N</option>
 </select>
 
-<!-- ✅ FIX: Group C type selector added -->
+<!-- ================= GROUP C GRID SETTINGS ================= -->
 <div id="gridBox" class="section">
 <small>Grid Settings (Group C only)</small>
-
-<select id="c_type">
-    <option value="auto">Auto Detect (A / B)</option>
-    <option value="A">Force Group A Style</option>
-    <option value="B">Force Group B Style</option>
-</select>
 
 <input type="number" id="w" value="50">
 <input type="number" id="h" value="50">
 <input type="number" id="rows" value="10">
 <input type="number" id="cols" value="10">
+
+<!-- 🔥 NEW: DATA TYPE SELECTOR -->
+<small style="display:block;margin-top:10px;">Data Type (Auto Detect Help)</small>
+<select id="dataType">
+    <option value="auto">Auto Detect (Recommended)</option>
+    <option value="A">Group A Format</option>
+    <option value="B">Group B Format</option>
+</select>
+
 </div>
 
 <button onclick="run()">Run Processing</button>
@@ -219,164 +222,124 @@ color:#9ca3af;
 <script>
 let mode = "A";
 
-let loadController = {
-    aborted: false,
-    timeout: null
-};
-
+let loadController = { aborted:false, timeout:null };
 let progressInterval = null;
 
-/* ---------------- RESET ---------------- */
+/* RESET */
 function resetProcessing(){
+loadController.aborted = true;
+if(loadController.timeout) clearTimeout(loadController.timeout);
+if(progressInterval) clearInterval(progressInterval);
 
-    loadController.aborted = true;
+loadController = { aborted:false, timeout:null };
 
-    if(loadController.timeout) clearTimeout(loadController.timeout);
-    if(progressInterval) clearInterval(progressInterval);
-
-    loadController = { aborted:false, timeout:null };
-
-    document.getElementById("img").style.display = "none";
-    document.getElementById("img").src = "";
-
-    document.getElementById("download").style.display = "none";
-
-    document.getElementById("status").innerText = "Ready";
-
-    document.getElementById("progress").style.width = "0%";
-
-    document.getElementById("text").innerText = "Preview Reset...";
+document.getElementById("img").style.display = "none";
+document.getElementById("download").style.display = "none";
+document.getElementById("status").innerText = "Ready";
+document.getElementById("progress").style.width = "0%";
+document.getElementById("text").innerText = "Preview Reset...";
 }
 
-/* ---------------- MODE SWITCH ---------------- */
+/* MODE SWITCH */
 function setMode(m, el){
-    mode = m;
+mode = m;
+resetProcessing();
 
-    resetProcessing();
+document.querySelectorAll(".group")
+.forEach(g => g.classList.remove("active"));
 
-    document.querySelectorAll(".group")
-        .forEach(g => g.classList.remove("active"));
+el.classList.add("active");
 
-    el.classList.add("active");
+document.getElementById("forestBox").style.display = "none";
+document.getElementById("gridBox").style.display = "none";
 
-    document.getElementById("forestBox").style.display = "none";
-    document.getElementById("gridBox").style.display = "none";
-
-    if(mode === "A") document.getElementById("forestBox").style.display = "block";
-    if(mode === "C") document.getElementById("gridBox").style.display = "block";
+if(mode === "A") document.getElementById("forestBox").style.display = "block";
+if(mode === "C") document.getElementById("gridBox").style.display = "block";
 }
 
-/* ---------------- PROGRESS SIM ---------------- */
+/* PROGRESS */
 function startProgress(){
-
-    let progress = 0;
-    let bar = document.getElementById("progress");
-
-    progressInterval = setInterval(() => {
-
-        if(progress >= 95){
-            clearInterval(progressInterval);
-            return;
-        }
-
-        progress += Math.random() * 10;
-        bar.style.width = progress + "%";
-
-        document.getElementById("status").innerText =
-            "Processing... " + Math.floor(progress) + "%";
-
-    }, 400);
+let progress = 0;
+progressInterval = setInterval(() => {
+if(progress >= 95) return clearInterval(progressInterval);
+progress += Math.random()*10;
+document.getElementById("progress").style.width = progress + "%";
+document.getElementById("status").innerText =
+"Processing... " + Math.floor(progress) + "%";
+}, 400);
 }
 
-/* ---------------- PREVIEW ---------------- */
+/* PREVIEW */
 function loadPreview(run_id){
+let img = document.getElementById("img");
+let text = document.getElementById("text");
+let attempts = 0;
 
-    let img = document.getElementById("img");
-    let text = document.getElementById("text");
-    let attempts = 0;
-
-    function tryLoad(){
-
-        if(loadController.aborted) return;
-
-        if(attempts > 10){
-            text.innerText = "Preview not found ❌";
-            return;
-        }
-
-        img.src = "/outputs/" + run_id + "/output.png?t=" + Date.now();
-
-        attempts++;
-
-        loadController.timeout = setTimeout(() => {
-
-            if(loadController.aborted) return;
-
-            if(img.naturalWidth === 0){
-                tryLoad();
-            } else {
-                img.style.display = "block";
-                text.innerText = "Preview Ready ✔";
-            }
-
-        }, 1000);
-    }
-
-    tryLoad();
+function tryLoad(){
+if(loadController.aborted) return;
+if(attempts++ > 10){
+text.innerText = "Preview not found ❌";
+return;
 }
 
-/* ---------------- RUN ---------------- */
+img.src = "/outputs/" + run_id + "/output.png?t=" + Date.now();
+
+loadController.timeout = setTimeout(() => {
+if(img.naturalWidth === 0) tryLoad();
+else {
+img.style.display = "block";
+text.innerText = "Preview Ready ✔";
+}
+}, 1000);
+}
+
+tryLoad();
+}
+
+/* RUN */
 async function run(){
 
-    resetProcessing();
+resetProcessing();
 
-    let file = document.getElementById("file").files[0];
-    if(!file){
-        alert("Upload file first");
-        return;
-    }
+let file = document.getElementById("file").files[0];
+if(!file) return alert("Upload file first");
 
-    let status = document.getElementById("status");
-    status.innerText = "Uploading...";
+let fd = new FormData();
+fd.append("file", file);
+fd.append("mode", mode);
+fd.append("zone", document.getElementById("zone").value);
 
-    let fd = new FormData();
-    fd.append("file", file);
-    fd.append("mode", mode);
-    fd.append("zone", document.getElementById("zone").value);
+if(mode === "A"){
+fd.append("forest", document.getElementById("forest").value || "FOREST");
+}
 
-    if(mode === "A"){
-        fd.append("forest", document.getElementById("forest").value || "FOREST");
-    }
+if(mode === "C"){
+fd.append("w", document.getElementById("w").value);
+fd.append("h", document.getElementById("h").value);
+fd.append("rows", document.getElementById("rows").value);
+fd.append("cols", document.getElementById("cols").value);
 
-    if(mode === "C"){
-        fd.append("w", document.getElementById("w").value || 50);
-        fd.append("h", document.getElementById("h").value || 50);
-        fd.append("rows", document.getElementById("rows").value || 10);
-        fd.append("cols", document.getElementById("cols").value || 10);
+// 🔥 optional hint (backend ignores safely if not used)
+fd.append("dataType", document.getElementById("dataType").value);
+}
 
-        // ✅ FIX: send data type selection
-        fd.append("c_type", document.getElementById("c_type").value);
-    }
+startProgress();
 
-    status.innerText = "Processing...";
-    startProgress();
+let res = await fetch("/upload", {
+method:"POST",
+body:fd
+});
 
-    let res = await fetch("/upload", {
-        method: "POST",
-        body: fd
-    });
+let data = await res.json();
 
-    let data = await res.json();
+document.getElementById("progress").style.width = "100%";
+document.getElementById("status").innerText = "Completed ✔";
 
-    document.getElementById("progress").style.width = "100%";
-    document.getElementById("status").innerText = "Completed ✔";
+let dl = document.getElementById("download");
+dl.href = data.download;
+dl.style.display = "block";
 
-    let dl = document.getElementById("download");
-    dl.href = data.download;
-    dl.download = "output.zip";
-    dl.style.display = "block";
-
-    loadPreview(data.run_id);
+loadPreview(data.run_id);
 }
 </script>
 
