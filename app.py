@@ -112,6 +112,7 @@ def group_a(df, forest, crs, out):
 
 
 # ================= GROUP B =================
+# ================= GROUP B =================
 def group_b(df, crs, out):
     df = normalize_order(df)
 
@@ -149,17 +150,23 @@ def group_b(df, crs, out):
                     "geometry": Point(r["X"], r["Y"])
                 })
 
-    return (
-        gpd.GeoDataFrame(polys, crs=crs),
-        gpd.GeoDataFrame(lines, crs=crs),
-        gpd.GeoDataFrame(pts, crs=crs)
-    )
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
 
 # ================= GROUP C (FIXED) =================
+# ================= GROUP C =================
 def group_c(file, crs, w, h, rows, cols, out):
 
+    # ---------- Read boundary ----------
     if file.filename.lower().endswith(".zip"):
+
         folder = os.path.join(UPLOAD, str(uuid.uuid4()))
         os.makedirs(folder, exist_ok=True)
 
@@ -175,56 +182,84 @@ def group_c(file, crs, w, h, rows, cols, out):
             poly = max(poly.geoms, key=lambda p: p.area)
 
         elif poly.geom_type == "GeometryCollection":
-            polys = [g for g in poly.geoms if g.geom_type == "Polygon"]
+            polys = [
+                g for g in poly.geoms
+                if g.geom_type == "Polygon"
+            ]
+
             if not polys:
                 raise Exception("No polygon found")
+
             poly = max(polys, key=lambda p: p.area)
 
     else:
         df = pd.read_excel(file)
+
         coords = list(zip(df["X"], df["Y"]))
         coords.append(coords[0])
+
         poly = Polygon(coords)
 
+    # ---------- Boundary ----------
     line = LineString(poly.exterior.coords)
 
     minx, miny, _, _ = poly.bounds
 
-    pts = []
-    for i in range(rows):
-        for j in range(cols):
-            x = minx + j * w
-            y = miny + i * h
+    # ---------- Systematic Grid ----------
+    inside_points = []
+    sn = 1
 
-            cell = Polygon([
-                (x, y),
-                (x + w, y),
-                (x + w, y + h),
-                (x, y + h)
-            ])
+    for r in range(rows):
+        for c in range(cols):
 
-            pts.append(cell.centroid)
+            # Cell origin
+            x = minx + (c * w)
+            y = miny + (r * h)
 
-    inside = [p for p in pts if poly.contains(p)]
+            # Plot center
+            center = Point(
+                x + (w / 2),
+                y + (h / 2)
+            )
 
-    gdf_pts = gpd.GeoDataFrame(
-        {"SN": range(1, len(inside) + 1)},
-        geometry=inside,
+            if poly.contains(center):
+                inside_points.append({
+                    "SN": sn,
+                    "X": center.x,
+                    "Y": center.y,
+                    "geometry": center
+                })
+                sn += 1
+
+    # ---------- Outputs ----------
+    pts_gdf = gpd.GeoDataFrame(
+        inside_points,
         crs=crs
     )
 
-    gdf_pts["X"] = gdf_pts.geometry.x
-    gdf_pts["Y"] = gdf_pts.geometry.y
+    poly_gdf = gpd.GeoDataFrame(
+        [{"geometry": poly}],
+        crs=crs
+    )
 
-    poly_gdf = gpd.GeoDataFrame([{"geometry": poly}], crs=crs)
-    line_gdf = gpd.GeoDataFrame([{"geometry": line}], crs=crs)
+    line_gdf = gpd.GeoDataFrame(
+        [{"geometry": line}],
+        crs=crs
+    )
 
-    poly_gdf.to_file(os.path.join(out, "boundary.shp"))
-    line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
-    gdf_pts.to_file(os.path.join(out, "sampleplot.shp"))
+    poly_gdf.to_file(
+        os.path.join(out, "boundary.shp")
+    )
 
-    return poly_gdf, line_gdf, gdf_pts
+    line_gdf.to_file(
+        os.path.join(out, "boundary_line.shp")
+    )
 
+    pts_gdf.to_file(
+        os.path.join(out, "sampleplot.shp")
+    )
+
+    return poly_gdf, line_gdf, pts_gdf
 
 # ================= GROUP D =================
 def group_d(df, crs, out):
@@ -259,11 +294,15 @@ def group_d(df, crs, out):
                 "geometry": Point(r["X"], r["Y"])
             })
 
-    return (
-        gpd.GeoDataFrame(polys, crs=crs),
-        gpd.GeoDataFrame(lines, crs=crs),
-        gpd.GeoDataFrame(pts, crs=crs)
-    )
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
 
 
 # ================= PREVIEW =================
