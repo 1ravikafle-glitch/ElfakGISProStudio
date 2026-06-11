@@ -3,398 +3,589 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Elfak GIS Engine Pro</title>
+<title>Elfak GIS Engine Pro — Premium Forest Studio</title>
 
 <style>
-body{
-margin:0;
-font-family:system-ui;
-background:#0b0d12;
-color:#e5e7eb;
+:root {
+    --bg-canopy: #070d0a;
+    --bg-glass: rgba(248, 250, 252, 0.07);
+    --bg-card: rgba(15, 23, 19, 0.6);
+    --border-soft: rgba(241, 245, 249, 0.08);
+    --border-active: #34d399;
+    --glow-mint: rgba(52, 211, 153, 0.25);
+    
+    /* Elegant Shades of White & Light Neutrals */
+    --white-pure: #ffffff;
+    --white-snow: #f8fafc;
+    --white-mist: #e2e8f0;
+    --text-muted: #94a3b8;
+    
+    --mint: #10b981;
+    --emerald-glow: linear-gradient(135deg, #34d399 0%, #059669 100%);
+    --amber-timber: #f59e0b;
 }
 
-.app{
-display:flex;
-height:100vh;
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    background: radial-gradient(circle at 50% 0%, #15291f 0%, var(--bg-canopy) 80%);
+    color: var(--white-snow);
+    height: 100vh;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
 }
 
-/* SIDEBAR */
-.sidebar{
-width:380px;
-padding:18px;
-background:rgba(255,255,255,0.03);
-border-right:1px solid rgba(255,255,255,0.08);
-backdrop-filter:blur(20px);
-overflow:auto;
+/* APPLICATION GRID LAYOUT WITH SMOOTH FADE-IN */
+.app-layout {
+    display: grid;
+    grid-template-columns: 290px 1fr 490px;
+    gap: 20px;
+    height: 100vh;
+    padding: 20px;
+    box-sizing: border-box;
+    animation: layoutFadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-h1{
-font-size:20px;
-margin-bottom:18px;
+@keyframes layoutFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
-.group{
-padding:14px;
-margin:10px 0;
-border-radius:12px;
-background:rgba(255,255,255,0.05);
-cursor:pointer;
-transition:0.25s;
+/* PREMIUM HOLO-GLASS CARD BUILD */
+.holo-panel {
+    background: var(--bg-glass);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    border: 1px solid var(--border-soft);
+    border-radius: 20px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    transition: border-color 0.3s, box-shadow 0.3s;
 }
 
-.group:hover{ background:#1f2937; }
-.active{ background:#4f46e5; }
-
-label{
-display:block;
-margin-top:12px;
-margin-bottom:4px;
-font-size:14px;
-font-weight:600;
+.panel-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--white-mist);
+    opacity: 0.8;
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(241, 245, 249, 0.04);
+    font-weight: 700;
 }
 
-small{
-display:block;
-margin-top:4px;
-margin-bottom:8px;
-color:#9ca3af;
-font-size:12px;
+.panel-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
 }
 
-select{
-    width:100%;
-    padding:12px;
-    border-radius:10px;
-    border:1px solid rgba(255,255,255,0.08);
-    background:#1f2937;
-    color:#ffffff;
-    box-sizing:border-box;
-    outline:none;
+/* AUTOMATION TREE NAVIGATION */
+.tree-node {
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    transition: all 0.25s ease;
+}
+.tree-node:hover {
+    background: rgba(248, 250, 252, 0.04);
+    color: var(--white-pure);
+    transform: translateX(3px);
+}
+.tree-node.active {
+    background: rgba(52, 211, 153, 0.12);
+    color: var(--white-pure);
+    font-weight: 600;
+    box-shadow: inset 1px 0 0 var(--border-active);
 }
 
-/* dropdown list */
-select option{
-    background:#111827;
-    color:#e5e7eb;
+/* INTERACTION ARCHITECTURE CORE */
+.workspace-split {
+    display: grid;
+    grid-template-rows: 1fr 120px;
+    gap: 20px;
+    height: 100%;
 }
 
-.section{
-display:none;
-margin-top:10px;
-padding:10px;
-border-radius:10px;
-background:rgba(255,255,255,0.03);
+.matrix-container {
+    display: flex;
+    gap: 24px;
+    height: 100%;
 }
 
-button{
-width:100%;
-margin-top:15px;
-padding:12px;
-border:none;
-border-radius:10px;
-background:#6366f1;
-color:white;
-font-weight:600;
-cursor:pointer;
+.matrix-selectors {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
-button:hover{ background:#4f46e5; }
-
-.progress-bar{
-width:100%;
-height:8px;
-background:#1f2937;
-border-radius:10px;
-overflow:hidden;
-margin-top:10px;
+/* INTERACTIVE TAB NAV MODULES */
+.matrix-tab {
+    width: 48px;
+    height: 48px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.matrix-tab:hover {
+    color: var(--white-pure);
+    border-color: rgba(248, 250, 252, 0.3);
+    transform: scale(1.04);
 }
 
-.progress{
-height:100%;
-width:0%;
-background:#4f46e5;
+.matrix-tab.active-tab {
+    color: var(--white-pure);
+    background: rgba(52, 211, 153, 0.15);
+    border-color: var(--border-active);
+    box-shadow: 0 0 20px var(--glow-mint);
+    animation: pulseGlow 2s infinite alternate;
 }
 
-/* PREVIEW */
-.preview{
-flex:1;
-display:flex;
-align-items:center;
-justify-content:center;
+@keyframes pulseGlow {
+    0% { box-shadow: 0 0 12px rgba(52, 211, 153, 0.2); }
+    100% { box-shadow: 0 0 24px rgba(52, 211, 153, 0.45); }
 }
 
-.box{
-width:95%;
-height:92%;
-border-radius:16px;
-background:#111827;
-display:flex;
-flex-direction:column;
-align-items:center;
-justify-content:center;
-padding:20px;
+.config-stack {
+    flex: 1;
 }
 
-img{
-max-width:100%;
-max-height:100%;
-display:none;
-object-fit:contain;
+.group-content-card {
+    display: none;
+    height: 100%;
+    animation: contentFade 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.group-content-card.active-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
 }
 
-a{
-margin-top:10px;
-color:#60a5fa;
-display:none;
-cursor:pointer;
+@keyframes contentFade {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* COMPACT DATA DRAG-DROP PORTAL */
+.cyber-dropzone {
+    border: 1px dashed rgba(248, 250, 252, 0.2);
+    background: rgba(10, 15, 13, 0.4);
+    border-radius: 12px;
+    padding: 18px;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.3s;
+}
+.cyber-dropzone:hover {
+    border-color: var(--border-active);
+    background: rgba(52, 211, 153, 0.03);
+}
+.cyber-dropzone input[type="file"] {
+    position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;
+}
+.cyber-dropzone span {
+    font-size: 12px;
+    color: var(--white-mist);
+    font-weight: 500;
+}
+
+.input-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.field-group label {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+/* ✅ PREMIUM HIGH-DENSITY PARAMETER FORM CONTROLS */
+select, input[type="number"] {
+    width: 100%;
+    background: rgba(13, 20, 17, 0.8);
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    padding: 0 12px;
+    color: var(--white-pure);
+    font-size: 12px;
+    font-weight: 500;
+    outline: none;
+    box-sizing: border-box;
+    height: 32px;
+    transition: all 0.2s ease;
+}
+select:focus, input[type="number"]:focus {
+    border-color: var(--border-active);
+    background: rgba(13, 20, 17, 0.95);
+    box-shadow: 0 0 10px rgba(52, 211, 153, 0.15);
+}
+
+/* ENGINE COMPUTATION HUD CONTROL BLOCK */
+.console-layout {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+}
+
+.btn-cyber-run {
+    background: var(--emerald-glow);
+    border: none;
+    color: var(--white-pure);
+    padding: 12px 28px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(52, 211, 153, 0.2);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-cyber-run:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(52, 211, 153, 0.45);
+}
+.btn-cyber-run:active {
+    transform: translateY(0);
+}
+
+/* PROGRESS METRICS ARCS */
+.radial-progress-box {
+    position: relative;
+    width: 56px;
+    height: 56px;
+}
+.radial-svg {
+    transform: rotate(-90deg);
+}
+.track-arc {
+    fill: none; stroke: rgba(248, 250, 252, 0.03); stroke-width: 4;
+}
+.fill-arc {
+    fill: none; stroke: var(--mint); stroke-width: 4;
+    stroke-dasharray: 150.7; stroke-dashoffset: 150.7;
+    transition: stroke-dashoffset 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* LIVE RENDER VISUALIZATION DESK */
+.visualizer-desk {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.canvas-wrapper {
+    flex: 1;
+    background: #050806;
+    border: 1px solid rgba(241, 245, 249, 0.02);
+    border-radius: 16px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 0 10px 40px rgba(0,0,0,0.7);
+}
+
+.canvas-wrapper::before {
+    content: ''; position: absolute; inset: 0;
+    border: 1px solid var(--border-active); border-radius: 16px;
+    pointer-events: none; opacity: 0.12;
+}
+
+#output-img {
+    max-width: 95%; max-height: 95%; object-fit: contain;
+    display: none; border-radius: 10px;
+    animation: imageReveal 0.5s ease forwards;
+}
+
+@keyframes imageReveal {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.meta-footer {
+    margin-top: 18px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+}
+
+.btn-download {
+    background: rgba(248, 250, 252, 0.05);
+    border: 1px solid rgba(248, 250, 252, 0.1);
+    color: var(--white-pure);
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 12px;
+    text-decoration: none;
+    font-weight: 500;
+    display: none;
+    transition: all 0.2s ease;
+}
+.btn-download:hover {
+    background: var(--white-pure);
+    color: var(--bg-canopy);
+    border-color: var(--white-pure);
 }
 </style>
 </head>
 
 <body>
 
-<div class="app">
+<div class="app-layout">
 
-<!-- SIDEBAR -->
-<div class="sidebar">
-
-<h1>🌲 GIS Engine Pro</h1>
-
-<div class="group active" onclick="setMode('A', this)">
-Group A — Forest Boundary
-<small>X, Y, Order required</small>
-</div>
-
-<div class="group" onclick="setMode('B', this)">
-Group B — Segmented Forest
-<small>X, Y, Order, Forest, Compartment</small>
-</div>
-
-<div class="group" onclick="setMode('C', this)">
-Group C — Sample Grid
-<small>Automatic spatial sampling</small>
-</div>
-
-<div class="group" onclick="setMode('D', this)">
-Group D — Multi-Forest Mode
-<small>Advanced processing</small>
-</div>
-
-<input type="file" id="file">
-
-<!-- COLUMN MAPPING -->
-<div id="columnBox" class="section" style="display:block;">
-
-<h3>Column Mapping</h3>
-
-<label>X Coordinate</label>
-<select id="xCol"></select>
-<small>Easting / Longitude column</small>
-
-<label>Y Coordinate</label>
-<select id="yCol"></select>
-<small>Northing / Latitude column</small>
-
-<label>Point Order</label>
-<select id="orderCol"></select>
-<small>Sequence for drawing shape</small>
-
-<div id="groupBFields" style="display:none;">
-
-<hr style="border:1px solid rgba(255,255,255,0.1); margin:15px 0;">
-
-<label>Forest Column</label>
-<select id="forestCol"></select>
-<small>Forest name field</small>
-
-<label>Compartment Column</label>
-<select id="compCol"></select>
-<small>Compartment ID field</small>
-
-</div>
-
-</div>
-
-<select id="zone">
-<option value="44">UTM 44N</option>
-<option value="45">UTM 45N</option>
-</select>
-
-<div id="gridBox" class="section grid-box">
-
-    <div class="grid-item">
-        <label>Cell Width(m)</label>
-        <div class="input-wrap">
-            <span>↔</span>
-            <input type="number" id="w" value="50">
+    <div class="holo-panel">
+        <div class="panel-title">Forest Map Navigator</div>
+        <div class="panel-scroll">
+            <div class="tree-node active" onclick="switchTab('A')">🌲 Group A — Boundary Whole</div>
+            <div class="tree-node" onclick="switchTab('B')">🌲 Group B — Segment Forest</div>
+            <div class="tree-node" onclick="switchTab('C')">🌲 Group C — Sample PLot</div>
+            <div class="tree-node" onclick="switchTab('D')">🌲 Group D — Complex Version A</div>
+            
+            <div style="margin-top: 35px;">
+                <div class="field-group">
+                    <label>Target GIS Projection</label>
+                    <select id="zone">
+                        <option value="44">UTM Zone 44N</option>
+                        <option value="45">UTM Zone 45N</option>
+                    </select>
+                </div>
+            </div>
         </div>
     </div>
 
-    <div class="grid-item">
-        <label>Cell Height(m)</label>
-        <div class="input-wrap">
-            <span>↕</span>
-            <input type="number" id="h" value="50">
+    <div class="workspace-split">
+        
+        <div class="holo-panel">
+            <div class="panel-title">Parameter Settings Matrix</div>
+            <div class="panel-scroll matrix-container">
+                
+                <div class="matrix-selectors">
+                    <div class="matrix-tab active-tab" id="tab-A" onclick="switchTab('A')">A</div>
+                    <div class="matrix-tab" id="tab-B" onclick="switchTab('B')">B</div>
+                    <div class="matrix-tab" id="tab-C" onclick="switchTab('C')">C</div>
+                    <div class="matrix-tab" id="tab-D" onclick="switchTab('D')">D</div>
+                </div>
+
+                <div class="config-stack">
+                    
+                    <div class="group-content-card active-card" id="card-A">
+                        <div class="cyber-dropzone">
+                            <span class="dz-text">✨ Select ExcelData</span>
+                            <input type="file" class="file">
+                        </div>
+                        <div class="input-row">
+                            <div class="field-group"><label>X Coordinate</label><select data-key="x_coord"></select></div>
+                            <div class="field-group"><label>Y Coordinate</label><select data-key="y_coord"></select></div>
+                        </div>
+                        <div class="field-group"><label>Point Order Vector</label><select data-key="point_order"></select></div>
+                    </div>
+
+                    <div class="group-content-card" id="card-B">
+                        <div class="cyber-dropzone"><span class="dz-text">✨ CSelect ExcelD Data</span><input type="file" class="file"></div>
+                        <div class="input-row">
+                            <div class="field-group"><label>X Coordinate</label><select data-key="x_coord"></select></div>
+                            <div class="field-group"><label>Y Coordinate</label><select data-key="y_coord"></select></div>
+                        </div>
+                        <div class="input-row">
+                            <div class="field-group"><label>Select File</label><select data-key="point_order"></select></div>
+                            <div class="field-group"><label>Forest Identifier</label><select data-key="forest"></select></div>
+                        </div>
+                    </div>
+
+                    <div class="group-content-card" id="card-C">
+                        <div class="cyber-dropzone"><span class="dz-text">✨ Click oile</span><input type="file" class="file"></div>
+                        <div class="input-row">
+                            <div class="field-group"><label>Cell Width (m)</label><input type="number" data-key="cell_width" value="50"></div>
+                            <div class="field-group"><label>Cell Height (m)</label><input type="number" data-key="cell_height" value="50"></div>
+                        </div>
+                        <div class="input-row">
+                            <div class="field-group"><label>Row Extent</label><input type="number" data-key="rows" value="10"></div>
+                            <div class="field-group"><label>Column Extent</label><input type="number" data-key="columns" value="10"></div>
+                        </div>
+                    </div>
+
+                    <div class="group-content-card" id="card-D">
+                        <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Engine File</span><input type="file" class="file"></div>
+                        <div class="input-row">
+                            <div class="field-group"><label>X Coordinate</label><select data-key="x_coord"></select></div>
+                            <div class="field-group"><label>Y Coordinate</label><select data-key="y_coord"></select></div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
         </div>
+
+        <div class="holo-panel console-layout">
+            <div>
+                <button class="btn-cyber-run" onclick="runPipeline()">Excecute Process</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <div style="text-align: right;">
+                    <div id="status-headline" style="font-size:12px; font-weight:600; color:var(--white-pure);">Core Standby</div>
+                    <div id="status-sub" style="font-size:10px; color:var(--text-muted); margin-top:2px;">Topology Balanced</div>
+                </div>
+                <div class="radial-progress-box">
+                    <svg class="radial-svg" width="56" height="56">
+                        <circle class="track-arc" cx="28" cy="28" r="24"></circle>
+                        <circle class="fill-arc" id="radial-bar" cx="28" cy="28" r="24"></circle>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
     </div>
 
-    <div class="grid-item">
-        <label>Rows</label>
-        <div class="input-wrap">
-            <span>▦</span>
-            <input type="number" id="rows" value="10">
+    <div class="holo-panel visualizer-desk">
+        <div class="panel-title" style="padding:0 0 12px 0;">Dynamic Preview</div>
+        <div class="canvas-wrapper">
+            <div id="empty-notice" style="font-size:12px; color:var(--text-muted);">Awaiting data rendering execution...</div>
+            <img id="output-img" alt="Spatial Matrix Layout Output Workspace">
+        </div>
+        <div class="meta-footer">
+            <div>
+                <div id="run-meta" style="font-size: 11px; color: var(--text-muted); font-family: monospace;">Metrics: Standby</div>
+            </div>
+            <a id="download-btn" class="btn-download" href="#">Export Package (ZIP)</a>
         </div>
     </div>
-
-    <div class="grid-item">
-        <label>Columns</label>
-        <div class="input-wrap">
-            <span>▦</span>
-            <input type="number" id="cols" value="10">
-        </div>
-    </div>
-
-</div>
-<button onclick="run()">Run Processing</button>
-
-<div class="progress-bar">
-<div class="progress" id="progress"></div>
-</div>
-
-<div id="status">Ready</div>
-
-</div>
-
-<!-- PREVIEW -->
-<div class="preview">
-<div class="box">
-<div id="text">Preview Area</div>
-<img id="img">
-<a id="download">⬇ Download ZIP</a>
-</div>
-</div>
 
 </div>
 
 <script>
-
 let mode = "A";
 
-/* MODE SWITCH */
-function setMode(m, el){
-mode = m;
+function switchTab(targetMode) {
+    mode = targetMode;
+    
+    document.querySelectorAll('.matrix-tab').forEach(t => t.classList.remove('active-tab'));
+    document.getElementById(`tab-${targetMode}`).classList.add('active-tab');
+    
+    document.querySelectorAll('.group-content-card').forEach(c => c.classList.remove('active-card'));
+    document.getElementById(`card-${targetMode}`).classList.add('active-card');
 
-document.querySelectorAll(".group").forEach(g=>g.classList.remove("active"));
-el.classList.add("active");
-
-document.getElementById("gridBox").style.display = (m==="C") ? "block" : "none";
-document.getElementById("columnBox").style.display = (m==="A"||m==="B"||m==="D") ? "block" : "none";
-document.getElementById("groupBFields").style.display = (m==="B") ? "block" : "none";
+    document.querySelectorAll('.tree-node').forEach((node, idx) => {
+        node.classList.remove('active');
+        if(["A","B","C","D"][idx] === targetMode) node.classList.add('active');
+    });
 }
 
-/* LOAD COLUMNS */
-document.getElementById("file").addEventListener("change", async function () {
+document.querySelectorAll(".file").forEach(input => {
+    input.addEventListener("change", async function() {
+        let file = this.files[0];
+        if(!file) return;
 
-let file = this.files[0];
-if (!file) return;
+        let dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
+        dzText.innerText = `🌿 Active: ${file.name}`;
+        dzText.style.color = "var(--border-active)";
 
-let fd = new FormData();
-fd.append("file", file);
+        let fd = new FormData();
+        fd.append("file", file);
 
-let res = await fetch("/get-columns", {
-method:"POST",
-body:fd
+        try {
+            let res = await fetch("/get-columns", { method: "POST", body: fd });
+            let cols = await res.json();
+            let activeCard = this.closest(".group-content-card");
+
+            activeCard.querySelectorAll("select").forEach(s => {
+                s.innerHTML = "";
+                cols.forEach(c => {
+                    s.innerHTML += `<option value="${c}">${c}</option>`;
+                });
+            });
+        } catch (err) {
+            console.error("Failed executing coordinate vector sync mappings:", err);
+        }
+    });
 });
 
-let cols = await res.json();
+async function runPipeline() {
+    let activeCard = document.getElementById(`card-${mode}`);
+    let fileInput = activeCard.querySelector(".file");
+    let file = fileInput.files[0];
 
-let xSel = document.getElementById("xCol");
-let ySel = document.getElementById("yCol");
-let oSel = document.getElementById("orderCol");
-let fSel = document.getElementById("forestCol");
-let cSel = document.getElementById("compCol");
+    if(!file) return alert("System Notice: Configuration requires a valid source spatial layout layer target file.");
 
-[xSel,ySel,oSel,fSel,cSel].forEach(s=>s.innerHTML="");
+    let radialBar = document.getElementById("radial-bar");
+    let headline = document.getElementById("status-headline");
+    let subline = document.getElementById("status-sub");
+    let download = document.getElementById("download-btn");
+    let img = document.getElementById("output-img");
+    let notice = document.getElementById("empty-notice");
+    let meta = document.getElementById("run-meta");
 
-cols.forEach(c=>{
-let opt = `<option value="${c}">${c}</option>`;
-xSel.innerHTML += opt;
-ySel.innerHTML += opt;
-oSel.innerHTML += opt;
-fSel.innerHTML += opt;
-cSel.innerHTML += opt;
-});
+    let circumference = 2 * Math.PI * 24;
+    radialBar.style.strokeDashoffset = circumference - (40 / 100) * circumference;
+    headline.innerText = "Analyzing Coordinates...";
+    subline.innerText = "Mapping vector geometries";
 
-/* AUTO DETECT */
-cols.forEach(c=>{
-let n = c.toLowerCase();
+    let fd = new FormData();
+    fd.append("file", file);
+    fd.append("mode", mode);
+    fd.append("zone", document.getElementById("zone").value);
 
-if(n.includes("x")||n.includes("lon")) xSel.value=c;
-if(n.includes("y")||n.includes("lat")) ySel.value=c;
-if(n.includes("order")||n.includes("seq")) oSel.value=c;
-if(n.includes("forest")) fSel.value=c;
-if(n.includes("comp")) cSel.value=c;
-});
+    let mapping = {};
+    activeCard.querySelectorAll("select, input[type='number']").forEach(field => {
+        let key = field.getAttribute("data-key");
+        if(key) mapping[key] = field.value;
+    });
+    fd.append("mapping", JSON.stringify(mapping));
 
-});
+    try {
+        let res = await fetch("/upload", { method: "POST", body: fd });
+        if(!res.ok) {
+            headline.innerText = "Execution Fault";
+            subline.innerText = "Algorithmic transformation aborted";
+            radialBar.style.strokeDashoffset = circumference;
+            return;
+        }
 
-/* RUN */
-async function run(){
+        let data = await res.json();
 
-let file = document.getElementById("file").files[0];
-if(!file) return alert("Upload file");
+        radialBar.style.strokeDashoffset = 0;
+        headline.innerText = "Pipeline Finalized";
+        subline.innerText = "Process complete";
 
-let progress = document.getElementById("progress");
-let status = document.getElementById("status");
-let download = document.getElementById("download");
-let img = document.getElementById("img");
-let text = document.getElementById("text");
+        download.href = data.download;
+        download.style.display = "inline-block";
 
-progress.style.width="10%";
-status.innerText="Processing...";
+        img.src = "/outputs/" + data.run_id + "/output.png?t=" + Date.now();
+        img.style.display = "block";
+        notice.style.display = "none";
 
-let fd = new FormData();
-fd.append("file", file);
-fd.append("mode", mode);
-fd.append("zone", document.getElementById("zone").value);
-
-let mapping = {
-X: document.getElementById("xCol").value,
-Y: document.getElementById("yCol").value,
-Order: document.getElementById("orderCol").value
-};
-
-if(mode==="B"){
-mapping.Forest = document.getElementById("forestCol").value;
-mapping.Compartment = document.getElementById("compCol").value;
+        let now = new Date();
+        meta.innerText = `Run ID: ${data.run_id} | ${now.toTimeString().split(' ')[0]}`;
+    } catch(err) {
+        headline.innerText = "Socket Timeout";
+        subline.innerText = "Core matrix node unreached";
+        radialBar.style.strokeDashoffset = circumference;
+    }
 }
-
-fd.append("mapping", JSON.stringify(mapping));
-
-let res = await fetch("/upload",{method:"POST",body:fd});
-
-if(!res.ok){
-status.innerText="Error ❌";
-progress.style.width="0%";
-return;
-}
-
-let data = await res.json();
-
-progress.style.width="100%";
-status.innerText="Done ✔";
-
-/* DOWNLOAD */
-download.href = data.download;
-download.style.display = "block";
-
-/* PREVIEW IMAGE */
-img.src = "/outputs/"+data.run_id+"/output.png?t="+Date.now();
-img.style.display = "block";
-
-text.innerText = "Preview Ready ✔";
-}
-
 </script>
 
 </body>
