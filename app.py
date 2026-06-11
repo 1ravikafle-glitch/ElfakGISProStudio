@@ -49,15 +49,19 @@ def outputs(run_id, filename):
 @app.route("/get-columns", methods=["POST"])
 def get_columns():
     file = request.files["file"]
-    df = pd.read_excel(file)
-    if filter_forest and "Forest" in df.columns:
-    df = df[df["Forest"] == filter_forest]
-    if filter_comp and "Compartment" in df.columns:
-    df = df[df["Compartment"] == filter_comp]
+
     filter_forest = request.form.get("filterForest")
     filter_comp = request.form.get("filterCompartment")
-    return jsonify(list(df.columns))
 
+    df = pd.read_excel(file)
+
+    if filter_forest and "Forest" in df.columns:
+        df = df[df["Forest"] == filter_forest]
+
+    if filter_comp and "Compartment" in df.columns:
+        df = df[df["Compartment"] == filter_comp]
+
+    return jsonify(list(df.columns))
 
 # ================= GROUP A =================
 def group_a(df, forest, crs, out, mapping=None):
