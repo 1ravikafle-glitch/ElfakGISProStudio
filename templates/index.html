@@ -13,13 +13,11 @@ background:#0b0d12;
 color:#e5e7eb;
 }
 
-/* LAYOUT */
 .app{
 display:flex;
 height:100vh;
 }
 
-/* SIDEBAR */
 .sidebar{
 width:380px;
 padding:20px;
@@ -34,7 +32,6 @@ font-size:20px;
 margin-bottom:15px;
 }
 
-/* GROUP BUTTONS */
 .group{
 padding:12px;
 margin:8px 0;
@@ -54,7 +51,6 @@ background:#4f46e5;
 box-shadow:0 0 20px rgba(79,70,229,.4);
 }
 
-/* INPUTS */
 input,select{
 width:100%;
 padding:12px;
@@ -67,12 +63,6 @@ outline:none;
 box-sizing:border-box;
 }
 
-small{
-color:#9ca3af;
-font-size:12px;
-}
-
-/* SECTIONS */
 .section{
 display:none;
 margin-top:10px;
@@ -80,7 +70,6 @@ padding-top:10px;
 border-top:1px solid rgba(255,255,255,0.08);
 }
 
-/* BUTTON */
 button{
 width:100%;
 margin-top:15px;
@@ -98,14 +87,28 @@ button:hover{
 background:#4f46e5;
 }
 
-/* STATUS */
 .status{
 margin-top:10px;
 color:#9ca3af;
 font-size:13px;
 }
 
-/* PREVIEW */
+.progress-bar{
+width:100%;
+height:8px;
+background:#1f2937;
+border-radius:10px;
+overflow:hidden;
+margin-top:10px;
+}
+
+.progress{
+height:100%;
+width:0%;
+background:#4f46e5;
+transition:0.3s;
+}
+
 .preview{
 flex:1;
 display:flex;
@@ -154,7 +157,6 @@ color:#9ca3af;
 
 <div class="app">
 
-<!-- SIDEBAR -->
 <div class="sidebar">
 
 <h1>🌲 GIS Engine Pro</h1>
@@ -166,35 +168,35 @@ color:#9ca3af;
 
 <input type="file" id="file">
 
-<!-- FOREST -->
 <div id="forestBox" class="section">
 <small>Forest Name (Group A only)</small>
 <input id="forest" placeholder="Forest name">
 </div>
 
-<!-- ZONE -->
 <select id="zone">
 <option value="44">UTM 44N</option>
 <option value="45">UTM 45N</option>
 </select>
 
-<!-- GRID -->
 <div id="gridBox" class="section">
 <small>Grid Settings (Group C only)</small>
 
-<input type="number" id="w" placeholder="Cell Width (m)" value="50">
-<input type="number" id="h" placeholder="Cell Height (m)" value="50">
-<input type="number" id="rows" placeholder="Rows" value="10">
-<input type="number" id="cols" placeholder="Columns" value="10">
+<input type="number" id="w" value="50">
+<input type="number" id="h" value="50">
+<input type="number" id="rows" value="10">
+<input type="number" id="cols" value="10">
 </div>
 
 <button onclick="run()">Run Processing</button>
+
+<div class="progress-bar">
+<div class="progress" id="progress"></div>
+</div>
 
 <div class="status" id="status">Ready</div>
 
 </div>
 
-<!-- PREVIEW -->
 <div class="preview">
 <div class="box">
 
@@ -210,17 +212,45 @@ color:#9ca3af;
 <script>
 let mode = "A";
 
+let loadController = {
+    aborted: false,
+    timeout: null
+};
+
+let progressInterval = null;
+
+/* ---------------- RESET ---------------- */
+function resetProcessing(){
+
+    loadController.aborted = true;
+
+    if(loadController.timeout) clearTimeout(loadController.timeout);
+    if(progressInterval) clearInterval(progressInterval);
+
+    loadController = { aborted:false, timeout:null };
+
+    document.getElementById("img").style.display = "none";
+    document.getElementById("img").src = "";
+
+    document.getElementById("download").style.display = "none";
+
+    document.getElementById("status").innerText = "Ready";
+
+    document.getElementById("progress").style.width = "0%";
+
+    document.getElementById("text").innerText = "Preview Reset...";
+}
+
+/* ---------------- MODE SWITCH ---------------- */
 function setMode(m, el){
     mode = m;
+
+    resetProcessing();
 
     document.querySelectorAll(".group")
         .forEach(g => g.classList.remove("active"));
 
     el.classList.add("active");
-
-    document.getElementById("img").style.display = "none";
-    document.getElementById("download").style.display = "none";
-    document.getElementById("text").innerText = "Preview Area";
 
     document.getElementById("forestBox").style.display = "none";
     document.getElementById("gridBox").style.display = "none";
@@ -229,18 +259,38 @@ function setMode(m, el){
     if(mode === "C") document.getElementById("gridBox").style.display = "block";
 }
 
+/* ---------------- PROGRESS SIM ---------------- */
+function startProgress(){
+
+    let progress = 0;
+    let bar = document.getElementById("progress");
+
+    progressInterval = setInterval(() => {
+
+        if(progress >= 95){
+            clearInterval(progressInterval);
+            return;
+        }
+
+        progress += Math.random() * 10;
+        bar.style.width = progress + "%";
+
+        document.getElementById("status").innerText =
+            "Processing... " + Math.floor(progress) + "%";
+
+    }, 400);
+}
+
+/* ---------------- PREVIEW ---------------- */
 function loadPreview(run_id){
 
     let img = document.getElementById("img");
     let text = document.getElementById("text");
     let attempts = 0;
 
-    img.onload = () => {
-        img.style.display = "block";
-        text.innerText = "Preview Ready ✔";
-    };
-
     function tryLoad(){
+
+        if(loadController.aborted) return;
 
         if(attempts > 10){
             text.innerText = "Preview not found ❌";
@@ -251,17 +301,27 @@ function loadPreview(run_id){
 
         attempts++;
 
-        setTimeout(() => {
+        loadController.timeout = setTimeout(() => {
+
+            if(loadController.aborted) return;
+
             if(img.naturalWidth === 0){
                 tryLoad();
+            } else {
+                img.style.display = "block";
+                text.innerText = "Preview Ready ✔";
             }
+
         }, 1000);
     }
 
     tryLoad();
 }
 
+/* ---------------- RUN ---------------- */
 async function run(){
+
+    resetProcessing();
 
     let file = document.getElementById("file").files[0];
     if(!file){
@@ -289,6 +349,7 @@ async function run(){
     }
 
     status.innerText = "Processing...";
+    startProgress();
 
     let res = await fetch("/upload", {
         method: "POST",
@@ -297,15 +358,14 @@ async function run(){
 
     let data = await res.json();
 
-    status.innerText = "Completed ✔";
+    document.getElementById("progress").style.width = "100%";
+    document.getElementById("status").innerText = "Completed ✔";
 
-    /* DOWNLOAD */
     let dl = document.getElementById("download");
     dl.href = data.download;
     dl.download = "output.zip";
     dl.style.display = "block";
 
-    /* PREVIEW */
     loadPreview(data.run_id);
 }
 </script>
