@@ -18,6 +18,7 @@ display:flex;
 height:100vh;
 }
 
+/* SIDEBAR */
 .sidebar{
 width:380px;
 padding:18px;
@@ -44,10 +45,25 @@ transition:0.25s;
 .group:hover{ background:#1f2937; }
 .active{ background:#4f46e5; }
 
+label{
+display:block;
+margin-top:12px;
+margin-bottom:4px;
+font-size:14px;
+font-weight:600;
+}
+
+small{
+display:block;
+margin-top:4px;
+margin-bottom:8px;
+color:#9ca3af;
+font-size:12px;
+}
+
 input,select{
 width:100%;
 padding:12px;
-margin-top:10px;
 border-radius:10px;
 border:1px solid rgba(255,255,255,0.08);
 background:rgba(255,255,255,0.05);
@@ -77,8 +93,6 @@ cursor:pointer;
 
 button:hover{ background:#4f46e5; }
 
-.status{ margin-top:10px; color:#9ca3af; font-size:13px; }
-
 .progress-bar{
 width:100%;
 height:8px;
@@ -94,6 +108,7 @@ width:0%;
 background:#4f46e5;
 }
 
+/* PREVIEW */
 .preview{
 flex:1;
 display:flex;
@@ -126,16 +141,6 @@ color:#60a5fa;
 display:none;
 cursor:pointer;
 }
-/* small label styling */
-small{
-color:#9ca3af;
-display:block;
-margin-top:6px;
-}
-
-#text{
-color:#9ca3af;
-}
 </style>
 </head>
 
@@ -149,17 +154,17 @@ color:#9ca3af;
 <h1>🌲 GIS Engine Pro</h1>
 
 <div class="group active" onclick="setMode('A', this)">
-Group A — Forest Boundry
+Group A — Forest Boundary
 <small>X, Y, Order required</small>
 </div>
 
 <div class="group" onclick="setMode('B', this)">
 Group B — Segmented Forest
-<small>X, Y, Order,Forest, Compartment required</small>
+<small>X, Y, Order, Forest, Compartment</small>
 </div>
 
 <div class="group" onclick="setMode('C', this)">
-Group C — Sample Plot Grid
+Group C — Sample Grid
 <small>Automatic spatial sampling</small>
 </div>
 
@@ -170,16 +175,37 @@ Group D — Multi-Forest Mode
 
 <input type="file" id="file">
 
-<!-- COLUMN FILTER (FIXED) -->
+<!-- COLUMN MAPPING -->
 <div id="columnBox" class="section" style="display:block;">
-<small>Column Mapping</small>
+
+<h3>Column Mapping</h3>
+
+<label>X Coordinate</label>
 <select id="xCol"></select>
+<small>Easting / Longitude column</small>
+
+<label>Y Coordinate</label>
 <select id="yCol"></select>
+<small>Northing / Latitude column</small>
+
+<label>Point Order</label>
 <select id="orderCol"></select>
+<small>Sequence for drawing shape</small>
+
+<div id="groupBFields" style="display:none;">
+
+<hr style="border:1px solid rgba(255,255,255,0.1); margin:15px 0;">
+
+<label>Forest Column</label>
+<select id="forestCol"></select>
+<small>Forest name field</small>
+
+<label>Compartment Column</label>
+<select id="compCol"></select>
+<small>Compartment ID field</small>
+
 </div>
 
-<div id="forestBox" class="section">
-<input id="forest" placeholder="Forest name">
 </div>
 
 <select id="zone">
@@ -200,7 +226,7 @@ Group D — Multi-Forest Mode
 <div class="progress" id="progress"></div>
 </div>
 
-<div class="status" id="status">Ready</div>
+<div id="status">Ready</div>
 
 </div>
 
@@ -216,50 +242,72 @@ Group D — Multi-Forest Mode
 </div>
 
 <script>
+
 let mode = "A";
-let loadController = { aborted:false, timeout:null };
-
-/* FIXED COLUMN LOADING */
-document.getElementById("file").addEventListener("change", async function () {
-    let file = this.files[0];
-    if (!file) return;
-
-    let fd = new FormData();
-    fd.append("file", file);
-
-    let res = await fetch("/get-columns", { method:"POST", body:fd });
-    let cols = await res.json();
-
-    let xSel = document.getElementById("xCol");
-    let ySel = document.getElementById("yCol");
-    let oSel = document.getElementById("orderCol");
-
-    xSel.innerHTML = "";
-    ySel.innerHTML = "";
-    oSel.innerHTML = "";
-
-    cols.forEach(c=>{
-        xSel.innerHTML += `<option value="${c}">${c}</option>`;
-        ySel.innerHTML += `<option value="${c}">${c}</option>`;
-        oSel.innerHTML += `<option value="${c}">${c}</option>`;
-    });
-});
 
 /* MODE SWITCH */
 function setMode(m, el){
+
 mode = m;
+
 document.querySelectorAll(".group").forEach(g=>g.classList.remove("active"));
 el.classList.add("active");
-
-document.getElementById("forestBox").style.display =
-(m==="A") ? "block" : "none";
 
 document.getElementById("gridBox").style.display =
 (m==="C") ? "block" : "none";
 
 document.getElementById("columnBox").style.display =
 (m==="A"||m==="B"||m==="D") ? "block" : "none";
+
+document.getElementById("groupBFields").style.display =
+(m==="B") ? "block" : "none";
 }
+
+/* LOAD COLUMNS */
+document.getElementById("file").addEventListener("change", async function () {
+
+let file = this.files[0];
+if (!file) return;
+
+let fd = new FormData();
+fd.append("file", file);
+
+let res = await fetch("/get-columns", {
+method:"POST",
+body:fd
+});
+
+let cols = await res.json();
+
+let xSel = document.getElementById("xCol");
+let ySel = document.getElementById("yCol");
+let oSel = document.getElementById("orderCol");
+let fSel = document.getElementById("forestCol");
+let cSel = document.getElementById("compCol");
+
+[xSel,ySel,oSel,fSel,cSel].forEach(s=>s.innerHTML="");
+
+cols.forEach(c=>{
+let opt = `<option value="${c}">${c}</option>`;
+xSel.innerHTML += opt;
+ySel.innerHTML += opt;
+oSel.innerHTML += opt;
+fSel.innerHTML += opt;
+cSel.innerHTML += opt;
+});
+
+/* AUTO DETECT */
+cols.forEach(c=>{
+let n = c.toLowerCase();
+
+if(n.includes("x")||n.includes("lon")) xSel.value=c;
+if(n.includes("y")||n.includes("lat")) ySel.value=c;
+if(n.includes("order")||n.includes("seq")) oSel.value=c;
+if(n.includes("forest")) fSel.value=c;
+if(n.includes("comp")) cSel.value=c;
+});
+
+});
 
 /* RUN */
 async function run(){
@@ -272,21 +320,18 @@ fd.append("file", file);
 fd.append("mode", mode);
 fd.append("zone", document.getElementById("zone").value);
 
-if(mode==="A"||mode==="B"||mode==="D"){
-fd.append("forest", document.getElementById("forest").value || "FOREST");
-fd.append("mapping", JSON.stringify({
-    X: xCol.value,
-    Y: yCol.value,
-    Order: orderCol.value
-}));
+let mapping = {
+X: xCol.value,
+Y: yCol.value,
+Order: orderCol.value
+};
+
+if(mode==="B"){
+mapping.Forest = forestCol.value;
+mapping.Compartment = compCol.value;
 }
 
-if(mode==="C"){
-fd.append("w", w.value);
-fd.append("h", h.value);
-fd.append("rows", rows.value);
-fd.append("cols", cols.value);
-}
+fd.append("mapping", JSON.stringify(mapping));
 
 let res = await fetch("/upload",{method:"POST",body:fd});
 let data = await res.json();
@@ -297,18 +342,11 @@ status.innerText="Done ✔";
 download.href=data.download;
 download.style.display="block";
 
-loadPreview(data.run_id);
-}
-
-/* PREVIEW */
-function loadPreview(id){
-let img=document.getElementById("img");
-let text=document.getElementById("text");
-
-img.src="/outputs/"+id+"/output.png?t="+Date.now();
+img.src="/outputs/"+data.run_id+"/output.png?t="+Date.now();
 img.style.display="block";
 text.innerText="Preview Ready ✔";
 }
+
 </script>
 
 </body>
