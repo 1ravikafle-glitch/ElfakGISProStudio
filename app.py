@@ -25,7 +25,17 @@ OUTPUT = "outputs"
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
+def read_input(file):
+    name = file.filename.lower()
 
+    if name.endswith(".csv"):
+        return pd.read_csv(file, encoding="utf-8-sig")
+
+    elif name.endswith(".xlsx") or name.endswith(".xls"):
+        return pd.read_excel(file)
+
+    else:
+        raise ValueError("Only CSV and Excel files are supported")
 
 # ================= CRS =================
 def get_crs(zone):
@@ -54,7 +64,7 @@ def get_columns():
     filter_forest = request.form.get("filterForest")
     filter_comp = request.form.get("filterCompartment")
 
-    df = pd.read_excel(file)
+    df = read_input(file)
 
     if filter_forest and "Forest" in df.columns:
         df = df[df["Forest"] == filter_forest]
@@ -188,7 +198,7 @@ def group_c(file, crs, w, h, rows, cols, out):
             polygons = [g for g in geom.geoms if g.geom_type == "Polygon"]
 
     else:
-        df = pd.read_excel(file)
+        df = read_input(file)
         if {"Forest", "Compartment"}.issubset(df.columns):
             for (f, c), g in df.groupby(["Forest", "Compartment"]):
                 g = g.sort_values("Order")
@@ -321,18 +331,18 @@ def upload():
     preview_path = os.path.join(out, "output.png")
 
     if mode == "A":
-        df = pd.read_excel(file)
+        df = read_input(file)
         poly, line, pts = group_a(df, forest, crs, out, mapping)
 
     elif mode == "B":
-        df = pd.read_excel(file)
+        df = read_input(file)
         poly, line, pts = group_b(df, crs, out, mapping)
 
     elif mode == "C":
         poly, line, pts = group_c(file, crs, w, h, rows, cols, out)
 
     else:
-        df = pd.read_excel(file)
+        df = read_input(file)
         poly, line, pts = group_d(df, crs, out)
 
     preview(poly, line, pts, preview_path, "yellow", "black", "red")
