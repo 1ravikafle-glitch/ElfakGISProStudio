@@ -148,7 +148,7 @@ def group_b(df, crs, out):
                     "Order": r["Order"],
                     "geometry": Point(r["X"], r["Y"])
                 })
-# ================= GROUP C (UNIVERSAL FIXED) =================
+# ================= GROUP C (FIXED FINAL) =================
 def group_c(file, crs, w, h, rows, cols, out):
 
     polygons = []
@@ -167,6 +167,7 @@ def group_c(file, crs, w, h, rows, cols, out):
 
         geom = gdf.unary_union
 
+        # ✅ preserve ALL geometries
         if geom.geom_type == "Polygon":
             polygons = [geom]
 
@@ -182,42 +183,38 @@ def group_c(file, crs, w, h, rows, cols, out):
     # ================= EXCEL INPUT =================
     else:
         df = pd.read_excel(file)
-
         is_group_b = ("Forest" in df.columns and "Compartment" in df.columns)
 
-        # ---------- GROUP B ----------
         if is_group_b:
             for (f, c), g in df.groupby(["Forest", "Compartment"]):
                 g = g.sort_values("Order")
                 coords = list(zip(g["X"], g["Y"]))
                 coords.append(coords[0])
-
                 polygons.append(Polygon(coords))
 
-        # ---------- GROUP A ----------
         else:
             df = normalize_order(df).sort_values("Order")
             coords = list(zip(df["X"], df["Y"]))
             coords.append(coords[0])
-
             polygons.append(Polygon(coords))
 
-    # ================= SAFE MULTIPOLYGON (NO LOSS) =================
+    # ================= BUILD MULTIPOLYGON SAFE =================
     poly_gdf = gpd.GeoDataFrame(
         [{"geometry": p} for p in polygons],
         crs=crs
     )
 
-    # dissolve only for spatial check (NOT for drawing lines)
-    poly_union = unary_union(polygons)
+    # ✅ dissolve into MULTIPOLYGON (preserves ALL shapes correctly)
+    poly_union = poly_gdf.unary_union
 
-    # ================= LINES (PER POLYGON) =================
-    lines = [
-        {"geometry": LineString(p.exterior.coords)}
-        for p in polygons
-    ]
+    line_parts = []
+    for p in polygons:
+        line_parts.append(LineString(p.exterior.coords))
 
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    line_gdf = gpd.GeoDataFrame(
+        [{"geometry": l} for l in line_parts],
+        crs=crs
+    )
 
     # ================= GRID SAMPLING =================
     minx, miny, _, _ = poly_union.bounds
@@ -233,7 +230,7 @@ def group_c(file, crs, w, h, rows, cols, out):
 
             center = Point(x + (w / 2), y + (h / 2))
 
-            # works for MultiPolygon too
+            # ✅ works for MultiPolygon correctly
             if poly_union.contains(center):
                 inside_points.append({
                     "SN": sn,
@@ -257,7 +254,6 @@ def group_c(file, crs, w, h, rows, cols, out):
     )
 
     return poly_gdf, line_gdf, pts_gdf
-
 # ================= GROUP D =================
 def group_d(df, crs, out):
     df = normalize_order(df).sort_values("Order")
