@@ -360,7 +360,7 @@ def upload():
         df = pd.read_excel(file)
         poly, line, pts = group_d(df, crs, out)
 
-    preview(poly, line, pts, preview_path, "red", "black", "yellow")
+    preview(poly, line, pts, preview_path, "yellow", "black", "red")
 
     return jsonify({
         "run_id": run_id,
