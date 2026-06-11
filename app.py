@@ -25,17 +25,24 @@ OUTPUT = "outputs"
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
+
+# ================= SAFE CSV READER =================
 def read_input(file):
     name = file.filename.lower()
 
     if name.endswith(".csv"):
-        return pd.read_csv(file, encoding="utf-8-sig")
+        try:
+            return pd.read_csv(file, encoding="utf-8-sig")
+        except:
+            file.seek(0)
+            return pd.read_csv(file, encoding="latin1")
 
     elif name.endswith(".xlsx") or name.endswith(".xls"):
         return pd.read_excel(file)
 
     else:
         raise ValueError("Only CSV and Excel files are supported")
+
 
 # ================= CRS =================
 def get_crs(zone):
@@ -48,6 +55,13 @@ def normalize_order(df):
         if c.lower() in ["sn", "s.n", "order"]:
             df = df.rename(columns={c: "Order"})
     return df
+
+
+# ================= SAFE GET COLUMN =================
+def col(mapping, key, fallback):
+    if mapping and key in mapping and mapping[key]:
+        return mapping[key]
+    return fallback
 
 
 # ================= FILE SERVE =================
@@ -74,12 +88,13 @@ def get_columns():
 
     return jsonify(list(df.columns))
 
+
 # ================= GROUP A =================
 def group_a(df, forest, crs, out, mapping=None):
     df = normalize_order(df).sort_values("Order")
 
-    x_col = mapping.get("X", "X") if mapping else "X"
-    y_col = mapping.get("Y", "Y") if mapping else "Y"
+    x_col = col(mapping, "X", "X")
+    y_col = col(mapping, "Y", "Y")
 
     coords = list(zip(df[x_col], df[y_col]))
     coords.append(coords[0])
@@ -112,13 +127,16 @@ def group_a(df, forest, crs, out, mapping=None):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP B =================
+# ================= GROUP B (FIXED) =================
 def group_b(df, crs, out, mapping=None):
     df = normalize_order(df)
 
-    x_col = mapping.get("X", "X") if mapping else "X"
-    y_col = mapping.get("Y", "Y") if mapping else "Y"
-    order_col = mapping.get("Order", "Order") if mapping else "Order"
+    x_col = col(mapping, "X", "X")
+    y_col = col(mapping, "Y", "Y")
+    order_col = col(mapping, "Order", "Order")
+
+    if "Forest" not in df.columns or "Compartment" not in df.columns:
+        raise ValueError("CSV must contain Forest and Compartment columns")
 
     polys, lines, pts = [], [], []
 
@@ -166,7 +184,7 @@ def group_b(df, crs, out, mapping=None):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP C =================
+# ================= GROUP C (UNCHANGED LOGIC) =================
 def group_c(file, crs, w, h, rows, cols, out):
 
     polygons = []
@@ -199,6 +217,7 @@ def group_c(file, crs, w, h, rows, cols, out):
 
     else:
         df = read_input(file)
+
         if {"Forest", "Compartment"}.issubset(df.columns):
             for (f, c), g in df.groupby(["Forest", "Compartment"]):
                 g = g.sort_values("Order")
@@ -253,9 +272,12 @@ def group_c(file, crs, w, h, rows, cols, out):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP D =================
+# ================= GROUP D (FIXED) =================
 def group_d(df, crs, out):
     df = normalize_order(df).sort_values("Order")
+
+    if "Forest" not in df.columns:
+        raise ValueError("CSV must contain Forest column")
 
     polys, lines, pts = [], [], []
 
@@ -315,7 +337,7 @@ def upload():
     zone = request.form["zone"]
 
     mapping_raw = request.form.get("mapping")
-    mapping = json.loads(mapping_raw) if mapping_raw else None
+    mapping = json.loads(mapping_raw) if mapping_raw else {}
 
     w = float(request.form.get("w", 50))
     h = float(request.form.get("h", 50))
@@ -351,11 +373,13 @@ def upload():
         "run_id": run_id,
         "download": "/download/" + run_id
     })
-    
+
+
 def zip_folder(folder_path):
     zip_path = folder_path + ".zip"
     shutil.make_archive(folder_path, 'zip', folder_path)
     return zip_path
+
 
 @app.route("/download/<run_id>")
 def download(run_id):
