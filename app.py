@@ -46,15 +46,39 @@ def outputs(run_id, filename):
 
 
 # ================= ZIP HELP =================
-def zip_folder(folder):
-    buf = BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for f in os.listdir(folder):
-            fp = os.path.join(folder, f)
-            if os.path.isfile(fp):
-                z.write(fp, f)
-    buf.seek(0)
-    return buf
+if file.filename.lower().endswith(".zip"):
+    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+    os.makedirs(folder, exist_ok=True)
+
+    zip_path = os.path.join(folder, "input.zip")
+    file.save(zip_path)
+
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(folder)
+
+    gdf = None
+    for root, _, files in os.walk(folder):
+        for f in files:
+            if f.endswith(".shp"):
+                gdf = gpd.read_file(os.path.join(root, f))
+                break
+        if gdf is not None:
+            break
+
+    if gdf is None:
+        raise Exception("No shapefile found in ZIP")
+
+    geom = gdf.unary_union
+
+    if geom.geom_type == "Polygon":
+        polygons = [geom]
+    elif geom.geom_type == "MultiPolygon":
+        polygons = list(geom.geoms)
+    else:
+        polygons = [g for g in geom.geoms if g.geom_type == "Polygon"]
+
+    if not polygons:
+        raise Exception("No valid polygons found")
 
 
 # ================= GET COLUMNS =================
