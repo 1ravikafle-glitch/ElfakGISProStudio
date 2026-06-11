@@ -240,6 +240,9 @@ def group_c(file, crs, w, h, rows, cols, out):
     poly_gdf.to_file(os.path.join(out, "boundary.shp"))
     line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
     pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
+    # ================= EXCEL OUTPUT =================
+    excel_path = os.path.join(out, "sampleplot.xlsx")
+    pd.DataFrame(inside_points)[["SN", "X", "Y"]].to_excel(excel_path, index=False)
 
     return poly_gdf, line_gdf, pts_gdf
 
