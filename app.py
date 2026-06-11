@@ -42,7 +42,7 @@ def normalize_order(df):
 # ================= FILE SERVE =================
 @app.route("/outputs/<run_id>/<filename>")
 def outputs(run_id, filename):
-    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
+    return send_from_directory(os.path.join(OUTPUT, run_id), filename))
 
 
 # ================= GET COLUMNS =================
