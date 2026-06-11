@@ -220,13 +220,41 @@ Group D — Multi-Forest Mode
 <option value="45">UTM 45N</option>
 </select>
 
-<div id="gridBox" class="section">
-<input type="number" id="w" value="50">
-<input type="number" id="h" value="50">
-<input type="number" id="rows" value="10">
-<input type="number" id="cols" value="10">
-</div>
+<div id="gridBox" class="section grid-box">
 
+    <div class="grid-item">
+        <label>Cell Width(m)</label>
+        <div class="input-wrap">
+            <span>↔</span>
+            <input type="number" id="w" value="50">
+        </div>
+    </div>
+
+    <div class="grid-item">
+        <label>Cell Height(m)</label>
+        <div class="input-wrap">
+            <span>↕</span>
+            <input type="number" id="h" value="50">
+        </div>
+    </div>
+
+    <div class="grid-item">
+        <label>Rows</label>
+        <div class="input-wrap">
+            <span>▦</span>
+            <input type="number" id="rows" value="10">
+        </div>
+    </div>
+
+    <div class="grid-item">
+        <label>Columns</label>
+        <div class="input-wrap">
+            <span>▦</span>
+            <input type="number" id="cols" value="10">
+        </div>
+    </div>
+
+</div>
 <button onclick="run()">Run Processing</button>
 
 <div class="progress-bar">
