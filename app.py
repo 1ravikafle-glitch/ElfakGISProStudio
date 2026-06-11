@@ -74,7 +74,12 @@ def zip_folder(folder):
                 z.write(fp, f)
     buf.seek(0)
     return buf
-
+# ================= ADD THIS HERE =================
+@app.route("/get-columns", methods=["POST"])
+def get_columns():
+    file = request.files["file"]
+    df = pd.read_excel(file)
+    return jsonify(list(df.columns))
 
 # ================= GROUP A =================
 def group_a(df, forest, crs, out):
