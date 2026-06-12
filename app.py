@@ -10,8 +10,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, render_template
 from shapely.geometry import Polygon, Point, LineString
+
+@app.route("/")
+def home():
+    return render_template("index.html")
 
 app = Flask(__name__)
 
