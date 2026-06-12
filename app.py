@@ -213,7 +213,6 @@ def group_c(file, crs, w, h, rows, cols, out,
 
             shp_path = None
 
-            # FIXED ZIP SEARCH LOOP
             for root, _, files in os.walk(temp_dir):
                 for f in files:
                     if f.lower().endswith(".shp") and f == os.path.basename(selected_shp):
@@ -227,10 +226,16 @@ def group_c(file, crs, w, h, rows, cols, out,
 
             gdf = gpd.read_file(shp_path)
 
+            if gdf.empty:
+                raise ValueError("Empty shapefile")
+
             if gdf.crs is None:
                 gdf.set_crs(crs, inplace=True)
 
             geom = gdf.geometry.unary_union
+
+            if geom.is_empty:
+                raise ValueError("Empty geometry in shapefile")
 
             if geom.geom_type == "Polygon":
                 polygons = [geom]
@@ -244,57 +249,69 @@ def group_c(file, crs, w, h, rows, cols, out,
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-# ===================== CASE 2: CSV/EXCEL INPUT =====================
-else:
-    df = normalize_order(read_input(file))
-
-    # ================= MODE A =================
-    if base_mode == "A":
-
-        x_col = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
-        y_col = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
-        order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
-
-        df = df.sort_values(order_col)
-
-        coords = list(zip(df[x_col], df[y_col]))
-
-        if len(coords) < 3:
-            raise ValueError("Not enough points to form polygon")
-
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
-
-        polygons = [Polygon(coords)]
-
-    # ================= MODE B =================
-    elif base_mode == "B":
-
-        x_col = resolve_col(df, mapping, "X", ["X", "x"])
-        y_col = resolve_col(df, mapping, "Y", ["Y", "y"])
-
-        order_col = resolve_col(df, mapping, "Order", ["Order"])
-        forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
-        comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
-
-        polygons = []
-
-        for f, fg in df.groupby(forest_col):
-            for c, cg in fg.groupby(comp_col):
-
-                cg = cg.sort_values(order_col)
-                coords = list(zip(cg[x_col], cg[y_col]))
-
-                if len(coords) < 3:
-                    continue
-
-                if coords[0] != coords[-1]:
-                    coords.append(coords[0])
-
-                polygons.append(Polygon(coords))
-
+    # ===================== CASE 2: CSV / EXCEL =====================
     else:
-        raise ValueError("Invalid base_mode. Use 'A' or 'B'")
+        df = normalize_order(read_input(file))
+
+        if df.empty:
+            raise ValueError("Input file is empty")
+
+        # ================= MODE A =================
+        if base_mode == "A":
+
+            x_col = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
+            y_col = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
+            order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
+
+            df = df.sort_values(order_col)
+
+            coords = list(zip(df[x_col], df[y_col]))
+
+            if len(coords) < 3:
+                raise ValueError("Not enough points to form polygon")
+
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])
+
+            polygons = [Polygon(coords)]
+
+        # ================= MODE B =================
+        elif base_mode == "B":
+
+            x_col = resolve_col(df, mapping, "X", ["X", "x"])
+            y_col = resolve_col(df, mapping, "Y", ["Y", "y"])
+            order_col = resolve_col(df, mapping, "Order", ["Order"])
+            forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
+            comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
+
+            for f, fg in df.groupby(forest_col):
+
+                for c, cg in fg.groupby(comp_col):
+
+                    cg = cg.sort_values(order_col)
+                    coords = list(zip(cg[x_col], cg[y_col]))
+
+                    if len(coords) < 3:
+                        continue
+
+                    if coords[0] != coords[-1]:
+                        coords.append(coords[0])
+
+                    poly = Polygon(coords)
+
+                    if not poly.is_valid:
+                        poly = poly.buffer(0)  # auto-fix geometry
+
+                    if not poly.is_empty:
+                        polygons.append(poly)
+
+        else:
+            raise ValueError("Invalid base_mode. Use 'A' or 'B'")
+
+    # ===================== SAFETY CHECK =====================
+    if not polygons:
+        raise ValueError("No valid polygons generated")
+
     # ===================== BUILD GEODATAFRAME =====================
     poly_gdf = gpd.GeoDataFrame(
         [{"geometry": p} for p in polygons],
@@ -302,10 +319,9 @@ else:
     )
 
     union = poly_gdf.unary_union
-
-    # ===================== GRID GENERATION =====================
     minx, miny, maxx, maxy = union.bounds
 
+    # ===================== GRID GENERATION =====================
     pts = []
     sn = 1
 
@@ -328,71 +344,18 @@ else:
 
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-    # ===================== OUTPUT FILES =====================
-    poly_gdf.to_file(os.path.join(out, "poly.shp"))
-
-    gpd.GeoDataFrame(
-        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
-        crs=crs
-    ).to_file(os.path.join(out, "line.shp"))
-
-    pts_gdf.to_file(os.path.join(out, "sample.shp"))
-
-    return poly_gdf, \
-           gpd.GeoDataFrame(
-               [{"geometry": LineString(p.exterior.coords)} for p in polygons],
-               crs=crs
-           ), \
-           pts_gdf
-
-    # ===================== BUILD GEODATAFRAME =====================
-    poly_gdf = gpd.GeoDataFrame(
-        [{"geometry": p} for p in polygons],
+    # ===================== SAFE LINE GENERATION =====================
+    line_gdf = gpd.GeoDataFrame(
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons if p and not p.is_empty],
         crs=crs
     )
 
-    union = poly_gdf.unary_union
-
-    # ===================== GRID GENERATION =====================
-    minx, miny, maxx, maxy = union.bounds
-
-    pts = []
-    sn = 1
-
-    for r in range(rows):
-        for c in range(cols):
-            x = minx + c * w
-            y = miny + r * h
-
-            center = Point(x + w / 2, y + h / 2)
-
-            if union.contains(center):
-                pts.append({
-                    "SN": sn,
-                    "X": center.x,
-                    "Y": center.y,
-                    "geometry": center
-                })
-                sn += 1
-
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    # ===================== OUTPUT FILES =====================
+    # ===================== OUTPUT =====================
     poly_gdf.to_file(os.path.join(out, "poly.shp"))
-
-    gpd.GeoDataFrame(
-        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
-        crs=crs
-    ).to_file(os.path.join(out, "line.shp"))
-
+    line_gdf.to_file(os.path.join(out, "line.shp"))
     pts_gdf.to_file(os.path.join(out, "sample.shp"))
 
-    return poly_gdf, \
-           gpd.GeoDataFrame(
-               [{"geometry": LineString(p.exterior.coords)} for p in polygons],
-               crs=crs
-           ), \
-           pts_gdf
+    return poly_gdf, line_gdf, pts_gdf
 
 
 # ================= GROUP D (FIXED LIGHTLY) =================
