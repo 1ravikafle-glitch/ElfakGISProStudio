@@ -11,12 +11,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import Flask, request, jsonify, send_file
-from shapely.geometry import Polygon, Point, LineString, MultiPolygon
+from shapely.geometry import Polygon, Point, LineString
 
 app = Flask(__name__)
 
-UPLOAD = "uploads"
-OUTPUT = "outputs"
+# ================= ABSOLUTE PATH FIX FOR RENDER =================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD = os.path.join(BASE_DIR, "uploads")
+OUTPUT = os.path.join(BASE_DIR, "outputs")
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
@@ -112,13 +114,12 @@ def resolve_xyz(df, mapping=None):
 
     return x, y, order
 
-# ================= RENDERING PIPELINE (FIXES DYNAMIC PREVIEW) =================
+# ================= RENDERING PIPELINE =================
 def render_preview(poly_gdf, line_gdf, pts_gdf, output_dir):
     try:
         fig, ax = plt.subplots(figsize=(8, 6), facecolor="#0f0a12")
         ax.set_facecolor("#0f0a12")
         
-        # Plot structural GIS data with modern theme aesthetics
         if not poly_gdf.empty:
             poly_gdf.plot(ax=ax, color="#10b981", alpha=0.25, edgecolor="#10b981", linewidth=1.5)
         if not line_gdf.empty:
@@ -131,14 +132,13 @@ def render_preview(poly_gdf, line_gdf, pts_gdf, output_dir):
         plt.savefig(os.path.join(output_dir, "output.png"), dpi=150, facecolor=fig.get_facecolor(), edgecolor='none')
         plt.close()
     except Exception as e:
-        print(f"Canvas render skipped or warning generated: {str(e)}")
+        print(f"Canvas render skipped: {str(e)}")
 
 # ================= MASTER PIPELINE ENGINE =================
 def process_gis_pipeline(df, crs, out, mapping, mode):
     x, y, order = resolve_xyz(df, mapping)
     df = df.sort_values(by=order)
 
-    # Dynamic segmentation detection keys based on matching UI requirements
     group_col = None
     if mode in ["B", "D"]:
         for col in df.columns:
@@ -154,7 +154,6 @@ def process_gis_pipeline(df, crs, out, mapping, mode):
     poly_records, line_records = [], []
 
     if group_col:
-        # Segmented handling for Mode B, Mode C (Sub-segmented options), and Complex Engine D
         for group_id, group_df in df.groupby(group_col):
             group_df = group_df.sort_values(by=order)
             coords = list(zip(group_df[x], group_df[y]))
@@ -167,7 +166,6 @@ def process_gis_pipeline(df, crs, out, mapping, mode):
             poly_records.append({"ID": str(group_id), "Area_ha": p.area / 10000, "Perimeter": p.length, "geometry": p})
             line_records.append({"ID": str(group_id), "geometry": LineString(coords)})
     else:
-        # Standard contiguous whole boundary compilation (Mode A & Basic Core loops)
         coords = list(zip(df[x], df[y]))
         if len(coords) < 3: raise ValueError("Need at least 3 spatial points to form vector boundaries.")
         if coords[0] != coords[-1]: coords.append(coords[0])
@@ -185,19 +183,16 @@ def process_gis_pipeline(df, crs, out, mapping, mode):
     line_gdf = gpd.GeoDataFrame(line_records, crs=crs)
     pts_gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[x], df[y]), crs=crs)
 
-    # Export structural GIS files safely
     poly_gdf.to_file(os.path.join(out, "polygon.shp"))
     line_gdf.to_file(os.path.join(out, "line.shp"))
     pts_gdf.to_file(os.path.join(out, "points.shp"))
 
-    # Generate Multi-sheet Spreadsheet matrix summaries
     excel_path = os.path.join(out, "output.xlsx")
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="input_raw", index=False)
         poly_gdf.drop(columns="geometry").to_excel(writer, sheet_name="polygon_metrics", index=False)
         line_gdf.drop(columns="geometry").to_excel(writer, sheet_name="line_vectors", index=False)
 
-    # Render missing preview workspace visualization layer
     render_preview(poly_gdf, line_gdf, pts_gdf, out)
     return poly_gdf
 
@@ -219,7 +214,6 @@ def upload():
         crs = f"EPSG:326{zone}"
         df = read_input(file)
 
-        # Process all system modules safely
         process_gis_pipeline(df, crs, out, mapping, mode)
 
         return jsonify({
@@ -233,20 +227,21 @@ def upload():
 @app.route("/download/<run_id>")
 def download(run_id):
     folder = os.path.join(OUTPUT, run_id)
-    zip_path = shutil.make_archive(
-        os.path.join(OUTPUT, f"export_{run_id}"),
-        "zip",
-        root_dir=folder
-    )
+    zip_path = os.path.join(OUTPUT, f"export_{run_id}.zip")
+    
+    # Create zip file dynamically via absolute path reference
+    shutil.make_archive(os.path.join(OUTPUT, f"export_{run_id}"), "zip", root_dir=folder)
     return send_file(zip_path, as_attachment=True)
 
-# Static assets exposure rule to let frontend serve output.png natively
+# FIXED STATIC STREAM ROUTE WITH ABSOLUTE ENTRY DETECTION
 @app.route("/outputs/<run_id>/output.png")
 def serve_preview_image(run_id):
-    img_file = os.path.join(OUTPUT, run_id, "output.png")
+    img_file = os.path.abspath(os.path.join(OUTPUT, run_id, "output.png"))
     if os.path.exists(img_file):
         return send_file(img_file, mimetype="image/png")
-    return jsonify({"error": "Preview rendering asset not found"}), 404
+    return jsonify({"error": f"Preview file asset missing at: {img_file}"}), 404
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # Standard configuration for cloud engine listeners
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
