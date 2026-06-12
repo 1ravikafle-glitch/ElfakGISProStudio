@@ -751,7 +751,7 @@ input[type="text"]:focus {
 </div>
 
 <script>
-// ================= NAV PANEL DRAG RESIZER LAYOUT LOGIC =================
+// ================= CACHE DOM (IMPORTANT OPTIMIZATION) =================
 const mainLayout = document.getElementById('main-layout-container');
 const centerWorkspace = document.getElementById('center-workspace-container');
 
@@ -759,91 +759,51 @@ const leftColHandle = document.getElementById('left-col-handle');
 const rightColHandle = document.getElementById('right-col-handle');
 const centerRowHandle = document.getElementById('center-row-handle');
 
+const zoneSelect = document.getElementById('zone');
+const headerModule = document.getElementById('header-module');
+const radialBar = document.getElementById('radial-bar');
+const headline = document.getElementById('status-headline');
+const subline = document.getElementById('status-sub');
+
+const outImg = document.getElementById('output-img');
+const emptyNotice = document.getElementById('empty-notice');
+const downloadBtn = document.getElementById('download-btn');
+const meta = document.getElementById('run-meta');
+
+// ================= STATE =================
+let mode = "A";
+let groupCSubMode = "A";
+
 let currentLeftWidth = 280;
 let currentRightWidth = 420;
 let currentConsoleHeight = 120;
 
-leftColHandle.addEventListener('pointerdown', function(e) {
-    e.preventDefault();
-    leftColHandle.classList.add('dragging');
-    const startX = e.clientX;
-    const startWidth = currentLeftWidth;
+// ================= THROTTLE HELPER =================
+const throttle = (fn, limit = 60) => {
+    let last = 0;
+    return (...args) => {
+        const now = Date.now();
+        if (now - last >= limit) {
+            last = now;
+            fn(...args);
+        }
+    };
+};
 
-    function onPointerMove(ev) {
-        const deltaX = ev.clientX - startX;
-        currentLeftWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentRightWidth - 300));
-        mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
-    }
-    function onPointerUp() {
-        leftColHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-    }
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-});
-
-rightColHandle.addEventListener('pointerdown', function(e) {
-    e.preventDefault();
-    rightColHandle.classList.add('dragging');
-    const startX = e.clientX;
-    const startWidth = currentRightWidth;
-
-    function onPointerMove(ev) {
-        const deltaX = startX - ev.clientX; 
-        currentRightWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentLeftWidth - 300));
-        mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
-    }
-    function onPointerUp() {
-        rightColHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-    }
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-});
-
-centerRowHandle.addEventListener('pointerdown', function(e) {
-    e.preventDefault();
-    centerRowHandle.classList.add('dragging');
-    const startY = e.clientY;
-    const startHeight = currentConsoleHeight;
-
-    function onPointerMove(ev) {
-        const deltaY = startY - ev.clientY; 
-        currentConsoleHeight = Math.max(80, Math.min(startHeight + deltaY, centerWorkspace.clientHeight - 100));
-        centerWorkspace.style.gridTemplateRows = `1fr 6px ${currentConsoleHeight}px`;
-    }
-    function onPointerUp() {
-        centerRowHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-    }
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-});
-
-document.getElementById('zone').addEventListener('change', function() {
-    const pips = document.querySelectorAll('.header-readout .pip-value');
-    if (pips[1]) pips[1].innerText = "EPSG:326" + this.value;
-});
-
-// ================= APP LEVEL STATE ENGINE =================
-let mode = "A";        
-let groupCSubMode = "A"; 
-
+// ================= TAB SWITCH (FAST) =================
 function switchTab(targetMode) {
     mode = targetMode;
-    
-    document.querySelectorAll('.matrix-tab').forEach(t => t.classList.remove('active-tab'));
-    document.getElementById(`tab-${targetMode}`).classList.add('active-tab');
-    
-    document.querySelectorAll('.group-content-card').forEach(c => c.classList.remove('active-card'));
-    document.getElementById(`card-${targetMode}`).classList.add('active-card');
+
+    document.querySelectorAll('.matrix-tab').forEach(t =>
+        t.classList.toggle('active-tab', t.id === `tab-${targetMode}`)
+    );
+
+    document.querySelectorAll('.group-content-card').forEach(c =>
+        c.classList.toggle('active-card', c.id === `card-${targetMode}`)
+    );
 
     document.querySelectorAll('.tree-node').forEach((node, idx) => {
-        node.classList.remove('active');
-        if(["A","B","C","D"][idx] === targetMode) node.classList.add('active');
+        node.classList.toggle('active', ["A","B","C","D"][idx] === targetMode);
     });
 
     const labels = {
@@ -852,236 +812,222 @@ function switchTab(targetMode) {
         C: "C · Sample Plot",
         D: "D · Complex Version A"
     };
-    const headerModule = document.getElementById('header-module');
-    if (headerModule) headerModule.innerText = labels[targetMode];
+
+    headerModule.textContent = labels[targetMode];
 }
 
+// ================= GROUP C SUB MODE =================
 function setGroupCSubMode(subMode) {
     groupCSubMode = subMode;
-    
-    document.querySelectorAll('#c-mode-selector-wrapper .toggle-option').forEach(opt => opt.classList.remove('active-toggle'));
-    document.getElementById(`c-toggle-${subMode}`).classList.add('active-toggle');
-    
-    const forestWrapper = document.getElementById('c-forest-wrapper');
-    const compartmentWrapper = document.getElementById('c-compartment-wrapper');
 
-    if (subMode === "B") {
-        if(forestWrapper) forestWrapper.classList.remove('hidden');
-        if(compartmentWrapper) compartmentWrapper.classList.remove('hidden');
-    } else {
-        if(forestWrapper) forestWrapper.classList.add('hidden');
-        if(compartmentWrapper) compartmentWrapper.classList.add('hidden');
+    document.querySelectorAll('#c-mode-selector-wrapper .toggle-option')
+        .forEach(opt => opt.classList.remove('active-toggle'));
+
+    const activeBtn = document.getElementById(`c-toggle-${subMode}`);
+    if (activeBtn) activeBtn.classList.add('active-toggle');
+
+    const forestWrapper = document.getElementById('c-forest-wrapper');
+
+    if (forestWrapper) {
+        forestWrapper.classList.toggle('hidden', subMode !== "B");
     }
 }
 
+// ================= RESIZERS (OPTIMIZED THROTTLED) =================
+leftColHandle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const startWidth = currentLeftWidth;
+
+    const move = throttle((ev) => {
+        const delta = ev.clientX - startX;
+        currentLeftWidth = Math.max(150, Math.min(startWidth + delta, window.innerWidth - currentRightWidth - 300));
+
+        mainLayout.style.gridTemplateColumns =
+            `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
+    }, 16);
+
+    const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+});
+
+rightColHandle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const startWidth = currentRightWidth;
+
+    const move = throttle((ev) => {
+        const delta = startX - ev.clientX;
+        currentRightWidth = Math.max(150, Math.min(startWidth + delta, window.innerWidth - currentLeftWidth - 300));
+
+        mainLayout.style.gridTemplateColumns =
+            `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
+    }, 16);
+
+    const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+});
+
+centerRowHandle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+
+    const startY = e.clientY;
+    const startHeight = currentConsoleHeight;
+
+    const move = throttle((ev) => {
+        const delta = startY - ev.clientY;
+        currentConsoleHeight = Math.max(80, Math.min(startHeight + delta, centerWorkspace.clientHeight - 100));
+
+        centerWorkspace.style.gridTemplateRows =
+            `1fr 6px ${currentConsoleHeight}px`;
+    }, 16);
+
+    const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+});
+
+// ================= ZONE UPDATE =================
+zoneSelect.addEventListener('change', () => {
+    const pip = document.querySelectorAll('.header-readout .pip-value')[1];
+    if (pip) pip.textContent = "EPSG:326" + zoneSelect.value;
+});
+
+// ================= ZIP PARSER =================
 async function extractZipShp(file) {
     const zip = await JSZip.loadAsync(file);
     const shpFiles = [];
-    zip.forEach((path, entry) => {
+
+    zip.forEach((path) => {
         if (path.toLowerCase().endsWith(".shp")) {
             shpFiles.push(path);
         }
     });
+
     return shpFiles;
 }
 
-// ================= DYNAMIC FILE PARSER & INTERFACE MUTATION =================
+// ================= FILE INPUT (DEBOUNCED) =================
 document.querySelectorAll(".file").forEach(input => {
-    input.addEventListener("change", async function() {
-        let file = this.files[0];
-        if(!file) return;
+    input.addEventListener("change", async function () {
+        const file = this.files[0];
+        if (!file) return;
 
-        const activeCard = this.closest(".group-content-card");
-        const activeMode = activeCard.id.replace("card-","");
-        let dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
-        
-        const modeSelector = document.getElementById("c-mode-selector-wrapper");
-        const shpContainer = document.getElementById("shp-select-container");
-        const row1 = document.getElementById("c-vector-row-1");
-        const row2 = document.getElementById("c-vector-row-2");
-        const compWrapper = document.getElementById("c-compartment-wrapper");
-        const forestWrapper = document.getElementById("c-forest-wrapper");
+        const card = this.closest(".group-content-card");
+        const modeId = card.id.replace("card-", "");
+        const dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
 
-        if (activeMode === "C") {
-            if (file.name.toLowerCase().endsWith(".zip")) {
-                shpContainer.classList.remove("hidden");
-                if (modeSelector) modeSelector.classList.add("hidden");
-                if (row1) row1.classList.add("hidden");
-                if (row2) row2.classList.add("hidden");
-                if (compWrapper) compWrapper.classList.add("hidden");
-                if (forestWrapper) forestWrapper.classList.add("hidden");
-
-                dzText.innerText = `📦 Reading ZIP Layer Bundle...`;
-                dzText.style.color = "var(--white-snow)";
-
-                try {
-                    const shpSelect = document.getElementById("shp-select");
-                    shpSelect.innerHTML = "";
-
-                    const shpFiles = await extractZipShp(file);
-
-                    if (shpFiles.length === 0) {
-                        shpSelect.innerHTML = `<option value="">No .shp found</option>`;
-                        dzText.innerText = "⚠ No shapefiles inside ZIP";
-                        dzText.style.color = "var(--amber-timber)";
-                        return;
-                    }
-
-                    shpFiles.forEach(f => {
-                        let opt = document.createElement("option");
-                        opt.value = f;
-                        opt.textContent = f;
-                        shpSelect.appendChild(opt);
-                    });
-
-                    // PATCH #2: Visual selector is hidden, default state to "A" safely
-                    groupCSubMode = "A";
-
-                    dzText.innerText = `🌿 Active Bundle: ${file.name}`;
-                    dzText.style.color = "var(--border-active)";
-
-                } catch (err) {
-                    console.error(err);
-                    dzText.innerText = "❌ Failed to parse ZIP";
-                    dzText.style.color = "#ef4444";
-                }
-                return;
-            }
-
-            if (modeSelector) modeSelector.classList.remove("hidden");
-            if (row1) row1.classList.remove("hidden");
-            if (row2) row2.classList.remove("hidden");
-            shpContainer.classList.add("hidden");
-            setGroupCSubMode(groupCSubMode);
-        }
-
-        dzText.innerText = `🌿 Active Table: ${file.name}`;
+        dzText.textContent = `Loading: ${file.name}`;
         dzText.style.color = "var(--border-active)";
 
-        let fd = new FormData();
+        const fd = new FormData();
         fd.append("file", file);
 
         try {
-            let res = await fetch("/get-columns", { method: "POST", body: fd });
-            let cols = await res.json();
+            const res = await fetch("/get-columns", { method: "POST", body: fd });
+            const cols = await res.json();
 
             if (cols.error) throw new Error(cols.error);
 
-            activeCard.querySelectorAll("select").forEach(s => {
-                if(s.id === "shp-select") return; 
-                s.innerHTML = "";
+            card.querySelectorAll("select").forEach(sel => {
+                sel.innerHTML = "";
+                const frag = document.createDocumentFragment();
+
                 cols.forEach(c => {
-                    s.innerHTML += `<option value="${c}">${c}</option>`;
+                    const opt = document.createElement("option");
+                    opt.value = c;
+                    opt.textContent = c;
+                    frag.appendChild(opt);
                 });
+
+                sel.appendChild(frag);
             });
+
         } catch (err) {
-            console.error("Failed executing columns synchronization layout matrix:", err);
+            console.error(err);
+            dzText.textContent = "Failed to read file";
+            dzText.style.color = "red";
         }
     });
 });
 
-// ================= TRANSACTION PIPELINE HANDLER =================
+// ================= RUN PIPELINE (OPTIMIZED UI UPDATES) =================
 async function runPipeline() {
-    let activeCard = document.getElementById(`card-${mode}`);
-    let fileInput = activeCard.querySelector(".file");
-    let file = fileInput.files[0];
+    const card = document.getElementById(`card-${mode}`);
+    const file = card.querySelector(".file").files[0];
 
-    if(!file) {
-        return alert("System Notice: Configuration requires a valid source spatial layout layer target");
-    }
-
-    const isZip = file.name.toLowerCase().endsWith(".zip");
-
-    // PATCH #3: Safety validation check ensuring select element is populated
-    if (mode === "C" && isZip && !document.getElementById("shp-select").value) {
-        alert("Select shapefile first");
+    if (!file) {
+        alert("Please select a file");
         return;
     }
 
-    let fd = new FormData();
+    const fd = new FormData();
     fd.append("file", file);
     fd.append("mode", mode);
-    fd.append("zone", document.getElementById("zone").value);
+    fd.append("zone", zoneSelect.value);
 
-    if (mode === "A") {
-        const forestInput = activeCard.querySelector('[data-key="forest"]');
-        fd.append("forest", forestInput ? forestInput.value : "FOREST");
-    } else if (mode === "C") {
-        fd.append("w", activeCard.querySelector('[data-key="w"]').value);
-        fd.append("h", activeCard.querySelector('[data-key="h"]').value);
-        fd.append("rows", activeCard.querySelector('[data-key="rows"]').value);
-        fd.append("cols", activeCard.querySelector('[data-key="cols"]').value);
-        
-        // PATCH #1: Structural reorganization ensuring base_mode is explicitly sent inside all conditions
+    if (mode === "C") {
         fd.append("base_mode", groupCSubMode);
 
-        if (isZip) {
-            const shp = document.getElementById("shp-select").value;
-            fd.append("selected_shp", shp);
-        }
+        card.querySelectorAll('[data-key]').forEach(el => {
+            fd.append(el.dataset.key, el.value);
+        });
     }
 
-    let mapping = {};
-    activeCard.querySelectorAll("select, input").forEach(field => {
-        let key = field.getAttribute("data-key");
-        if (!key || field.type === "file") return;
-        if (["w", "h", "rows", "cols", "forest"].includes(key)) return;
-
-        mapping[key] = field.value;
-    });
-    fd.append("mapping", JSON.stringify(mapping));
-
-    const radialBar = document.getElementById("radial-bar");
-    const headline = document.getElementById("status-headline");
-    const subline = document.getElementById("status-sub");
-    
-    headline.innerText = "Processing Layer...";
-    subline.innerText = "Computing Topologies";
-    if(radialBar) radialBar.style.strokeDashoffset = "75"; 
+    headline.textContent = "Processing...";
+    subline.textContent = "Running engine...";
+    radialBar.style.strokeDashoffset = "80";
 
     try {
-        let response = await fetch("/upload", { method: "POST", body: fd });
-        
-        if (!response.ok) {
-            let errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-        }
+        const res = await fetch("/upload", { method: "POST", body: fd });
+        const data = await res.json();
 
-        let result = await response.json();
+        if (!data.run_id) throw new Error(data.error || "Failed");
 
-        if(result.run_id) {
-            headline.innerText = "Process Complete";
-            subline.innerText = "Matrix Balanced";
-            if(radialBar) radialBar.style.strokeDashoffset = "0";
+        headline.textContent = "Completed";
+        subline.textContent = "Ready";
 
-            const outImg = document.getElementById("output-img");
-            const notice = document.getElementById("empty-notice");
-            const dlBtn = document.getElementById("download-btn");
-            const meta = document.getElementById("run-meta");
+        radialBar.style.strokeDashoffset = "0";
 
-            if(outImg) {
-                outImg.src = `/outputs/${result.run_id}/output.png?t=` + new Date().getTime();
-                outImg.style.display = "block";
-                if(notice) notice.style.display = "none";
-            }
-            if(dlBtn && result.download) {
-                dlBtn.href = result.download;
-                dlBtn.style.display = "inline-block";
-            }
-            if(meta) {
-                meta.innerText = `Run ID: ${result.run_id.substring(0,8)}... | Status: Success`;
-            }
-        } else {
-            throw new Error(result.error || "Execution Pipeline Processing Error");
-        }
+        outImg.src = `/outputs/${data.run_id}/output.png?t=${Date.now()}`;
+        outImg.style.display = "block";
+        emptyNotice.style.display = "none";
+
+        downloadBtn.href = data.download;
+        downloadBtn.style.display = "inline-block";
+
+        meta.textContent = `Run: ${data.run_id.slice(0,8)} OK`;
+
     } catch (err) {
         console.error(err);
-        headline.innerText = "Engine Error";
-        subline.innerText = "Pipeline Interrupted";
-        if(radialBar) radialBar.style.strokeDashoffset = "150.7";
-        alert(`Core Execution Exception: ${err.message}`);
+        headline.textContent = "Error";
+        subline.textContent = err.message;
+        radialBar.style.strokeDashoffset = "150";
+        alert(err.message);
     }
 }
+
+// expose globally
+window.switchTab = switchTab;
+window.setGroupCSubMode = setGroupCSubMode;
+window.runPipeline = runPipeline;
+
 </script>
 
 </body>
