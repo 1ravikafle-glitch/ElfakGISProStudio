@@ -10,21 +10,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght=500;600;700&family=IBM+Plex+Mono:wght=400;500;600&family=Inter:wght=400;500;600&display=swap" rel="stylesheet">
+
 <style>
-select {
-    appearance: none;
-    -webkit-appearance: none;
-    -moz-appearance: none;
-
-    padding-right: 28px;
-
-    background-image: linear-gradient(45deg, transparent 50%, #10b981 50%),
-                      linear-gradient(135deg, #10b981 50%, transparent 50%);
-    background-position: calc(100% - 16px) calc(50% - 3px),
-                         calc(100% - 11px) calc(50% - 3px);
-    background-size: 5px 5px;
-    background-repeat: no-repeat;
-}
 :root {
     --bg-canopy: #000000;
     --bg-glass: rgba(255, 255, 255, 0.55);
@@ -167,48 +154,6 @@ body::before {
     min-height: 0;
     padding: 0 20px 20px;
     box-sizing: border-box;
-}
-
-.loaded-success {
-    color: var(--mint) !important;
-    font-weight: 600;
-
-    text-shadow:
-        0 0 5px rgba(16, 185, 129, 0.6),
-        0 0 15px rgba(16, 185, 129, 0.5),
-        0 0 30px rgba(16, 185, 129, 0.3);
-
-    animation: glowPulse 1.8s ease-in-out infinite;
-}
-
-@keyframes glowPulse {
-    0%, 100% {
-        text-shadow:
-            0 0 5px rgba(16, 185, 129, 0.5),
-            0 0 15px rgba(16, 185, 129, 0.4),
-            0 0 30px rgba(16, 185, 129, 0.2);
-    }
-    50% {
-        text-shadow:
-            0 0 10px rgba(16, 185, 129, 0.9),
-            0 0 25px rgba(16, 185, 129, 0.6),
-            0 0 50px rgba(16, 185, 129, 0.3);
-    }
-}
-
-@keyframes glowPulse {
-    0%, 100% {
-        text-shadow:
-            0 0 5px rgba(16, 185, 129, 0.5),
-            0 0 15px rgba(16, 185, 129, 0.4),
-            0 0 30px rgba(16, 185, 129, 0.2);
-    }
-    50% {
-        text-shadow:
-            0 0 10px rgba(16, 185, 129, 0.9),
-            0 0 25px rgba(16, 185, 129, 0.6),
-            0 0 50px rgba(16, 185, 129, 0.3);
-    }
 }
 
 .layout-resizer {
@@ -460,16 +405,10 @@ select, input[type="number"], input[type="text"] {
 select, input[type="number"] {
     font-family: var(--font-mono);
 }
-select:focus,
-input[type="number"]:focus {
-    border-color: #10b981 !important;
-    background: rgba(255, 255, 255, 0.98);
-
-    box-shadow:
-        0 0 0 3px rgba(16, 185, 129, 0.20),
-        0 0 12px rgba(16, 185, 129, 0.25);
-
-    outline: none;
+select:focus, input[type="number"]:focus {
+    border-color: var(--survey-blue);
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 10px rgba(101, 163, 13, 0.18);
 }
 input[type="text"]:focus {
     border-color: var(--border-active);
@@ -545,7 +484,7 @@ input[type="text"]:focus {
 .fill-arc {
     fill: none; stroke: var(--mint); stroke-width: 4;
     stroke-dasharray: 150.7; stroke-dashoffset: 150.7;
-    transition: stroke-dashoffset 0.6s ease;
+    transition: stroke-dashoffset 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .visualizer-desk {
@@ -613,58 +552,6 @@ input[type="text"]:focus {
     color: var(--white-pure);
     border-color: var(--white-snow);
 }
-
-/* ================= MOBILE RESPONSIVE FIX ================= */
-
-@media (max-width: 1100px) {
-    .app-layout {
-        grid-template-columns: 1fr !important;
-        grid-template-rows: auto !important;
-        height: auto;
-        overflow-y: auto;
-    }
-
-    .matrix-container {
-        flex-direction: column;
-    }
-
-    .matrix-selectors {
-        flex-direction: row;
-        justify-content: center;
-        gap: 10px;
-    }
-
-    .holo-panel {
-        min-width: 100% !important;
-    }
-
-    .layout-resizer {
-        display: none;
-    }
-}
-
-@media (max-width: 600px) {
-    .app-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 10px;
-    }
-
-    .btn-cyber-run {
-        width: 100%;
-    }
-
-    select,
-    input {
-        font-size: 11px;
-    }
-
-    .matrix-tab {
-        width: 36px;
-        height: 36px;
-        font-size: 11px;
-    }
-}
 </style>
 </head>
 
@@ -687,7 +574,7 @@ input[type="text"]:focus {
         </div>
         <div class="header-readout">
             <div class="pip"><span class="pip-dot"></span><span>Engine Status</span><span class="pip-value">Online</span></div>
-            <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs-label">UTM Zone 44N (EPSG:32644)</span></div>
+            <div class="pip"><span>Projection</span><span class="pip-value">EPSG:32644</span></div>
             <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
         </div>
     </header>
@@ -706,7 +593,7 @@ input[type="text"]:focus {
                     <div class="field-group">
                         <label>Target GIS Projection</label>
                         <select id="zone">
-                            <option value="44" selected>UTM Zone 44N (EPSG:32644)</option>
+                            <option value="44">UTM Zone 44N (EPSG:32644)</option>
                             <option value="45">UTM Zone 45N (EPSG:32645)</option>
                         </select>
                     </div>
@@ -733,8 +620,8 @@ input[type="text"]:focus {
                          
                         <div class="group-content-card active-card" id="card-A">
                             <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select Excel/CSV Data</span>
-                                <input type="file" class="file" accept=".csv,.xlsx,.xls">
+                                <span class="dz-text">✨ Select ExcelData</span>
+                                <input type="file" class="file">
                             </div>
                             <div class="input-row">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
@@ -750,7 +637,7 @@ input[type="text"]:focus {
                         </div>
 
                         <div class="group-content-card" id="card-B">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel/CSV Data</span><input type="file" class="file" accept=".csv,.xlsx,.xls"></div>
+                            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel Data</span><input type="file" class="file"></div>
                             <div class="input-row">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
                                 <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
@@ -763,91 +650,59 @@ input[type="text"]:focus {
                         </div>
 
                         <div class="group-content-card" id="card-C">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Drop Flat File (CSV/Excel) or ZIP Archive</span>
-                                <input type="file" class="file" accept=".csv,.xlsx,.xls,.zip,.rar">
-                            </div>
+    <div class="cyber-dropzone">
+        <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
+        <input type="file" class="file">
+    </div>
 
-                            <div class="field-group" id="c-mode-selector-wrapper">
-                                <label>Base Geometry Sub-Context</label>
-                                <div class="toggle-switch-container">
-                                    <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Mode A (Simple Poly)</div>
-                                    <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Mode B (Segmented)</div>
-                                </div>
-                            </div>
+    <div id="c-dynamic-content">
+        <div class="field-group" id="c-mode-selector-wrapper">
+            <label>Mode Selection</label>
+            <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
+                <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
+            </div>
+        </div>
 
-                            <div class="field-group hidden" id="shp-select-container">
-                                <label>Select Shapefile Layer from ZIP</label>
-                                <select id="shp-select">
-                                    <option value="">Awaiting archive mapping analysis...</option>
-                                </select>
-                            </div>
+        <div class="field-group hidden" id="shp-select-container">
+            <label>Available Layers</label>
+            <select id="shp-select"></select>
+        </div>
 
-                            <div class="input-row" id="c-vector-row-1">
+        <div class="input-row" id="c-vector-row-1">
+            <div class="field-group"><label>X</label><select data-key="X"></select></div>
+            <div class="field-group"><label>Y</label><select data-key="Y"></select></div>
+        </div>
+        <div class="input-row" id="c-vector-row-2">
+            <div class="field-group"><label>Order</label><select data-key="Order"></select></div>
+            <div class="field-group" id="c-forest-wrapper"><label>Forest</label><select data-key="Forest"></select></div>
+        </div>
+
+        <div style="margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 10px;">
+            <label style="font-size: 9px; color: var(--mint);">Grid Parameters (Sampling Density)</label>
+            <div class="input-row">
+                <div class="field-group"><label>Width (m)</label><input type="number" data-key="w" value="50"></div>
+                <div class="field-group"><label>Height (m)</label><input type="number" data-key="h" value="50"></div>
+            </div>
+            <div class="input-row">
+                <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
+                <div class="field-group"><label>Cols</label><input type="number" data-key="cols" value="10"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+                        <div class="group-content-card" id="card-D">
+                            <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Engine File</span><input type="file" class="file"></div>
+                            <div class="input-row">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
                                 <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
                             </div>
-
-                            <div class="input-row" id="c-vector-row-2">
-                                <div class="field-group"><label>Point Order Sequence</label><select data-key="Order"></select></div>
-                                <div class="field-group hidden" id="c-forest-wrapper">
-                                    <label>Forest Column Field</label>
-                                    <select data-key="Forest" id="c-field-forest"></select>
-                                </div>
-                            </div>
-
-                            <div class="field-group hidden" id="c-compartment-wrapper">
-                                <label>Compartment Column Field</label>
-                                <select data-key="Compartment" id="c-field-compartment"></select>
-                            </div>
-
-                            <div style="border-top: 1px dashed rgba(20,40,30,0.08); margin: 6px 0; padding-top: 10px;">
-                                <div class="field-group"><label style="color: var(--gold-accent);">Grid Overlay Configuration</label></div>
-                            </div>
-
                             <div class="input-row">
-                                <div class="field-group"><label>Cell Width (w)</label><input type="number" data-key="w" value="50"></div>
-                                <div class="field-group"><label>Cell Height (h)</label><input type="number" data-key="h" value="50"></div>
-                            </div>
-
-                            <div class="input-row">
-                                <div class="field-group"><label>Grid Rows</label><input type="number" data-key="rows" value="10"></div>
-                                <div class="field-group"><label>Grid Columns</label><input type="number" data-key="cols" value="10"></div>
+                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+                                <div class="field-group"><label>Forest Identifier</label><input type="text" data-key="forest" value="FOREST"></div>
                             </div>
                         </div>
-
-                        <div class="group-content-card" id="card-D">
-    <div class="cyber-dropzone">
-        <span class="dz-text">✨ Select Excel/CSV Data (Forest Dataset)</span>
-        <input type="file" class="file" accept=".csv,.xlsx,.xls">
-    </div>
-
-    <div class="input-row">
-        <div class="field-group">
-            <label>X Coordinate</label>
-            <select data-key="X"></select>
-        </div>
-        <div class="field-group">
-            <label>Y Coordinate</label>
-            <select data-key="Y"></select>
-        </div>
-    </div>
-
-    <div class="input-row">
-        <div class="field-group">
-            <label>Point Order</label>
-            <select data-key="Order"></select>
-        </div>
-        <div class="field-group">
-            <label>Forest ID</label>
-            <select data-key="Forest"></select>
-        </div>
-    </div>
-
-    <div style="padding: 6px 10px; background: rgba(5,150,105,0.08); border-radius: 8px; font-size: 11px; color: var(--text-muted);">
-        🌲 Group D builds forest polygons grouped by Forest column.
-    </div>
-</div>
 
                     </div>
                 </div>
@@ -896,7 +751,7 @@ input[type="text"]:focus {
 </div>
 
 <script>
-// ================= RESIZERS =================
+// ================= NAV PANEL DRAG RESIZER LAYOUT LOGIC =================
 const mainLayout = document.getElementById('main-layout-container');
 const centerWorkspace = document.getElementById('center-workspace-container');
 
@@ -908,121 +763,87 @@ let currentLeftWidth = 280;
 let currentRightWidth = 420;
 let currentConsoleHeight = 120;
 
-// LEFT RESIZE
-leftColHandle.addEventListener('pointerdown', (e) => {
+leftColHandle.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     leftColHandle.classList.add('dragging');
-
     const startX = e.clientX;
     const startWidth = currentLeftWidth;
 
-    const move = (ev) => {
-        const dx = ev.clientX - startX;
-        currentLeftWidth = Math.max(150, Math.min(startWidth + dx, window.innerWidth - currentRightWidth - 300));
-
-        mainLayout.style.gridTemplateColumns =
-            `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
-    };
-
-    const up = () => {
+    function onPointerMove(ev) {
+        const deltaX = ev.clientX - startX;
+        currentLeftWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentRightWidth - 300));
+        mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
+    }
+    function onPointerUp() {
         leftColHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-    };
-
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+    }
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
 });
 
-// RIGHT RESIZE
-rightColHandle.addEventListener('pointerdown', (e) => {
+rightColHandle.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     rightColHandle.classList.add('dragging');
-
     const startX = e.clientX;
     const startWidth = currentRightWidth;
 
-    const move = (ev) => {
-        const dx = startX - ev.clientX;
-        currentRightWidth = Math.max(150, Math.min(startWidth + dx, window.innerWidth - currentLeftWidth - 300));
-
-        mainLayout.style.gridTemplateColumns =
-            `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
-    };
-
-    const up = () => {
+    function onPointerMove(ev) {
+        const deltaX = startX - ev.clientX; 
+        currentRightWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentLeftWidth - 300));
+        mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
+    }
+    function onPointerUp() {
         rightColHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-    };
-
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+    }
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
 });
 
-// CENTER RESIZE
-centerRowHandle.addEventListener('pointerdown', (e) => {
+centerRowHandle.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     centerRowHandle.classList.add('dragging');
-
     const startY = e.clientY;
     const startHeight = currentConsoleHeight;
 
-    const move = (ev) => {
-        const dy = startY - ev.clientY;
-        currentConsoleHeight = Math.max(80, Math.min(startHeight + dy, centerWorkspace.clientHeight - 100));
-
-        centerWorkspace.style.gridTemplateRows =
-            `1fr 6px ${currentConsoleHeight}px`;
-    };
-
-    const up = () => {
+    function onPointerMove(ev) {
+        const deltaY = startY - ev.clientY; 
+        currentConsoleHeight = Math.max(80, Math.min(startHeight + deltaY, centerWorkspace.clientHeight - 100));
+        centerWorkspace.style.gridTemplateRows = `1fr 6px ${currentConsoleHeight}px`;
+    }
+    function onPointerUp() {
         centerRowHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-    };
-
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+    }
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
 });
 
+document.getElementById('zone').addEventListener('change', function() {
+    const pips = document.querySelectorAll('.header-readout .pip-value');
+    if (pips[1]) pips[1].innerText = "EPSG:326" + this.value;
+});
 
-// ================= CRS =================
-const zoneSelect = document.getElementById('zone');
-
-function updateCRS() {
-    const label = document.getElementById('header-crs-label');
-    label.innerText =
-        zoneSelect.value === "44"
-            ? "UTM Zone 44N (EPSG:32644)"
-            : "UTM Zone 45N (EPSG:32645)";
-}
-
-zoneSelect.addEventListener('change', updateCRS);
-window.addEventListener("load", updateCRS);
-
-
-// ================= STATE =================
-let mode = "A";
-let groupCSubMode = "A";
-let globalFileCache = null;
+// ================= APP LEVEL STATE ENGINE =================
+let mode = "A";        
+let groupCSubMode = "A"; 
 
 function switchTab(targetMode) {
     mode = targetMode;
-
-    document.querySelectorAll('.matrix-tab')
-        .forEach(t => t.classList.remove('active-tab'));
+    
+    document.querySelectorAll('.matrix-tab').forEach(t => t.classList.remove('active-tab'));
     document.getElementById(`tab-${targetMode}`).classList.add('active-tab');
-
-    document.querySelectorAll('.group-content-card')
-        .forEach(c => c.classList.remove('active-card'));
+    
+    document.querySelectorAll('.group-content-card').forEach(c => c.classList.remove('active-card'));
     document.getElementById(`card-${targetMode}`).classList.add('active-card');
 
-    const nodes = document.querySelectorAll('.tree-node');
-    const order = ["A","B","C","D"];
-
-    nodes.forEach((node, idx) => {
-        node.classList.toggle('active', order[idx] === targetMode);
+    document.querySelectorAll('.tree-node').forEach((node, idx) => {
+        node.classList.remove('active');
+        if(["A","B","C","D"][idx] === targetMode) node.classList.add('active');
     });
 
     const labels = {
@@ -1031,229 +852,237 @@ function switchTab(targetMode) {
         C: "C · Sample Plot",
         D: "D · Complex Version A"
     };
-
-    document.getElementById('header-module').innerText = labels[targetMode];
+    const headerModule = document.getElementById('header-module');
+    if (headerModule) headerModule.innerText = labels[targetMode];
 }
 
-
-// ================= GROUP C MODE =================
 function setGroupCSubMode(subMode) {
     groupCSubMode = subMode;
-
-    document.querySelectorAll('#c-mode-selector-wrapper .toggle-option')
-        .forEach(o => o.classList.remove('active-toggle'));
-
+    
+    document.querySelectorAll('#c-mode-selector-wrapper .toggle-option').forEach(opt => opt.classList.remove('active-toggle'));
     document.getElementById(`c-toggle-${subMode}`).classList.add('active-toggle');
+    
+    const forestWrapper = document.getElementById('c-forest-wrapper');
+    const compartmentWrapper = document.getElementById('c-compartment-wrapper');
 
-    const forest = document.getElementById('c-forest-wrapper');
-    const comp = document.getElementById('c-compartment-wrapper');
-
-    const showExtra = subMode === "B";
-    forest.classList.toggle('hidden', !showExtra);
-    comp.classList.toggle('hidden', !showExtra);
+    if (subMode === "B") {
+        if(forestWrapper) forestWrapper.classList.remove('hidden');
+        if(compartmentWrapper) compartmentWrapper.classList.remove('hidden');
+    } else {
+        if(forestWrapper) forestWrapper.classList.add('hidden');
+        if(compartmentWrapper) compartmentWrapper.classList.add('hidden');
+    }
 }
 
-
-// ================= ZIP HANDLER =================
 async function extractZipShp(file) {
     const zip = await JSZip.loadAsync(file);
     const shpFiles = [];
-
-    zip.forEach((path) => {
+    zip.forEach((path, entry) => {
         if (path.toLowerCase().endsWith(".shp")) {
             shpFiles.push(path);
         }
     });
-
     return shpFiles;
 }
 
-function getFileType(file) {
-    const ext = file.name.split(".").pop().toLowerCase();
-    if (ext === "zip") return "archive";
-    if (ext === "rar") return "unsupported";
-    return "excel";
-}
-
-
-// ================= OUTPUT =================
-const outImg = document.getElementById("output-img");
-const notice = document.getElementById("empty-notice");
-
-outImg.onerror = () => {
-    outImg.style.display = "none";
-    notice.style.display = "block";
-    notice.innerText = "Preview failed to load output image";
-};
-
-
-// ================= FILE INPUT =================
+// ================= DYNAMIC FILE PARSER & INTERFACE MUTATION =================
 document.querySelectorAll(".file").forEach(input => {
-    input.addEventListener("change", async function () {
-
-        const file = this.files[0];
-        if (!file) return;
+    input.addEventListener("change", async function() {
+        let file = this.files[0];
+        if(!file) return;
 
         const activeCard = this.closest(".group-content-card");
-        const activeMode = activeCard.id.replace("card-", "");
+        const activeMode = activeCard.id.replace("card-","");
+        let dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
+        
+        const modeSelector = document.getElementById("c-mode-selector-wrapper");
+        const shpContainer = document.getElementById("shp-select-container");
+        const row1 = document.getElementById("c-vector-row-1");
+        const row2 = document.getElementById("c-vector-row-2");
+        const compWrapper = document.getElementById("c-compartment-wrapper");
+        const forestWrapper = document.getElementById("c-forest-wrapper");
 
-        const fileType = getFileType(file);
+        if (activeMode === "C") {
+            if (file.name.toLowerCase().endsWith(".zip")) {
+                shpContainer.classList.remove("hidden");
+                if (modeSelector) modeSelector.classList.add("hidden");
+                if (row1) row1.classList.add("hidden");
+                if (row2) row2.classList.add("hidden");
+                if (compWrapper) compWrapper.classList.add("hidden");
+                if (forestWrapper) forestWrapper.classList.add("hidden");
 
-        if (!window.globalFiles) window.globalFiles = {};
-        window.globalFiles[activeMode] = file;
+                dzText.innerText = `📦 Reading ZIP Layer Bundle...`;
+                dzText.style.color = "var(--white-snow)";
 
-        const dz = activeCard.querySelector(".dz-text");
+                try {
+                    const shpSelect = document.getElementById("shp-select");
+                    shpSelect.innerHTML = "";
 
-        // ================= ZIP =================
-        if (fileType === "archive") {
+                    const shpFiles = await extractZipShp(file);
 
-            if (activeMode !== "C") {
-                alert("ZIP only allowed in Group C");
-                this.value = "";
+                    if (shpFiles.length === 0) {
+                        shpSelect.innerHTML = `<option value="">No .shp found</option>`;
+                        dzText.innerText = "⚠ No shapefiles inside ZIP";
+                        dzText.style.color = "var(--amber-timber)";
+                        return;
+                    }
+
+                    shpFiles.forEach(f => {
+                        let opt = document.createElement("option");
+                        opt.value = f;
+                        opt.textContent = f;
+                        shpSelect.appendChild(opt);
+                    });
+
+                    // PATCH #2: Visual selector is hidden, default state to "A" safely
+                    groupCSubMode = "A";
+
+                    dzText.innerText = `🌿 Active Bundle: ${file.name}`;
+                    dzText.style.color = "var(--border-active)";
+
+                } catch (err) {
+                    console.error(err);
+                    dzText.innerText = "❌ Failed to parse ZIP";
+                    dzText.style.color = "#ef4444";
+                }
                 return;
             }
 
-            dz.innerHTML = `📦 Selected ZIP: <b>${file.name}</b>`;
-            dz.classList.add("loaded-success");
-
-            const shpContainer = document.getElementById("shp-select-container");
-            shpContainer.classList.remove("hidden");
-
-            const shpSelect = document.getElementById("shp-select");
-            shpSelect.innerHTML = "";
-
-            const shpFiles = await extractZipShp(file);
-
-            shpFiles.forEach(f => {
-                const opt = document.createElement("option");
-                opt.value = f;
-                opt.textContent = f;
-                shpSelect.appendChild(opt);
-            });
-
-            return;
+            if (modeSelector) modeSelector.classList.remove("hidden");
+            if (row1) row1.classList.remove("hidden");
+            if (row2) row2.classList.remove("hidden");
+            shpContainer.classList.add("hidden");
+            setGroupCSubMode(groupCSubMode);
         }
 
-        // ================= CSV / XLSX =================
-        dz.innerHTML = `📂 Selected: <b>${file.name}</b>`;
-        dz.classList.add("loaded-success");
+        dzText.innerText = `🌿 Active Table: ${file.name}`;
+        dzText.style.color = "var(--border-active)";
 
-        const fd = new FormData();
+        let fd = new FormData();
         fd.append("file", file);
 
-        const res = await fetch("/get-columns", {
-            method: "POST",
-            body: fd
-        });
+        try {
+            let res = await fetch("/get-columns", { method: "POST", body: fd });
+            let cols = await res.json();
 
-        const cols = await res.json();
+            if (cols.error) throw new Error(cols.error);
 
-        if (!Array.isArray(cols)) {
-            alert("No columns detected");
-            return;
-        }
-
-        activeCard.querySelectorAll("select[data-key]").forEach(sel => {
-            sel.innerHTML = `<option value="">Select field</option>`;
-            cols.forEach(c => {
-                const opt = document.createElement("option");
-                opt.value = c;
-                opt.textContent = c;
-                sel.appendChild(opt);
+            activeCard.querySelectorAll("select").forEach(s => {
+                if(s.id === "shp-select") return; 
+                s.innerHTML = "";
+                cols.forEach(c => {
+                    s.innerHTML += `<option value="${c}">${c}</option>`;
+                });
             });
-
-            sel.style.display = "block";
-        });
-
+        } catch (err) {
+            console.error("Failed executing columns synchronization layout matrix:", err);
+        }
     });
 });
 
-
-// ================= PIPELINE =================
+// ================= TRANSACTION PIPELINE HANDLER =================
 async function runPipeline() {
+    let activeCard = document.getElementById(`card-${mode}`);
+    let fileInput = activeCard.querySelector(".file");
+    let file = fileInput.files[0];
 
-    const activeCard = document.getElementById(`card-${mode}`);
-    const fileInput = activeCard.querySelector(".file");
-    const file = fileInput.files[0];
+    if(!file) {
+        return alert("System Notice: Configuration requires a valid source spatial layout layer target");
+    }
 
-    if (!file) {
-        alert("Please select a file first");
+    const isZip = file.name.toLowerCase().endsWith(".zip");
+
+    // PATCH #3: Safety validation check ensuring select element is populated
+    if (mode === "C" && isZip && !document.getElementById("shp-select").value) {
+        alert("Select shapefile first");
         return;
     }
 
-    const fd = new FormData();
+    let fd = new FormData();
     fd.append("file", file);
     fd.append("mode", mode);
-    fd.append("zone", zoneSelect.value);
+    fd.append("zone", document.getElementById("zone").value);
 
     if (mode === "A") {
-        const forest = activeCard.querySelector('[data-key="forest"]');
-        fd.append("forest", forest?.value || "FOREST");
-    }
-
-    if (mode === "C") {
+        const forestInput = activeCard.querySelector('[data-key="forest"]');
+        fd.append("forest", forestInput ? forestInput.value : "FOREST");
+    } else if (mode === "C") {
         fd.append("w", activeCard.querySelector('[data-key="w"]').value);
         fd.append("h", activeCard.querySelector('[data-key="h"]').value);
         fd.append("rows", activeCard.querySelector('[data-key="rows"]').value);
         fd.append("cols", activeCard.querySelector('[data-key="cols"]').value);
+        
+        // PATCH #1: Structural reorganization ensuring base_mode is explicitly sent inside all conditions
         fd.append("base_mode", groupCSubMode);
 
-        if (file.name.toLowerCase().endsWith(".zip")) {
-            fd.append("selected_shp",
-                document.getElementById("shp-select").value
-            );
+        if (isZip) {
+            const shp = document.getElementById("shp-select").value;
+            fd.append("selected_shp", shp);
         }
     }
 
-    const mapping = {};
-    activeCard.querySelectorAll("select[data-key]").forEach(el => {
-        if (el.value !== "") {
-            mapping[el.getAttribute("data-key")] = el.value;
-        }
-    });
+    let mapping = {};
+    activeCard.querySelectorAll("select, input").forEach(field => {
+        let key = field.getAttribute("data-key");
+        if (!key || field.type === "file") return;
+        if (["w", "h", "rows", "cols", "forest"].includes(key)) return;
 
+        mapping[key] = field.value;
+    });
     fd.append("mapping", JSON.stringify(mapping));
 
+    const radialBar = document.getElementById("radial-bar");
     const headline = document.getElementById("status-headline");
-    const sub = document.getElementById("status-sub");
-    const radial = document.getElementById("radial-bar");
-
-    headline.innerText = "Processing...";
-    sub.innerText = "Running GIS Engine";
-    radial.style.strokeDashoffset = "75";
+    const subline = document.getElementById("status-sub");
+    
+    headline.innerText = "Processing Layer...";
+    subline.innerText = "Computing Topologies";
+    if(radialBar) radialBar.style.strokeDashoffset = "75"; 
 
     try {
-        const res = await fetch("/upload", {
-            method: "POST",
-            body: fd
-        });
+        let response = await fetch("/upload", { method: "POST", body: fd });
+        
+        if (!response.ok) {
+            let errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Server error");
+        let result = await response.json();
 
-        headline.innerText = "Complete";
-        sub.innerText = "Success";
-        radial.style.strokeDashoffset = "0";
+        if(result.run_id) {
+            headline.innerText = "Process Complete";
+            subline.innerText = "Matrix Balanced";
+            if(radialBar) radialBar.style.strokeDashoffset = "0";
 
-        outImg.src = `/outputs/${data.run_id}/output.png?t=${Date.now()}`;
-        outImg.style.display = "block";
-        notice.style.display = "none";
+            const outImg = document.getElementById("output-img");
+            const notice = document.getElementById("empty-notice");
+            const dlBtn = document.getElementById("download-btn");
+            const meta = document.getElementById("run-meta");
 
-        const dl = document.getElementById("download-btn");
-        dl.href = data.download;
-        dl.style.display = "inline-block";
-
-        document.getElementById("run-meta").innerText =
-            `Run: ${data.run_id.slice(0,8)} | OK`;
-
-    } catch (e) {
-        console.error(e);
-        headline.innerText = "Error";
-        sub.innerText = "Pipeline failed";
-        radial.style.strokeDashoffset = "150";
-        alert(e.message);
+            if(outImg) {
+                outImg.src = `/outputs/${result.run_id}/output.png?t=` + new Date().getTime();
+                outImg.style.display = "block";
+                if(notice) notice.style.display = "none";
+            }
+            if(dlBtn && result.download) {
+                dlBtn.href = result.download;
+                dlBtn.style.display = "inline-block";
+            }
+            if(meta) {
+                meta.innerText = `Run ID: ${result.run_id.substring(0,8)}... | Status: Success`;
+            }
+        } else {
+            throw new Error(result.error || "Execution Pipeline Processing Error");
+        }
+    } catch (err) {
+        console.error(err);
+        headline.innerText = "Engine Error";
+        subline.innerText = "Pipeline Interrupted";
+        if(radialBar) radialBar.style.strokeDashoffset = "150.7";
+        alert(`Core Execution Exception: ${err.message}`);
     }
 }
 </script>
+
 </body>
 </html>
