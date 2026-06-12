@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Elfak GIS Engine Pro — Premium Forest Studio</title>
 
+<!-- JSZip Asset Engine Initialization -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
 <style>
 :root {
     --bg-canopy: #070d0a;
@@ -14,7 +17,6 @@
     --border-active: #34d399;
     --glow-mint: rgba(52, 211, 153, 0.25);
     
-    /* Elegant Shades of White & Light Neutrals */
     --white-pure: #ffffff;
     --white-snow: #f8fafc;
     --white-mist: #e2e8f0;
@@ -35,7 +37,6 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* APPLICATION GRID LAYOUT WITH SMOOTH FADE-IN */
 .app-layout {
     display: grid;
     grid-template-columns: 280px 1.3fr 420px;
@@ -51,7 +52,6 @@ body {
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* PREMIUM HOLO-GLASS CARD BUILD */
 .holo-panel {
     background: var(--bg-glass);
     backdrop-filter: blur(30px);
@@ -82,7 +82,6 @@ body {
     padding: 20px 24px;
 }
 
-/* AUTOMATION TREE NAVIGATION */
 .tree-node {
     padding: 10px 14px;
     border-radius: 8px;
@@ -107,7 +106,6 @@ body {
     box-shadow: inset 1px 0 0 var(--border-active);
 }
 
-/* INTERACTION ARCHITECTURE CORE */
 .workspace-split {
     display: grid;
     grid-template-rows: minmax(0, 1fr) 120px;
@@ -128,7 +126,6 @@ body {
     gap: 12px;
 }
 
-/* INTERACTIVE TAB NAV MODULES */
 .matrix-tab {
     width: 48px;
     height: 48px;
@@ -184,7 +181,6 @@ body {
     to { opacity: 1; transform: scale(1); }
 }
 
-/* COMPACT DATA DRAG-DROP PORTAL */
 .cyber-dropzone {
     border: 1px dashed rgba(248, 250, 252, 0.2);
     background: rgba(10, 15, 13, 0.4);
@@ -224,7 +220,6 @@ body {
     letter-spacing: 0.04em;
 }
 
-/* PREMIUM PARAMETER FORM CONTROLS */
 select, input[type="number"], input[type="text"] {
     width: 100%;
     background: rgba(13, 20, 17, 0.8);
@@ -245,7 +240,6 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
     box-shadow: 0 0 10px rgba(52, 211, 153, 0.15);
 }
 
-/* ENGINE COMPUTATION HUD CONTROL BLOCK */
 .console-layout {
     display: flex;
     align-items: center;
@@ -273,7 +267,6 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
     transform: translateY(0);
 }
 
-/* PROGRESS METRICS ARCS */
 .radial-progress-box {
     position: relative;
     width: 56px;
@@ -291,7 +284,6 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
     transition: stroke-dashoffset 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* LIVE RENDER VISUALIZATION DESK */
 .visualizer-desk {
     padding: 24px;
     display: flex;
@@ -360,6 +352,7 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
 
 <div class="app-layout">
 
+    <!-- NAVIGATION PANEL -->
     <div class="holo-panel">
         <div class="panel-title">Forest Map Navigator</div>
         <div class="panel-scroll">
@@ -380,6 +373,7 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
         </div>
     </div>
 
+    <!-- WORKSPACE PANEL MATRIX -->
     <div class="workspace-split">
         
         <div class="holo-panel">
@@ -395,6 +389,7 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
 
                 <div class="config-stack">
                     
+                    <!-- CARD A MODULE -->
                     <div class="group-content-card active-card" id="card-A">
                         <div class="cyber-dropzone">
                             <span class="dz-text">✨ Select ExcelData</span>
@@ -408,16 +403,12 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
                             <div class="field-group"><label>Point Order Vector</label><select data-key="Order"></select></div>
                             <div class="field-group">
                                 <label>Enter Forest Name</label>
-                                <input
-                                    type="text"
-                                    data-key="forest"
-                                    value="FOREST"
-                                    placeholder="Enter Forest Name"
-                                >
+                                <input type="text" data-key="forest" value="FOREST" placeholder="Enter Forest Name">
                             </div>
                         </div>
                     </div>
 
+                    <!-- CARD B MODULE -->
                     <div class="group-content-card" id="card-B">
                         <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel Data</span><input type="file" class="file"></div>
                         <div class="input-row">
@@ -431,62 +422,46 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
                         <div class="field-group"><label>Compartment Identifier</label><select data-key="Compartment"></select></div>
                     </div>
 
+                    <!-- CARD C MODULE -->
                     <div class="group-content-card" id="card-C">
                         <div class="cyber-dropzone">
-                            <span class="dz-text">✨ Click or Drop Zip Shapefile / Excel</span>
+                            <span class="dz-text">✨ Click or Drop File or ZIP Bundle</span>
                             <input type="file" class="file">
                         </div>
 
+                        <!-- Conditionally Hidden Dropdown wrapper -->
+                        <div class="field-group" id="shp-select-container" style="display: none;">
+                            <label>Select Shapefile from ZIP</label>
+                            <select data-key="selected_shp" id="shp-select">
+                                <option value="">Parsing bundle contents...</option>
+                            </select>
+                        </div>
+
                         <div class="input-row">
+                            <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
+                            <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
+                        </div>
+
+                        <div class="input-row">
+                            <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
                             <div class="field-group">
-                                <label>X Coordinate</label>
-                                <select data-key="X"></select>
-                            </div>
-                            <div class="field-group">
-                                <label>Y Coordinate</label>
-                                <select data-key="Y"></select>
+                                <label>Forest Name</label>
+                                <input type="text" data-key="Forest" value="FOREST" placeholder="Enter Forest Name">
                             </div>
                         </div>
 
                         <div class="input-row">
-                            <div class="field-group">
-                                <label>Point Order</label>
-                                <select data-key="Order"></select>
-                            </div>
-                            <div class="field-group">
-                                <label>Forest</label>
-                                <select data-key="Forest"></select>
-                            </div>
-                        </div>
-
-                        <div class="field-group">
-                            <label>Compartment</label>
-                            <select data-key="Compartment"></select>
+                            <div class="field-group"><label>Cell Width (w)</label><input type="number" data-key="w" value="50"></div>
+                            <div class="field-group"><label>Cell Height (h)</label><input type="number" data-key="h" value="50"></div>
                         </div>
 
                         <div class="input-row">
-                            <div class="field-group">
-                                <label>Cell Width (w)</label>
-                                <input type="number" data-key="w" value="50">
-                            </div>
-                            <div class="field-group">
-                                <label>Cell Height (h)</label>
-                                <input type="number" data-key="h" value="50">
-                            </div>
-                        </div>
-
-                        <div class="input-row">
-                            <div class="field-group">
-                                <label>Rows</label>
-                                <input type="number" data-key="rows" value="10">
-                            </div>
-                            <div class="field-group">
-                                <label>Columns</label>
-                                <input type="number" data-key="cols" value="10">
-                            </div>
+                            <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
+                            <div class="field-group"><label>Columns</label><input type="number" data-key="cols" value="10"></div>
                         </div>
                     </div>
 
+                    <!-- CARD D MODULE -->
                     <div class="group-content-card" id="card-D">
                         <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Engine File</span><input type="file" class="file"></div>
                         <div class="input-row">
@@ -499,6 +474,7 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
             </div>
         </div>
 
+        <!-- ENGINE CONTROL SYSTEMS CONSOLE -->
         <div class="holo-panel console-layout">
             <div>
                 <button class="btn-cyber-run" onclick="runPipeline()">Execute Process</button>
@@ -519,6 +495,7 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
 
     </div>
 
+    <!-- RENDER DESK DISPLAY -->
     <div class="holo-panel visualizer-desk">
         <div class="panel-title" style="padding:0 0 12px 0;">Dynamic Preview</div>
         <div class="canvas-wrapper">
@@ -538,6 +515,7 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
 <script>
 let mode = "A";
 
+// Interface Switching Logic
 function switchTab(targetMode) {
     mode = targetMode;
     
@@ -553,17 +531,73 @@ function switchTab(targetMode) {
     });
 }
 
+// Client-Side Shapefile Archival Scan
+async function extractZipShp(file) {
+    const zip = await JSZip.loadAsync(file);
+    const shpFiles = [];
+    zip.forEach((path, entry) => {
+        if (path.toLowerCase().endsWith(".shp")) {
+            shpFiles.push(path);
+        }
+    });
+    return shpFiles;
+}
+
 document.querySelectorAll(".file").forEach(input => {
     input.addEventListener("change", async function() {
         let file = this.files[0];
         if(!file) return;
 
+        const activeCard = this.closest(".group-content-card");
+        const activeMode = activeCard.id.replace("card-","");
         let dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
-        dzText.innerText = `🌿 Active: ${file.name}`;
-        dzText.style.color = "var(--border-active)";
+        const shpContainer = document.getElementById("shp-select-container");
 
-        const activeMode = this.closest(".group-content-card").id.replace("card-","");
-        if(activeMode === "C" && file.name.toLowerCase().endsWith(".zip")) return;
+        if (activeMode === "C") {
+            if (file.name.toLowerCase().endsWith(".zip")) {
+                dzText.innerText = `📦 Reading ZIP Layer Bundle...`;
+                dzText.style.color = "var(--white-pure)";
+                
+                try {
+                    const shpSelect = document.getElementById("shp-select");
+                    shpSelect.innerHTML = "";
+
+                    const shpFiles = await extractZipShp(file);
+
+                    if (shpFiles.length === 0) {
+                        shpSelect.innerHTML = `<option value="">No .shp found</option>`;
+                        dzText.innerText = "⚠ No shapefiles inside ZIP";
+                        dzText.style.color = "var(--amber-timber)";
+                        shpContainer.style.display = "none";
+                        return;
+                    }
+
+                    shpFiles.forEach(f => {
+                        let opt = document.createElement("option");
+                        opt.value = f;
+                        opt.textContent = f;
+                        shpSelect.appendChild(opt);
+                    });
+
+                    shpContainer.style.display = "block";
+                    dzText.innerText = `🌿 Active Bundle: ${file.name}`;
+                    dzText.style.color = "var(--border-active)";
+
+                } catch (err) {
+                    console.error(err);
+                    dzText.innerText = "❌ Failed to parse directory contents";
+                    dzText.style.color = "#ef4444";
+                    shpContainer.style.display = "none";
+                }
+                return;
+            } else {
+                shpContainer.style.display = "none";
+            }
+        }
+
+        // Standard Vector Database Initialization Setup
+        dzText.innerText = `🌿 Active Table: ${file.name}`;
+        dzText.style.color = "var(--border-active)";
 
         let fd = new FormData();
         fd.append("file", file);
@@ -571,9 +605,9 @@ document.querySelectorAll(".file").forEach(input => {
         try {
             let res = await fetch("/get-columns", { method: "POST", body: fd });
             let cols = await res.json();
-            let activeCard = this.closest(".group-content-card");
 
             activeCard.querySelectorAll("select").forEach(s => {
+                if(s.id === "shp-select") return; 
                 s.innerHTML = "";
                 cols.forEach(c => {
                     s.innerHTML += `<option value="${c}">${c}</option>`;
@@ -610,14 +644,13 @@ async function runPipeline() {
     fd.append("mode", mode);
     fd.append("zone", document.getElementById("zone").value);
 
-    // Extract non-mapping direct variables expected by backend architecture
     let mapping = {};
     activeCard.querySelectorAll("select, input").forEach(field => {
         let key = field.getAttribute("data-key");
         if (!key || field.type === "file") return;
         
-        if (["w", "h", "rows", "cols", "forest"].includes(key)) {
-            fd.append(key, field.value);
+        if (["w", "h", "rows", "cols", "forest", "Forest", "selected_shp"].includes(key)) {
+            fd.append(key.toLowerCase(), field.value);
         } else {
             mapping[key] = field.value;
         }
