@@ -454,6 +454,16 @@ def group_d(df, crs, out, mapping):
 
     for f, g in df.groupby(forest_col):
 
+        # ================= SAFE FOREST NAME =================
+        safe_name = str(f)
+        for ch in '<>:"/\\|?*':
+            safe_name = safe_name.replace(ch, "_")
+        safe_name = safe_name.replace(" ", "_")
+
+        forest_path = os.path.join(out, safe_name)
+        os.makedirs(forest_path, exist_ok=True)
+
+        # ================= SORT POINTS =================
         g = g.sort_values(order_col)
 
         coords = list(zip(g[x], g[y]))
@@ -467,36 +477,60 @@ def group_d(df, crs, out, mapping):
         poly = Polygon(coords)
         line = LineString(coords)
 
-        polys.append({
-            "Forest": f,
-            "Area": poly.area / 10000,
-            "Perim": poly.length,
-            "geometry": poly
-        })
+        if poly.is_empty:
+            continue
 
-        lines.append({
-            "Forest": f,
-            "geometry": line
-        })
+        if not poly.is_valid:
+            poly = poly.buffer(0)
 
-        for _, r in g.iterrows():
-            pts.append({
+        area_ha = poly.area / 10000
+
+        # ================= POINTS =================
+        pts_gdf = gpd.GeoDataFrame(
+            g.copy(),
+            geometry=gpd.points_from_xy(g[x], g[y]),
+            crs=crs
+        )
+
+        # ================= LINE =================
+        line_gdf = gpd.GeoDataFrame(
+            [{
                 "Forest": f,
-                "Order": r[order_col],
-                "geometry": Point(r[x], r[y])
-            })
+                "geometry": line
+            }],
+            crs=crs
+        )
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+        # ================= POLYGON =================
+        poly_gdf = gpd.GeoDataFrame(
+            [{
+                "Forest": f,
+                "Area_Ha": round(area_ha, 4),
+                "geometry": poly
+            }],
+            crs=crs
+        )
 
-    poly_gdf.to_file(os.path.join(out, "poly.shp"))
-    line_gdf.to_file(os.path.join(out, "line.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
+        # ================= EXACT OUTPUT FILE NAMES =================
+        poly_path = os.path.join(forest_path, f"{safe_name}_polygon.shp")
+        line_path = os.path.join(forest_path, f"{safe_name}_line.shp")
+        pts_path = os.path.join(forest_path, f"{safe_name}_points.shp")
 
-    return poly_gdf, line_gdf, pts_gdf
+        # ================= SAVE SHAPEFILES =================
+        poly_gdf.to_file(poly_path)
+        line_gdf.to_file(line_path)
+        pts_gdf.to_file(pts_path)
 
+        polys.append(poly_gdf)
+        lines.append(line_gdf)
+        pts.append(pts_gdf)
 
+    # ================= MERGED OUTPUT (FOR PREVIEW ONLY) =================
+    poly_all = gpd.GeoDataFrame(pd.concat(polys, ignore_index=True), crs=crs) if polys else gpd.GeoDataFrame()
+    line_all = gpd.GeoDataFrame(pd.concat(lines, ignore_index=True), crs=crs) if lines else gpd.GeoDataFrame()
+    pts_all = gpd.GeoDataFrame(pd.concat(pts, ignore_index=True), crs=crs) if pts else gpd.GeoDataFrame()
+
+    return poly_all, line_all, pts_all
 # ================= PREVIEW (UNCHANGED) =================
 def preview(poly, line, pts, path, pc, lc, ptc):
     fig, ax = plt.subplots(figsize=(6, 6))
