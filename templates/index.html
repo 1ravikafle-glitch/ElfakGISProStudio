@@ -45,7 +45,7 @@ body {
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
     position: relative;
-    user-select: none; /* Prevents text selection bugs while dragging elements */
+    user-select: none;
 }
 
 body::before {
@@ -147,10 +147,8 @@ body::before {
     font-weight: 500;
 }
 
-/* Updated main matrix container workspace structure */
 .app-layout {
     display: grid;
-    /* Explicit grid setup that accounts for structural pointer dividers */
     grid-template-columns: 280px 10px 1fr 10px 420px;
     flex: 1;
     min-height: 0;
@@ -158,7 +156,6 @@ body::before {
     box-sizing: border-box;
 }
 
-/* Global Pointer Resizer styling definitions */
 .layout-resizer {
     position: relative;
     z-index: 10;
@@ -196,7 +193,7 @@ body::before {
     transition: border-color 0.3s, box-shadow 0.3s;
     position: relative;
     height: 100%;
-    min-width: 150px; /* Safeguard parameters to prevent total panel collapse collapse */
+    min-width: 150px; 
     min-height: 80px;
 }
 
@@ -277,7 +274,6 @@ body::before {
     box-shadow: inset 1px 0 0 var(--border-active);
 }
 
-/* Explicit vertical variable distribution layout mapping settings matrix */
 .workspace-split {
     display: grid;
     grid-template-rows: 1fr 6px 120px;
@@ -347,6 +343,11 @@ body::before {
     display: flex;
 }
 
+/* Operational Safeguard: CSS Class Toggling Architecture */
+.hidden {
+    display: none !important;
+}
+
 .cyber-dropzone {
     border: 1px dashed rgba(28, 60, 45, 0.18);
     background: rgba(255, 255, 255, 0.35);
@@ -414,6 +415,31 @@ input[type="text"]:focus {
     border-color: var(--border-active);
     background: rgba(255, 255, 255, 0.9);
     box-shadow: 0 0 10px var(--glow-mint);
+}
+
+.toggle-switch-container {
+    display: flex;
+    background: rgba(20, 40, 30, 0.05);
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border-soft);
+}
+.toggle-option {
+    flex: 1;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 6px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: all 0.2s ease;
+}
+.toggle-option.active-toggle {
+    background: var(--white-pure);
+    color: var(--white-snow);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
 }
 
 .console-layout {
@@ -549,7 +575,7 @@ input[type="text"]:focus {
         </div>
         <div class="header-readout">
             <div class="pip"><span class="pip-dot"></span><span>Engine Status</span><span class="pip-value">Online</span></div>
-            <div class="pip"><span>Projection</span><span class="pip-value">UTM Zone 44N</span></div>
+            <div class="pip"><span>Projection</span><span class="pip-value">EPSG:32644</span></div>
             <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
         </div>
     </header>
@@ -568,8 +594,8 @@ input[type="text"]:focus {
                     <div class="field-group">
                         <label>Target GIS Projection</label>
                         <select id="zone">
-                            <option value="44">UTM Zone 44N</option>
-                            <option value="45">UTM Zone 45N</option>
+                            <option value="44">UTM Zone 44N (EPSG:32644)</option>
+                            <option value="45">UTM Zone 45N (EPSG:32645)</option>
                         </select>
                     </div>
                 </div>
@@ -626,28 +652,45 @@ input[type="text"]:focus {
 
                         <div class="group-content-card" id="card-C">
                             <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Click or Drop File or ZIP Bundle</span>
+                                <span class="dz-text">✨ Click or Drop Flat File (CSV/Excel) or ZIP Archive</span>
                                 <input type="file" class="file">
                             </div>
 
-                            <div class="field-group" id="shp-select-container" style="display: none;">
-                                <label>Select Shapefile from ZIP</label>
+                            <div class="field-group" id="c-mode-selector-wrapper">
+                                <label>Base Geometry Sub-Context</label>
+                                <div class="toggle-switch-container">
+                                    <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Mode A (Simple Poly)</div>
+                                    <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Mode B (Segmented)</div>
+                                </div>
+                            </div>
+
+                            <div class="field-group hidden" id="shp-select-container">
+                                <label>Select Shapefile Layer from ZIP</label>
                                 <select data-key="selected_shp" id="shp-select">
-                                    <option value="">Parsing bundle contents...</option>
+                                    <option value="">Awaiting archive mapping analysis...</option>
                                 </select>
                             </div>
 
-                            <div class="input-row">
+                            <div class="input-row" id="c-vector-row-1">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
                                 <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
                             </div>
 
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                <div class="field-group">
-                                    <label>Forest Name</label>
-                                    <input type="text" data-key="Forest" value="FOREST" placeholder="Enter Forest Name">
+                            <div class="input-row" id="c-vector-row-2">
+                                <div class="field-group"><label>Point Order Sequence</label><select data-key="Order"></select></div>
+                                <div class="field-group" id="c-forest-wrapper">
+                                    <label>Forest Column Field</label>
+                                    <select data-key="Forest" id="c-field-forest"></select>
                                 </div>
+                            </div>
+
+                            <div class="field-group hidden" id="c-compartment-wrapper">
+                                <label>Compartment Column Field</label>
+                                <select data-key="Compartment" id="c-field-compartment"></select>
+                            </div>
+
+                            <div style="border-top: 1px dashed rgba(20,40,30,0.08); margin: 6px 0; padding-top: 10px;">
+                                <div class="field-group"><label style="color: var(--gold-accent);">Grid Overlay Configuration</label></div>
                             </div>
 
                             <div class="input-row">
@@ -656,8 +699,8 @@ input[type="text"]:focus {
                             </div>
 
                             <div class="input-row">
-                                <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
-                                <div class="field-group"><label>Columns</label><input type="number" data-key="cols" value="10"></div>
+                                <div class="field-group"><label>Grid Rows</label><input type="number" data-key="rows" value="10"></div>
+                                <div class="field-group"><label>Grid Columns</label><input type="number" data-key="cols" value="10"></div>
                             </div>
                         </div>
 
@@ -666,6 +709,10 @@ input[type="text"]:focus {
                             <div class="input-row">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
                                 <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
+                            </div>
+                            <div class="input-row">
+                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+                                <div class="field-group"><label>Forest Identifier</label><input type="text" data-key="forest" value="FOREST"></div>
                             </div>
                         </div>
 
@@ -724,12 +771,10 @@ const leftColHandle = document.getElementById('left-col-handle');
 const rightColHandle = document.getElementById('right-col-handle');
 const centerRowHandle = document.getElementById('center-row-handle');
 
-// Base structural metrics tracking targets
 let currentLeftWidth = 280;
 let currentRightWidth = 420;
 let currentConsoleHeight = 120;
 
-// 1. Left-Right Column Resizing (Left Handle)
 leftColHandle.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     leftColHandle.classList.add('dragging');
@@ -738,7 +783,6 @@ leftColHandle.addEventListener('pointerdown', function(e) {
 
     function onPointerMove(ev) {
         const deltaX = ev.clientX - startX;
-        // Bound calculation bounds (150px min, don't clip into right side contents)
         currentLeftWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentRightWidth - 300));
         mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
     }
@@ -753,7 +797,6 @@ leftColHandle.addEventListener('pointerdown', function(e) {
     window.addEventListener('pointerup', onPointerUp);
 });
 
-// 2. Right-Left Column Resizing (Right Handle)
 rightColHandle.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     rightColHandle.classList.add('dragging');
@@ -761,7 +804,7 @@ rightColHandle.addEventListener('pointerdown', function(e) {
     const startWidth = currentRightWidth;
 
     function onPointerMove(ev) {
-        const deltaX = startX - ev.clientX; // Inverted vector tracking direction change logic
+        const deltaX = startX - ev.clientX; 
         currentRightWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentLeftWidth - 300));
         mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
     }
@@ -776,7 +819,6 @@ rightColHandle.addEventListener('pointerdown', function(e) {
     window.addEventListener('pointerup', onPointerUp);
 });
 
-// 3. Top-Bottom/Bottom-Top Split Row Resizing (Center Handle)
 centerRowHandle.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     centerRowHandle.classList.add('dragging');
@@ -784,7 +826,7 @@ centerRowHandle.addEventListener('pointerdown', function(e) {
     const startHeight = currentConsoleHeight;
 
     function onPointerMove(ev) {
-        const deltaY = startY - ev.clientY; // Inverted configuration maps height increase logic on pull up
+        const deltaY = startY - ev.clientY; 
         currentConsoleHeight = Math.max(80, Math.min(startHeight + deltaY, centerWorkspace.clientHeight - 100));
         centerWorkspace.style.gridTemplateRows = `1fr 6px ${currentConsoleHeight}px`;
     }
@@ -799,16 +841,15 @@ centerRowHandle.addEventListener('pointerdown', function(e) {
     window.addEventListener('pointerup', onPointerUp);
 });
 
-
-// Header readout sync
 document.getElementById('zone').addEventListener('change', function() {
     const pips = document.querySelectorAll('.header-readout .pip-value');
-    if (pips[1]) pips[1].innerText = this.options[this.selectedIndex].text;
+    if (pips[1]) pips[1].innerText = "EPSG:326" + this.value;
 });
 
-let mode = "A";
+// Global Modules Tracking State
+let mode = "A";        
+let groupCSubMode = "A"; 
 
-// Interface Switching Logic
 function switchTab(targetMode) {
     mode = targetMode;
     
@@ -833,7 +874,26 @@ function switchTab(targetMode) {
     if (headerModule) headerModule.innerText = labels[targetMode];
 }
 
-// Client-Side Shapefile Archival Scan
+// Group C Sub-mode Visibility Router for Flat Input Contexts (Mode A vs Mode B Column Specifications)
+function setGroupCSubMode(subMode) {
+    groupCSubMode = subMode;
+    
+    document.querySelectorAll('#c-mode-selector-wrapper .toggle-option').forEach(opt => opt.classList.remove('active-toggle'));
+    document.getElementById(`c-toggle-${subMode}`).classList.add('active-toggle');
+    
+    const forestWrapper = document.getElementById('c-forest-wrapper');
+    const compartmentWrapper = document.getElementById('c-compartment-wrapper');
+
+    if (subMode === "B") {
+        if(forestWrapper) forestWrapper.classList.remove('hidden');
+        if(compartmentWrapper) compartmentWrapper.classList.remove('hidden');
+    } else {
+        // Mode A specifies flat vector coordinates only, hiding sub-segmented attributes
+        if(forestWrapper) forestWrapper.classList.add('hidden');
+        if(compartmentWrapper) compartmentWrapper.classList.add('hidden');
+    }
+}
+
 async function extractZipShp(file) {
     const zip = await JSZip.loadAsync(file);
     const shpFiles = [];
@@ -853,19 +913,24 @@ document.querySelectorAll(".file").forEach(input => {
         const activeCard = this.closest(".group-content-card");
         const activeMode = activeCard.id.replace("card-","");
         let dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
+        
+        // Group C Targeted Interface DOM Hooks
+        const modeSelector = document.getElementById("c-mode-selector-wrapper");
         const shpContainer = document.getElementById("shp-select-container");
+        const row1 = document.getElementById("c-vector-row-1");
+        const row2 = document.getElementById("c-vector-row-2");
+        const compWrapper = document.getElementById("c-compartment-wrapper");
+        const forestWrapper = document.getElementById("c-forest-wrapper");
 
         if (activeMode === "C") {
-            const xField = activeCard.querySelector('[data-key="X"]')?.closest(".field-group");
-            const yField = activeCard.querySelector('[data-key="Y"]')?.closest(".field-group");
-            const orderField = activeCard.querySelector('[data-key="Order"]')?.closest(".field-group");
-
             if (file.name.toLowerCase().endsWith(".zip")) {
-                shpContainer.style.display = "block";
-
-                if (xField) xField.style.display = "none";
-                if (yField) yField.style.display = "none";
-                if (orderField) orderField.style.display = "none";
+                // UI Mutation Block: Enter Shapefile Pipeline Mode
+                shpContainer.classList.remove("hidden");
+                if (modeSelector) modeSelector.classList.add("hidden");
+                if (row1) row1.classList.add("hidden");
+                if (row2) row2.classList.add("hidden");
+                if (compWrapper) compWrapper.classList.add("hidden");
+                if (forestWrapper) forestWrapper.classList.add("hidden");
 
                 dzText.innerText = `📦 Reading ZIP Layer Bundle...`;
                 dzText.style.color = "var(--white-snow)";
@@ -901,11 +966,14 @@ document.querySelectorAll(".file").forEach(input => {
                 return;
             }
 
-            shpContainer.style.display = "none";
-
-            if (xField) xField.style.display = "block";
-            if (yField) yField.style.display = "block";
-            if (orderField) orderField.style.display = "block";
+            // UI Mutation Block: Restore Table Mapping Fields
+            if (modeSelector) modeSelector.classList.remove("hidden");
+            if (row1) row1.classList.remove("hidden");
+            if (row2) row2.classList.remove("hidden");
+            shpContainer.classList.add("hidden");
+            
+            // Re-trigger layout alignment matching the current toggle state
+            setGroupCSubMode(groupCSubMode);
         }
 
         dzText.innerText = `🌿 Active Table: ${file.name}`;
@@ -931,72 +999,113 @@ document.querySelectorAll(".file").forEach(input => {
     });
 });
 
+// ================= POST EXECUTION PIPELINE PROCESSING CONTROL =================
 async function runPipeline() {
     let activeCard = document.getElementById(`card-${mode}`);
     let fileInput = activeCard.querySelector(".file");
     let file = fileInput.files[0];
 
-    if(!file) return alert("System Notice: Configuration requires a valid source spatial layout layer target file.");
+    if(!file) {
+        return alert("System Notice: Configuration requires a valid source spatial layout layer target");
+    }
 
-    let radialBar = document.getElementById("radial-bar");
-    let headline = document.getElementById("status-headline");
-    let subline = document.getElementById("status-sub");
-    let download = document.getElementById("download-btn");
-    let img = document.getElementById("output-img");
-    let notice = document.getElementById("empty-notice");
-    let meta = document.getElementById("run-meta");
+    const isZip = file.name.toLowerCase().endsWith(".zip");
 
-    let circumference = 2 * Math.PI * 24;
-    radialBar.style.strokeDashoffset = circumference - (40 / 100) * circumference;
-    headline.innerText = "Analyzing Coordinates...";
-    subline.innerText = "Mapping vector geometries";
+    // Operational Safeguard: Ensure valid layer identification inside ZIP packages
+    if (mode === "C" && isZip) {
+        const shp = document.getElementById("shp-select").value;
+        if (!shp) {
+            return alert("Please select a target shapefile inside the structural archive before running pipeline process.");
+        }
+    }
 
     let fd = new FormData();
     fd.append("file", file);
-    fd.append("mode", mode);
+    
+    // Pass execution matrix paths safely to endpoint context targets
+    if (mode === "C") {
+        fd.append("mode", mode);
+        fd.append("base_mode", isZip ? "A" : groupCSubMode); 
+    } else {
+        fd.append("mode", mode);
+    }
+    
     fd.append("zone", document.getElementById("zone").value);
 
     let mapping = {};
+    const directKeys = ["w", "h", "rows", "cols", "selected_shp"];
+
+    // Refactored Polymorphic Payload Mapping Construction Engine
     activeCard.querySelectorAll("select, input").forEach(field => {
         let key = field.getAttribute("data-key");
         if (!key || field.type === "file") return;
-        
-        if (["w", "h", "rows", "cols", "forest", "Forest", "selected_shp"].includes(key)) {
-            fd.append(key.toLowerCase(), field.value);
+
+        // Extract DOM field mapping structural identifiers
+        const rawKey = key;
+        key = key.toLowerCase();
+
+        // Skip internal/hidden input variables that aren't relevant to current file type context
+        if (mode === "C") {
+            if (isZip && !directKeys.includes(key)) return; 
+            if (!isZip && key === "selected_shp") return;
+            if (!isZip && groupCSubMode === "A" && ["forest", "compartment"].includes(key)) return;
+        }
+
+        if (directKeys.includes(key)) {
+            fd.append(key, field.value);
         } else {
-            mapping[key] = field.value;
+            // Retain absolute case matching for structural mapping keys (e.g., "X", "Y", "Order", "Forest", "Compartment")
+            mapping[rawKey] = field.value;
         }
     });
+
     fd.append("mapping", JSON.stringify(mapping));
 
+    // Client Execution States Visualizer Engine UI Logic
+    const radialBar = document.getElementById("radial-bar");
+    const headline = document.getElementById("status-headline");
+    const subline = document.getElementById("status-sub");
+    
+    headline.innerText = "Processing Layer...";
+    subline.innerText = "Computing Topologies";
+    if(radialBar) radialBar.style.strokeDashoffset = "75"; 
+
     try {
-        let res = await fetch("/upload", { method: "POST", body: fd });
-        if(!res.ok) {
-            headline.innerText = "Execution Fault";
-            subline.innerText = "Algorithmic transformation aborted";
-            radialBar.style.strokeDashoffset = circumference;
-            return;
+        let response = await fetch("/run", { method: "POST", body: fd });
+        let result = await response.json();
+
+        if(result.success || result.status === "success") {
+            headline.innerText = "Process Complete";
+            subline.innerText = "Matrix Balanced";
+            if(radialBar) radialBar.style.strokeDashoffset = "0";
+
+            // Visualizer canvas asset pipeline mapping updates
+            const outImg = document.getElementById("output-img");
+            const notice = document.getElementById("empty-notice");
+            const dlBtn = document.getElementById("download-btn");
+            const meta = document.getElementById("run-meta");
+
+            if(outImg && result.image_url) {
+                outImg.src = result.image_url + "?t=" + new Date().getTime();
+                outImg.style.display = "block";
+                if(notice) notice.style.display = "none";
+            }
+            if(dlBtn && result.zip_url) {
+                dlBtn.href = result.zip_url;
+                dlBtn.style.display = "inline-block";
+            }
+            if(meta && result.metrics) {
+                meta.innerText = `Points: ${result.metrics.points || 0} | Area: ${result.metrics.area || 0}`;
+            }
+        } else {
+            throw new Error(result.error || "Execution Pipeline Failure");
         }
-
-        let data = await res.json();
-
-        radialBar.style.strokeDashoffset = 0;
-        headline.innerText = "Pipeline Finalized";
-        subline.innerText = "Process complete";
-
-        download.href = data.download;
-        download.style.display = "inline-block";
-
-        img.src = "/outputs/" + data.run_id + "/output.png?t=" + Date.now();
-        img.style.display = "block";
-        notice.style.display = "none";
-
-        let now = new Date();
-        meta.innerText = `Run ID: ${data.run_id} | ${now.toTimeString().split(' ')[0]}`;
-    } catch(err) {
-        headline.innerText = "Socket Timeout";
-        subline.innerText = "Core matrix node unreached";
-        radialBar.style.strokeDashoffset = circumference;
+    } catch (err) {
+        console.error(err);
+        headline.innerText = "Engine Error";
+        subline.innerText = "Pipeline Interrupted";
+        if(radialBar) radialBar.style.strokeDashoffset = "150.7";
+        alert(`Core Execution Exception: ${err.message}`);
     }
 }
 </script>
