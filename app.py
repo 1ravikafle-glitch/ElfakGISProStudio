@@ -99,7 +99,7 @@ def resolve_col(df, mapping, key):
         )
 
     for c in cols:
-        if c == key.lower():
+        if key.lower() in c:
             return c
 
     raise ValueError(
@@ -185,12 +185,15 @@ def group_b(df, crs, out, mapping):
             coords = list(zip(cg[x], cg[y]))
 
             if len(coords) < 3:
-                continue
+                raise ValueError(f"Not enough points in Forest={f}, Compartment={c}")
 
             if coords[0] != coords[-1]:
                 coords.append(coords[0])
 
             poly = Polygon(coords)
+
+            if not poly.is_valid:
+                poly = poly.buffer(0)
             line = LineString(coords)
 
             polys.append({
@@ -220,13 +223,13 @@ def group_b(df, crs, out, mapping):
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
     if not poly_gdf.empty:
-        poly_gdf.to_file(...)
+        poly_gdf.to_file(os.path.join(out, "polygon.shp"))
 
     if not line_gdf.empty:
-        line_gdf.to_file(...)
+        line_gdf.to_file(os.path.join(out, "line.shp"))
 
     if not pts_gdf.empty:
-        pts_gdf.to_file(...)
+        pts_gdf.to_file(os.path.join(out, "points.shp"))
 
     return poly_gdf, line_gdf, pts_gdf
 
@@ -408,21 +411,17 @@ def group_c(file, crs, w, h, rows, cols, out,
         pts_gdf.to_file(os.path.join(out, "sample.shp"))
 
     # Excel export
-    excel_df = pd.DataFrame({
+    if pts_gdf.empty:
+        raise ValueError("No valid sample points generated")
+    if not pts_gdf.empty:
+        excel_df = pd.DataFrame({
         "SN": pts_gdf["SN"],
         "X": pts_gdf.geometry.x,
         "Y": pts_gdf.geometry.y
     })
 
-    excel_df.to_excel(
-        os.path.join(out, "sample_points.xlsx"),
-        index=False
-    )
-
-    excel_df.to_csv(
-        os.path.join(out, "sample_points.csv"),
-        index=False
-    )
+    excel_df.to_excel(os.path.join(out, "sample_points.xlsx"),index=False)
+    excel_df.to_csv(os.path.join(out, "sample_points.csv"),index=False)
 
 
 # ================= GROUP D (FIXED CLEAN VERSION) =================
