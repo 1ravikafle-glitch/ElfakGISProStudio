@@ -385,6 +385,19 @@ body::before {
     letter-spacing: 0.08em;
 }
 
+.vector-badge {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #0d9488;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 select, input[type="number"], input[type="text"] {
     width: 100%;
     background: rgba(255, 255, 255, 0.7);
@@ -586,7 +599,7 @@ input[type="text"]:focus {
         </div>
         <div class="header-readout">
             <div class="pip"><span class="pip-dot"></span><span>Engine Status</span><span class="pip-value">Online</span></div>
-            <div class="pip"><span>Projection</span><span class="pip-value">EPSG:32644</span></div>
+            <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs">EPSG:32644</span></div>
             <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
         </div>
     </header>
@@ -604,7 +617,7 @@ input[type="text"]:focus {
                 <div style="margin-top: 35px;">
                     <div class="field-group">
                         <label>Target GIS Projection</label>
-                        <select id="zone">
+                        <select id="zone" onchange="document.getElementById('header-crs').textContent = 'EPSG:326' + this.value">
                             <option value="44">UTM Zone 44N (EPSG:32644)</option>
                             <option value="45">UTM Zone 45N (EPSG:32645)</option>
                         </select>
@@ -664,7 +677,7 @@ input[type="text"]:focus {
                         <div class="group-content-card" id="card-C">
                             <div class="cyber-dropzone">
                                 <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
-                                <input type="file" class="file">
+                                <input type="file" class="file" id="file-c">
                             </div>
 
                             <div id="c-dynamic-content">
@@ -676,29 +689,29 @@ input[type="text"]:focus {
                                     </div>
                                 </div>
 
-                                <div class="field-group hidden" id="shp-select-container">
-                                    <label>Available Layers</label>
-                                    <select id="shp-select"></select>
-                                </div>
-
-                                <div class="input-row" id="c-vector-row-1">
-                                    <div class="field-group"><label>X</label><select data-key="X"></select></div>
-                                    <div class="field-group"><label>Y</label><select data-key="Y"></select></div>
-                                </div>
-                                <div class="input-row" id="c-vector-row-2">
-                                    <div class="field-group"><label>Order</label><select data-key="Order"></select></div>
-                                    <div class="field-group" id="c-forest-wrapper"><label>Forest</label><select data-key="Forest"></select></div>
-                                </div>
-
-                                <div style="margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 10px;">
-                                    <label style="font-size: 9px; color: var(--mint);">Grid Parameters (Sampling Density)</label>
-                                    <div class="input-row">
-                                        <div class="field-group"><label>Width (m)</label><input type="number" data-key="w" value="50"></div>
-                                        <div class="field-group"><label>Height (m)</label><input type="number" data-key="h" value="50"></div>
+                                <div id="c-zip-notice" class="field-group hidden">
+                                    <div class="vector-badge">
+                                        <div style="font-weight: 600; margin-bottom: 2px;">📦 Archive Bundle Map Detected</div>
+                                        <div style="font-size: 10px; opacity: 0.8; margin-bottom: 8px;">Skipping XY matching. Select target layer from the package:</div>
+                                        
+                                        <div class="field-group" style="width: 100%;">
+                                            <label style="color: #064e3b;">Target Vector Layer (.shp)</label>
+                                            <select id="c-shp-selector" style="background: #ffffff; border-color: rgba(16, 185, 129, 0.4); color: #064e3b;"></select>
+                                        </div>
                                     </div>
-                                    <div class="input-row">
-                                        <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
-                                        <div class="field-group"><label>Cols</label><input type="number" data-key="cols" value="10"></div>
+                                </div>
+
+                                <div id="c-coordinate-fields-container">
+                                    <div class="input-row" id="c-vector-row-1">
+                                        <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
+                                        <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
+                                    </div>
+                                    <div class="input-row" id="c-vector-row-2">
+                                        <div class="field-group"><label>Order Vector</label><select data-key="Order"></select></div>
+                                        <div class="field-group hidden" id="c-forest-wrapper">
+                                            <label>Forest Identifier</label>
+                                            <select data-key="Forest"></select>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -763,80 +776,82 @@ input[type="text"]:focus {
 </div>
 
 <script>
-let mode = "A";
+let activeModule = "A"; 
+let groupCSubMode = "A"; 
 
-/* TAB SWITCH */
+const BACKEND_URL = window.location.origin;
+
 function switchTab(t){
-    mode = t;
-
-    document.querySelectorAll(".group-content-card")
-        .forEach(c => c.classList.remove("active-card"));
-
+    activeModule = t;
+    document.querySelectorAll(".group-content-card").forEach(c => c.classList.remove("active-card"));
     document.getElementById("card-"+t).classList.add("active-card");
 
-    document.querySelectorAll(".tree-node")
-        .forEach((n,i)=>{
-            n.classList.toggle("active", ["A","B","C","D"][i]===t);
-        });
+    document.querySelectorAll(".tree-node").forEach((n,i)=>{
+        n.classList.toggle("active", ["A","B","C","D"][i]===t);
+    });
 
-    document.querySelectorAll(".matrix-tab")
-        .forEach(tab => {
-            tab.classList.toggle("active-tab", tab.id === "tab-" + t);
-        });
+    document.querySelectorAll(".matrix-tab").forEach(tab => {
+        tab.classList.toggle("active-tab", tab.id === "tab-" + t);
+    });
 
-    document.getElementById("header-module").textContent =
-        t + (t==="A"?" · Boundary Whole":" · GIS Mode");
+    let displayLabels = {
+        "A": "A · Boundary Whole",
+        "B": "B · Segment Forest",
+        "C": "C · Sample Plot Workspace",
+        "D": "D · Complex Version A"
+    };
+    document.getElementById("header-module").textContent = displayLabels[t] || t;
 }
 
-/* SUB MODE FOR LOGIC PACKAGE C */
 function setGroupCSubMode(subMode) {
+    groupCSubMode = subMode;
     document.getElementById('c-toggle-A').classList.toggle('active-toggle', subMode === 'A');
     document.getElementById('c-toggle-B').classList.toggle('active-toggle', subMode === 'B');
+    
+    const fileInp = document.getElementById('file-c');
+    const isZip = fileInp && fileInp.files[0] && fileInp.files[0].name.toLowerCase().endsWith('.zip');
+    const forestWrapper = document.getElementById('c-forest-wrapper');
+
+    if (subMode === 'B' && !isZip) {
+        forestWrapper.classList.remove('hidden');
+    } else {
+        forestWrapper.classList.add('hidden');
+    }
 }
 
-/* NORMALIZE */
 function norm(c){
     return c.toLowerCase().replace(/[^a-z0-9]/g,"");
 }
 
-/* FIXED AUTO DETECT (X/Y/S.N FIX) */
 function detect(cols){
     let map={X:null,Y:null,Order:null,Forest:null,Compartment:null};
-
     for(let c of cols){
         let n=norm(c);
-
         if(!map.X && ["x","east","easting","lon","longitude","lng"].includes(n)) map.X=c;
         if(!map.Y && ["y","north","northing","lat","latitude"].includes(n)) map.Y=c;
         if(!map.Order && ["sn","sno","id","index","order","seq","rowid","fid"].includes(n)) map.Order=c;
-        if(!map.Forest && n.includes("forest")) map.Forest=c;
+        if(!map.Forest && (n.includes("forest") || n.includes("compartment") || n.includes("comp"))) map.Forest=c;
         if(!map.Compartment && n.includes("comp")) map.Compartment=c;
     }
-
     return map;
 }
 
-/* FILL DROPDOWNS */
 function fill(card, cols){
     const m=detect(cols);
-
     card.querySelectorAll("select").forEach(sel=>{
-        if(sel.id === "shp-select") return; // Skip internal system arrays
+        if(sel.id === "c-shp-selector") return; // Keep the shape selector isolated
         sel.innerHTML="";
-
         cols.forEach(c=>{
             let o=document.createElement("option");
-            o.value=c;
-            o.textContent=c;
+            o.value=c; o.textContent=c;
             sel.appendChild(o);
         });
-
         let k=sel.dataset.key;
         if(m[k]) sel.value=m[k];
     });
 }
 
-/* FILE HANDLER (FIXED SAFE) */
+/* TRACK INPUT ASSIGNMENTS AND UNPACK ZIP FOR SHAPEFILES */
 document.querySelectorAll(".file").forEach(inp=>{
     inp.onchange=async function(){
         let file=this.files[0];
@@ -845,6 +860,54 @@ document.querySelectorAll(".file").forEach(inp=>{
         let card=this.closest(".group-content-card");
         let dzText = card.querySelector(".dz-text");
         if(dzText) dzText.textContent = "📄 " + file.name;
+
+        // Group C Advanced Zip Sniffer Engine Routing
+        if (card.id === "card-C") {
+            const coordFields = document.getElementById("c-coordinate-fields-container");
+            const zipNotice = document.getElementById("c-zip-notice");
+            const shpSelector = document.getElementById("c-shp-selector");
+
+            if (file.name.toLowerCase().endsWith(".zip")) {
+                coordFields.classList.add("hidden");
+                zipNotice.classList.remove("hidden");
+                shpSelector.innerHTML = "<option>Reading bundle contents...</option>";
+
+                try {
+                    // Inspect the contents inside the uploaded archive using JSZip
+                    const zipData = await file.arrayBuffer();
+                    const zip = await JSZip.loadAsync(zipData);
+                    
+                    let shpFiles = [];
+                    zip.forEach((relativePath, zipEntry) => {
+                        if (relativePath.toLowerCase().endsWith('.shp') && !zipEntry.dir) {
+                            shpFiles.push(relativePath);
+                        }
+                    });
+
+                    shpSelector.innerHTML = "";
+                    if (shpFiles.length === 0) {
+                        let opt = document.createElement("option");
+                        opt.textContent = "⚠️ No .shp files found inside the ZIP archive";
+                        shpSelector.appendChild(opt);
+                    } else {
+                        shpFiles.forEach(path => {
+                            let opt = document.createElement("option");
+                            opt.value = path;
+                            opt.textContent = path;
+                            shpSelector.appendChild(opt);
+                        });
+                    }
+                } catch (err) {
+                    console.error("ZIP engine unpacking fault: ", err);
+                    shpSelector.innerHTML = "<option>Failed to extract archive files map</option>";
+                }
+                return; 
+            } else {
+                coordFields.classList.remove("hidden");
+                zipNotice.classList.add("hidden");
+                setGroupCSubMode(groupCSubMode); 
+            }
+        }
 
         let cols=["X","Y","Order","Forest","Compartment"];
 
@@ -856,30 +919,38 @@ document.querySelectorAll(".file").forEach(inp=>{
                     cols=firstLine.split(",").map(x=>x.trim().replace(/^["']|["']$/g, ""));
                 }
             } catch(e) {
-                console.error("Error reading columns, using system defaults", e);
+                console.error("Column mapping parser error.", e);
             }
         }
         fill(card,cols);
     }
 });
 
-/* BUILD MAPPING (FIXED X,Y,S.N ISSUE) */
-function mapping(card){
+function buildMappingPayload(card){
     let m={};
+    if (card.id === "card-C") {
+        const isZipHidden = document.getElementById("c-zip-notice").classList.contains("hidden");
+        if (!isZipHidden) {
+            // Attach selected interior layer structural target path for background routing
+            m["target_shp"] = document.getElementById("c-shp-selector").value;
+            return m;
+        }
+    }
     card.querySelectorAll("select[data-key]").forEach(s=>{
-        if(s.value) m[s.dataset.key]=s.value;
+        if(s.value && !s.closest('.hidden')) {
+            m[s.dataset.key]=s.value;
+        }
     });
     return m;
 }
 
-/* RUN PIPELINE */
 async function runPipeline(){
-    let card=document.getElementById("card-"+mode);
+    let card=document.getElementById("card-"+activeModule);
     let fileInput=card.querySelector("input[type=file]");
     let file=fileInput ? fileInput.files[0] : null;
 
     if(!file){
-        alert("Upload file first");
+        alert("Please map a valid structural input file configuration first.");
         return;
     }
 
@@ -889,16 +960,22 @@ async function runPipeline(){
 
     headline.textContent = "Processing...";
     sub.textContent = "Running GIS Pipeline Engine";
-    radial.style.strokeDashoffset = "75"; // Animate progress visualizer
+    radial.style.strokeDashoffset = "75"; 
 
     let fd=new FormData();
     fd.append("file",file);
-    fd.append("mode",mode);
+    
+    if(activeModule === "C") {
+        fd.append("mode", groupCSubMode); 
+    } else {
+        fd.append("mode", activeModule);
+    }
+    
     fd.append("zone",document.getElementById("zone").value);
-    fd.append("mapping",JSON.stringify(mapping(card)));
+    fd.append("mapping",JSON.stringify(buildMappingPayload(card)));
 
     try {
-        let res=await fetch("/upload",{method:"POST",body:fd});
+        let res=await fetch(`${BACKEND_URL}/upload`,{method:"POST",body:fd});
         let data=await res.json();
 
         if(data.error){
@@ -911,27 +988,21 @@ async function runPipeline(){
 
         headline.textContent = "Process Complete";
         sub.textContent = "Topology successfully balanced";
-        radial.style.strokeDashoffset = "0"; // Complete processing bar ring
+        radial.style.strokeDashoffset = "0"; 
 
-        // Since Group C skips image rendering in the backend, conditionally hide notice or update image source
-        if(mode === "C") {
-            document.getElementById("output-img").style.display="none";
-            document.getElementById("empty-notice").style.display="block";
-            document.getElementById("empty-notice").textContent = "Shapefile Export Packages Generated Successfully.";
-        } else {
-            document.getElementById("output-img").src = "/outputs/"+data.run_id+"/output.png";
-            document.getElementById("output-img").style.display="block";
-            document.getElementById("empty-notice").style.display="none";
-        }
+        const previewImg = document.getElementById("output-img");
+        previewImg.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${new Date().getTime()}`;
+        previewImg.style.display = "block";
+        document.getElementById("empty-notice").style.display = "none";
 
         let dlBtn = document.getElementById("download-btn");
-        dlBtn.href=data.download;
-        dlBtn.style.display="inline-block";
+        dlBtn.href = data.download.startsWith("http") ? data.download : `${BACKEND_URL}${data.download}`;
+        dlBtn.style.display = "inline-block";
 
         document.getElementById("run-meta").textContent = "ID: " + data.run_id.substring(0,8) + "... | Status: Vector Export Ready";
 
     } catch(err) {
-        alert("Pipeline communication dropped.");
+        alert("Pipeline engine connection timeout.");
         headline.textContent = "Connection Lost";
         sub.textContent = "Check API status";
         radial.style.strokeDashoffset = "150.7";
