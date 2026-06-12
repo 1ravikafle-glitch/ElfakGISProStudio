@@ -1097,17 +1097,14 @@ document.querySelectorAll(".file").forEach(input => {
         const activeCard = this.closest(".group-content-card");
         const activeMode = activeCard.id.replace("card-", "");
 
-        globalFileCache = file;
-
         const fileType = getFileType(file);
 
-        // store per mode
         if (!window.globalFiles) window.globalFiles = {};
         window.globalFiles[activeMode] = file;
 
         const dz = activeCard.querySelector(".dz-text");
 
-        // ================= ARCHIVE =================
+        // ================= ZIP =================
         if (fileType === "archive") {
 
             if (activeMode !== "C") {
@@ -1127,11 +1124,6 @@ document.querySelectorAll(".file").forEach(input => {
 
             const shpFiles = await extractZipShp(file);
 
-            if (!shpFiles.length) {
-                shpSelect.innerHTML = `<option>No .shp found</option>`;
-                return;
-            }
-
             shpFiles.forEach(f => {
                 const opt = document.createElement("option");
                 opt.value = f;
@@ -1142,7 +1134,7 @@ document.querySelectorAll(".file").forEach(input => {
             return;
         }
 
-        // ================= EXCEL/CSV =================
+        // ================= CSV / XLSX =================
         dz.innerHTML = `📂 Selected: <b>${file.name}</b>`;
         dz.classList.add("loaded-success");
 
@@ -1156,38 +1148,23 @@ document.querySelectorAll(".file").forEach(input => {
 
         const cols = await res.json();
 
-        if (!Array.isArray(cols) || cols.length === 0) {
-    alert("No columns detected from file");
-    return;
-}
+        if (!Array.isArray(cols)) {
+            alert("No columns detected");
+            return;
+        }
 
-console.log("Detected columns:", cols);
-
-activeCard.querySelectorAll("select[data-key]").forEach(sel => {
-    sel.innerHTML = `<option value="">Select field</option>`;
-
-    cols.forEach(c => {
-        const opt = document.createElement("option");
-        opt.value = c;
-        opt.textContent = c;
-        sel.appendChild(opt);
-    });
-
-    sel.style.display = "block";
-});
-
-        activeCard.querySelectorAll("select").forEach(sel => {
+        activeCard.querySelectorAll("select[data-key]").forEach(sel => {
             sel.innerHTML = `<option value="">Select field</option>`;
             cols.forEach(c => {
-                sel.innerHTML += `<option value="${c}">${c}</option>`;
-    s.style.opacity = "1";
-    s.style.visibility = "visible";
-    s.style.display = "block";
-        activeCard.querySelectorAll("select").forEach(s => {
-    
-});
+                const opt = document.createElement("option");
+                opt.value = c;
+                opt.textContent = c;
+                sel.appendChild(opt);
             });
+
+            sel.style.display = "block";
         });
+
     });
 });
 
