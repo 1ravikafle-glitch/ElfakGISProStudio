@@ -58,21 +58,40 @@ def normalize_order(df):
             df = df.rename(columns={c: "Order"})
     return df
 
+# ================= CANONICAL SCHEMA =================
+CANONICAL_SCHEMA = {
+    "X": ["x", "longitude", "lon", "easting"],
+    "Y": ["y", "latitude", "lat", "northing"],
+    "Order": ["order", "s.n", "sn", "s.n.", "serial", "sno"],
+    "Forest": ["forest"],
+    "Compartment": ["compartment"]
+}
+
 
 # ================= SAFE COLUMN RESOLVER =================
 def resolve_col(df, mapping, key, fallback_list):
+    # 1. UI mapping always wins
     if mapping and key in mapping and mapping[key]:
         return mapping[key]
 
+    # 2. canonical schema match
     cols_lower = {c.lower().strip(): c for c in df.columns}
 
+    if key in CANONICAL_SCHEMA:
+        for alias in CANONICAL_SCHEMA[key]:
+            if alias in cols_lower:
+                return cols_lower[alias]
+
+    # 3. fallback list (last safety layer)
     for f in fallback_list:
         if f.lower() in cols_lower:
             return cols_lower[f.lower()]
 
-    # last fallback
+    # 4. final safe fallback (NO KeyError, no broken indentation)
     if fallback_list:
-        return fallback_list[0]
+        fallback = fallback_list[0].lower()
+        if fallback in cols_lower:
+            return cols_lower[fallback]
 
     raise ValueError(f"Missing column for {key}")
 
