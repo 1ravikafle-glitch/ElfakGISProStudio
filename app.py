@@ -75,31 +75,30 @@ def normalize_columns(df):
     return df
 
 # ================= SAFE COLUMN RESOLVER =================
+def normalize_key(col):
+    return str(col).strip().lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
+
+
 def resolve_col(df, mapping, key):
-
     df = normalize_columns(df)
-    cols = set(df.columns)
+    cols = {normalize_key(c): c for c in df.columns}
 
+    # UI mapping
     if mapping and key in mapping and mapping[key]:
-        col = (
-            str(mapping[key])
-            .strip()
-            .lower()
-            .replace(" ", "")
-            .replace("-", "")
-            .replace("_", "")
-        )
+        target = normalize_key(mapping[key])
 
-        if col in cols:
-            return col
+        if target in cols:
+            return cols[target]
 
         raise ValueError(
-            f"UI mapped column '{mapping[key]}' not found"
+            f"UI mapped column '{mapping[key]}' not found. Available: {list(df.columns)}"
         )
 
-    for c in cols:
-        if c.strip().lower() == key.strip().lower():
-            return c
+    # fallback auto-detect
+    key_norm = normalize_key(key)
+    for k, original in cols.items():
+        if k == key_norm:
+            return original
 
     raise ValueError(
         f"Missing UI mapping for required field: '{key}'"
@@ -395,13 +394,25 @@ def group_c(file, crs, w, h, rows, cols, out,
 
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-    # ===================== SAFE LINE GENERATION =====================
-    line_gdf = gpd.GeoDataFrame(
-        [{"geometry": LineString(p.exterior.coords)} for p in polygons if p and not p.is_empty],
-        crs=crs
-    )
+        # ===================== SAFE LINE GENERATION =====================
+    lines = []
 
-    # ===================== OUTPUT =====================
+    for p in polygons:
+        if p is None or p.is_empty:
+            continue
+
+        if p.geom_type == "Polygon":
+            lines.append({
+                "geometry": LineString(p.exterior.coords)
+            })
+
+        elif p.geom_type == "MultiPolygon":
+            for sub in p.geoms:
+                lines.append({
+                    "geometry": LineString(sub.exterior.coords)
+                })
+
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
     # ===================== OUTPUT =====================
 
     if not poly_gdf.empty:
