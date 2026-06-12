@@ -215,7 +215,7 @@ def group_c(file, crs, w, h, rows, cols, out,
 
             for root, _, files in os.walk(temp_dir):
                 for f in files:
-                    if f.lower().endswith(".shp") and f == os.path.basename(selected_shp):
+                    if f.lower().endswith(".shp") and os.path.basename(f) == os.path.basename(selected_shp):
                         shp_path = os.path.join(root, f)
                         break
                 if shp_path:
@@ -318,7 +318,7 @@ def group_c(file, crs, w, h, rows, cols, out,
         crs=crs
     )
 
-    union = poly_gdf.unary_union
+    union = poly_gdf.geometry.union_all()
     minx, miny, maxx, maxy = union.bounds
 
     # ===================== GRID GENERATION =====================
@@ -460,7 +460,17 @@ def upload():
             poly, line, pts = group_b(df, crs, out, mapping)
         elif mode == "C":
             selected_shp = request.form.get("selected_shp")
-            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, selected_shp)
+            base_mode = request.form.get("base_mode", "A")  # ✅ IMPORTANT FIX
+            
+            poly, line, pts = group_c(
+                file,
+                crs,
+                w, h, rows, cols,
+                out,
+                base_mode=base_mode,
+                mapping=mapping,
+                selected_shp=selected_shp
+            )
         else:
             df = read_input(file)
             poly, line, pts = group_d(df, crs, out)
