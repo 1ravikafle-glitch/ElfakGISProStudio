@@ -127,7 +127,7 @@ def group_b(df, crs, out, mapping):
     for f, g in df.groupby(forest_col):
         for c, cg in g.groupby(comp_col):
             cg = cg.sort_values(order)
-            coords = list(zip(cg[x_col], cg[y_col]))
+            coords = list(zip(cg[x], cg[y]))
             if len(coords) < 3:
                 continue
             if coords[0] != coords[-1]:
@@ -229,7 +229,7 @@ def group_c(file, crs, w, h, rows, cols, out,
             for f, g in df.groupby(forest_col):
                 for c, cg in g.groupby(comp_col):
                     cg = cg.sort_values(order_col)
-                    coords = list(zip(cg[x], cg[y]))
+                    coords = list(zip(cg[x_col], cg[y_col]))
                     if len(coords) < 3:
                         continue
                     if coords[0] != coords[-1]:
@@ -471,31 +471,42 @@ def upload():
 # ================= DOWNLOAD =================
 @app.route("/download/<run_id>")
 def download(run_id):
+
     folder = os.path.join(OUTPUT, run_id)
+
     if not os.path.exists(folder):
         return "Output not found", 404
+
     zip_path = os.path.join(
-    OUTPUT,
-    f"export_{run_id}.zip"
-)
-
-if not os.path.exists(zip_path):
-
-    shutil.make_archive(
-        zip_path.replace(".zip", ""),
-        "zip",
-        root_dir=folder
+        OUTPUT,
+        f"export_{run_id}.zip"
     )
+
+    if not os.path.exists(zip_path):
+
+        shutil.make_archive(
+            zip_path.replace(".zip", ""),
+            "zip",
+            root_dir=folder
+        )
+
+    return send_file(
+        zip_path,
+        as_attachment=True,
+        download_name="gis_export.zip"
     )
-    @app.route("/outputs/<run_id>/<path:filename>")
+
+
+# ================= PREVIEW FILES =================
+@app.route("/outputs/<run_id>/<path:filename>")
 def serve_output(run_id, filename):
+
     folder = os.path.join(OUTPUT, run_id)
 
     if not os.path.exists(folder):
         return "Not found", 404
 
     return send_from_directory(folder, filename)
-    return send_file(zip_path, as_attachment=True, download_name="gis_export.zip")
 
 # ================= HOME =================
 @app.route("/")
