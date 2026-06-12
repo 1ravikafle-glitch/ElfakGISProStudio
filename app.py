@@ -188,63 +188,74 @@ def group_b(df, crs, out, mapping):
 
 
 # ================= GROUP C (UNCHANGED, SAFE) =================
-def group_c(file, crs, w, h, rows, cols, out, selected_shp=None):
+def group_c(file, crs, w, h, rows, cols, out, mapping=None, selected_shp=None):
+    import tempfile
+
     polygons = []
 
+    # ===================== CASE 1: ZIP INPUT =====================
     if file.filename.lower().endswith(".zip"):
-        temp = os.path.join(UPLOAD, f"tmp_{uuid.uuid4()}")
-        os.makedirs(temp, exist_ok=True)
+        temp_dir = os.path.join(UPLOAD, f"tmp_{uuid.uuid4()}")
+        os.makedirs(temp_dir, exist_ok=True)
 
         try:
-            zip_path = os.path.join(temp, "in.zip")
+            zip_path = os.path.join(temp_dir, "input.zip")
             file.save(zip_path)
 
             with zipfile.ZipFile(zip_path) as z:
-                z.extractall(temp)
+                z.extractall(temp_dir)
 
             if not selected_shp:
                 raise ValueError("Please select a shapefile from ZIP")
 
             shp_path = None
-            for root, _, files in os.walk(temp):
+            for root, _, files in os.walk(temp_dir):
                 for f in files:
-                    if f.endswith(selected_shp):
+                    if f == selected_shp or f.endswith(".shp") and f == selected_shp:
                         shp_path = os.path.join(root, f)
                         break
 
             if not shp_path:
-                raise ValueError("Selected shapefile not found")
+                raise ValueError("Shapefile not found in ZIP")
 
             gdf = gpd.read_file(shp_path)
-
             geom = gdf.unary_union
+
             polygons = list(geom.geoms) if geom.geom_type != "Polygon" else [geom]
 
         finally:
-            shutil.rmtree(temp, ignore_errors=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
+    # ===================== CASE 2: CSV/EXCEL INPUT =====================
     else:
         df = normalize_order(read_input(file))
 
-        x = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
-        y = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
+        x_col = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
+        y_col = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
         order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
 
-    # safe sorting (only if column exists)
-    if order_col in df.columns:
         df = df.sort_values(order_col)
 
-    coords = list(zip(df[x], df[y]))
+        coords = list(zip(df[x_col], df[y_col]))
 
-    # close polygon safely
-    if coords and coords[0] != coords[-1]:
-        coords.append(coords[0])
+        if len(coords) < 3:
+            raise ValueError("Not enough points to form polygon")
 
-    polygons = [Polygon(coords)]
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
 
-    poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
+        polygons = [Polygon(coords)]
+
+    # ===================== BUILD GEODATAFRAME =====================
+    poly_gdf = gpd.GeoDataFrame(
+        [{"geometry": p} for p in polygons],
+        crs=crs
+    )
+
     union = poly_gdf.unary_union
-    minx, miny, _, _ = union.bounds
+
+    # ===================== GRID GENERATION =====================
+    minx, miny, maxx, maxy = union.bounds
 
     pts = []
     sn = 1
@@ -253,6 +264,7 @@ def group_c(file, crs, w, h, rows, cols, out, selected_shp=None):
         for c in range(cols):
             x = minx + c * w
             y = miny + r * h
+
             center = Point(x + w / 2, y + h / 2)
 
             if union.contains(center):
@@ -264,14 +276,24 @@ def group_c(file, crs, w, h, rows, cols, out, selected_shp=None):
                 })
                 sn += 1
 
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    # ===================== OUTPUT FILES =====================
     poly_gdf.to_file(os.path.join(out, "poly.shp"))
-    gpd.GeoDataFrame([{"geometry": LineString(p.exterior.coords)} for p in polygons], crs=crs)\
-        .to_file(os.path.join(out, "line.shp"))
-    gpd.GeoDataFrame(pts, crs=crs).to_file(os.path.join(out, "sample.shp"))
+
+    gpd.GeoDataFrame(
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
+        crs=crs
+    ).to_file(os.path.join(out, "line.shp"))
+
+    pts_gdf.to_file(os.path.join(out, "sample.shp"))
 
     return poly_gdf, \
-        gpd.GeoDataFrame([{"geometry": LineString(p.exterior.coords)} for p in polygons], crs=crs), \
-        gpd.GeoDataFrame(pts, crs=crs)
+           gpd.GeoDataFrame(
+               [{"geometry": LineString(p.exterior.coords)} for p in polygons],
+               crs=crs
+           ), \
+           pts_gdf
 
 
 # ================= GROUP D (FIXED LIGHTLY) =================
