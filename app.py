@@ -219,9 +219,14 @@ def group_b(df, crs, out, mapping):
     line_gdf = gpd.GeoDataFrame(lines, crs=crs)
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-    poly_gdf.to_file(os.path.join(out, "polygon.shp"))
-    line_gdf.to_file(os.path.join(out, "line.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
+    if not poly_gdf.empty:
+        poly_gdf.to_file(...)
+
+    if not line_gdf.empty:
+        line_gdf.to_file(...)
+
+    if not pts_gdf.empty:
+        pts_gdf.to_file(...)
 
     return poly_gdf, line_gdf, pts_gdf
 
@@ -391,9 +396,14 @@ def group_c(file, crs, w, h, rows, cols, out,
     )
 
     # ===================== OUTPUT =====================
-    poly_gdf.to_file(os.path.join(out, "poly.shp"))
-    line_gdf.to_file(os.path.join(out, "line.shp"))
-    pts_gdf.to_file(os.path.join(out, "sample.shp"))
+    if not poly_gdf.empty:
+        poly_gdf.to_file(...)
+
+    if not line_gdf.empty:
+        line_gdf.to_file(...)
+
+    if not pts_gdf.empty:
+        pts_gdf.to_file(...)
 
     return poly_gdf, line_gdf, pts_gdf
 
