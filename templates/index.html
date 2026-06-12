@@ -38,7 +38,7 @@ body {
 /* APPLICATION GRID LAYOUT WITH SMOOTH FADE-IN */
 .app-layout {
     display: grid;
-    grid-template-columns: 290px 1fr 490px;
+    grid-template-columns: 280px 1.3fr 420px;
     gap: 20px;
     height: 100vh;
     padding: 20px;
@@ -110,9 +110,10 @@ body {
 /* INTERACTION ARCHITECTURE CORE */
 .workspace-split {
     display: grid;
-    grid-template-rows: 1fr 120px;
+    grid-template-rows: minmax(0, 1fr) 120px;
     gap: 20px;
     height: 100%;
+    min-height: 0;
 }
 
 .matrix-container {
@@ -164,17 +165,18 @@ body {
 
 .config-stack {
     flex: 1;
+    overflow-y: auto;
+    padding-right: 6px;
 }
 
 .group-content-card {
     display: none;
-    height: 100%;
+    flex-direction: column;
+    gap: 14px;
     animation: contentFade 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .group-content-card.active-card {
     display: flex;
-    flex-direction: column;
-    gap: 14px;
 }
 
 @keyframes contentFade {
@@ -404,7 +406,15 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
                         </div>
                         <div class="input-row">
                             <div class="field-group"><label>Point Order Vector</label><select data-key="Order"></select></div>
-                            <div class="field-group"><label>Forest Label Name</label><input type="text" data-key="forest" value="FOREST"></div>
+                            <div class="field-group">
+                                <label>Enter Forest Name</label>
+                                <input
+                                    type="text"
+                                    data-key="forest"
+                                    value="FOREST"
+                                    placeholder="Enter Forest Name"
+                                >
+                            </div>
                         </div>
                     </div>
 
@@ -422,14 +432,58 @@ select:focus, input[type="number"]:focus, input[type="text"]:focus {
                     </div>
 
                     <div class="group-content-card" id="card-C">
-                        <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Zip Shapefile / Excel</span><input type="file" class="file"></div>
-                        <div class="input-row">
-                            <div class="field-group"><label>Cell Width (w)</label><input type="number" data-key="w" value="50"></div>
-                            <div class="field-group"><label>Cell Height (h)</label><input type="number" data-key="h" value="50"></div>
+                        <div class="cyber-dropzone">
+                            <span class="dz-text">✨ Click or Drop Zip Shapefile / Excel</span>
+                            <input type="file" class="file">
                         </div>
+
                         <div class="input-row">
-                            <div class="field-group"><label>Row Extent</label><input type="number" data-key="rows" value="10"></div>
-                            <div class="field-group"><label>Column Extent</label><input type="number" data-key="cols" value="10"></div>
+                            <div class="field-group">
+                                <label>X Coordinate</label>
+                                <select data-key="X"></select>
+                            </div>
+                            <div class="field-group">
+                                <label>Y Coordinate</label>
+                                <select data-key="Y"></select>
+                            </div>
+                        </div>
+
+                        <div class="input-row">
+                            <div class="field-group">
+                                <label>Point Order</label>
+                                <select data-key="Order"></select>
+                            </div>
+                            <div class="field-group">
+                                <label>Forest</label>
+                                <select data-key="Forest"></select>
+                            </div>
+                        </div>
+
+                        <div class="field-group">
+                            <label>Compartment</label>
+                            <select data-key="Compartment"></select>
+                        </div>
+
+                        <div class="input-row">
+                            <div class="field-group">
+                                <label>Cell Width (w)</label>
+                                <input type="number" data-key="w" value="50">
+                            </div>
+                            <div class="field-group">
+                                <label>Cell Height (h)</label>
+                                <input type="number" data-key="h" value="50">
+                            </div>
+                        </div>
+
+                        <div class="input-row">
+                            <div class="field-group">
+                                <label>Rows</label>
+                                <input type="number" data-key="rows" value="10">
+                            </div>
+                            <div class="field-group">
+                                <label>Columns</label>
+                                <input type="number" data-key="cols" value="10">
+                            </div>
                         </div>
                     </div>
 
@@ -508,8 +562,8 @@ document.querySelectorAll(".file").forEach(input => {
         dzText.innerText = `🌿 Active: ${file.name}`;
         dzText.style.color = "var(--border-active)";
 
-        // Shapefile .zip inputs in Group C shouldn't trigger dynamic header scans
-        if(mode === "C" && file.name.toLowerCase().endsWith(".zip")) return;
+        const activeMode = this.closest(".group-content-card").id.replace("card-","");
+        if(activeMode === "C" && file.name.toLowerCase().endsWith(".zip")) return;
 
         let fd = new FormData();
         fd.append("file", file);
