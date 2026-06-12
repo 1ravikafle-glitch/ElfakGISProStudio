@@ -315,16 +315,33 @@ def group_d(df, crs, out):
 # ================= PREVIEW (UNCHANGED) =================
 def preview(poly, line, pts, path, pc, lc, ptc):
     fig, ax = plt.subplots(figsize=(6, 6))
+
     try:
+        # WHITE BACKGROUND
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        # POLYGON (optional outline, keep subtle or same as line)
         if not poly.empty:
-            poly.plot(ax=ax, facecolor="none", edgecolor=pc)
+            poly.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1)
+
+        # LINE → BLACK
         if not line.empty:
-            line.plot(ax=ax, color=lc)
+            line.plot(ax=ax, color="black", linewidth=1.5)
+
+        # POINTS → RED
         if not pts.empty:
-            pts.plot(ax=ax, color=ptc, markersize=10)
+            pts.plot(ax=ax, color="red", markersize=20)
 
         ax.set_axis_off()
-        fig.savefig(path, dpi=150, bbox_inches="tight", transparent=True)
+
+        fig.savefig(
+            path,
+            dpi=150,
+            bbox_inches="tight",
+            facecolor="white"
+        )
+
     finally:
         plt.close(fig)
 
