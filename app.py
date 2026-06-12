@@ -188,13 +188,16 @@ def group_b(df, crs, out, mapping):
 
 
 # ================= GROUP C (UNCHANGED, SAFE) =================
-def group_c(file, crs, w, h, rows, cols, out, mapping=None, selected_shp=None):
+def group_c(file, crs, w, h, rows, cols, out,
+            base_mode="A", mapping=None, selected_shp=None):
+
     import tempfile
 
     polygons = []
 
     # ===================== CASE 1: ZIP INPUT =====================
     if file.filename.lower().endswith(".zip"):
+
         temp_dir = os.path.join(UPLOAD, f"tmp_{uuid.uuid4()}")
         os.makedirs(temp_dir, exist_ok=True)
 
@@ -209,25 +212,34 @@ def group_c(file, crs, w, h, rows, cols, out, mapping=None, selected_shp=None):
                 raise ValueError("Please select a shapefile from ZIP")
 
             shp_path = None
+
+            # FIXED ZIP SEARCH LOOP
             for root, _, files in os.walk(temp_dir):
-            for f in files:
-            if f.lower().endswith(".shp") and f == os.path.basename(selected_shp):
-                shp_path = os.path.join(root, f)
-            break
+                for f in files:
+                    if f.lower().endswith(".shp") and f == os.path.basename(selected_shp):
+                        shp_path = os.path.join(root, f)
+                        break
+                if shp_path:
+                    break
 
             if not shp_path:
                 raise ValueError("Shapefile not found in ZIP")
 
             gdf = gpd.read_file(shp_path)
-        if gdf.crs is None:
+
+            if gdf.crs is None:
                 gdf.set_crs(crs, inplace=True)
+
             geom = gdf.geometry.unary_union
-        if geom.geom_type == "Polygon":
-            polygons = [geom]
-        elif geom.geom_type == "MultiPolygon":
-            polygons = list(geom.geoms)
-        else:
-            raise ValueError(f"Unsupported geometry: {geom.geom_type}")
+
+            if geom.geom_type == "Polygon":
+                polygons = [geom]
+
+            elif geom.geom_type == "MultiPolygon":
+                polygons = list(geom.geoms)
+
+            else:
+                raise ValueError(f"Unsupported geometry: {geom.geom_type}")
 
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -236,9 +248,12 @@ def group_c(file, crs, w, h, rows, cols, out, mapping=None, selected_shp=None):
     else:
         df = normalize_order(read_input(file))
 
-        x_col = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
-        y_col = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
-        order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
+        x_col = resolve_col(df, mapping, "X",
+                            ["X", "x", "Longitude", "Lon"])
+        y_col = resolve_col(df, mapping, "Y",
+                            ["Y", "y", "Latitude", "Lat"])
+        order_col = resolve_col(df, mapping, "Order",
+                                ["Order", "S.N", "SN", "s.n"])
 
         df = df.sort_values(order_col)
 
@@ -250,7 +265,85 @@ def group_c(file, crs, w, h, rows, cols, out, mapping=None, selected_shp=None):
         if coords[0] != coords[-1]:
             coords.append(coords[0])
 
-        polygons = [Polygon(coords)]
+        # ===================== A / B MODE LOGIC =====================
+
+        if base_mode == "A":
+            # SINGLE POLYGON MODE
+            polygons = [Polygon(coords)]
+
+        elif base_mode == "B":
+            # MULTI FOREST MODE (simulate Group B logic)
+            forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
+            comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
+
+            polygons = []
+
+            for _, g in df.groupby(forest_col):
+                for _, cg in g.groupby(comp_col):
+
+                    cg = cg.sort_values(order_col)
+                    c = list(zip(cg[x_col], cg[y_col]))
+
+                    if len(c) < 3:
+                        continue
+
+                    if c[0] != c[-1]:
+                        c.append(c[0])
+
+                    polygons.append(Polygon(c))
+
+        else:
+            raise ValueError("Invalid base_mode. Use 'A' or 'B'")
+
+    # ===================== BUILD GEODATAFRAME =====================
+    poly_gdf = gpd.GeoDataFrame(
+        [{"geometry": p} for p in polygons],
+        crs=crs
+    )
+
+    union = poly_gdf.unary_union
+
+    # ===================== GRID GENERATION =====================
+    minx, miny, maxx, maxy = union.bounds
+
+    pts = []
+    sn = 1
+
+    for r in range(rows):
+        for c in range(cols):
+
+            x = minx + c * w
+            y = miny + r * h
+
+            center = Point(x + w / 2, y + h / 2)
+
+            if union.contains(center):
+                pts.append({
+                    "SN": sn,
+                    "X": center.x,
+                    "Y": center.y,
+                    "geometry": center
+                })
+                sn += 1
+
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    # ===================== OUTPUT FILES =====================
+    poly_gdf.to_file(os.path.join(out, "poly.shp"))
+
+    gpd.GeoDataFrame(
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
+        crs=crs
+    ).to_file(os.path.join(out, "line.shp"))
+
+    pts_gdf.to_file(os.path.join(out, "sample.shp"))
+
+    return poly_gdf, \
+           gpd.GeoDataFrame(
+               [{"geometry": LineString(p.exterior.coords)} for p in polygons],
+               crs=crs
+           ), \
+           pts_gdf
 
     # ===================== BUILD GEODATAFRAME =====================
     poly_gdf = gpd.GeoDataFrame(
