@@ -156,6 +156,48 @@ body::before {
     box-sizing: border-box;
 }
 
+.loaded-success {
+    color: var(--mint) !important;
+    font-weight: 600;
+
+    text-shadow:
+        0 0 5px rgba(16, 185, 129, 0.6),
+        0 0 15px rgba(16, 185, 129, 0.5),
+        0 0 30px rgba(16, 185, 129, 0.3);
+
+    animation: glowPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes glowPulse {
+    0%, 100% {
+        text-shadow:
+            0 0 5px rgba(16, 185, 129, 0.5),
+            0 0 15px rgba(16, 185, 129, 0.4),
+            0 0 30px rgba(16, 185, 129, 0.2);
+    }
+    50% {
+        text-shadow:
+            0 0 10px rgba(16, 185, 129, 0.9),
+            0 0 25px rgba(16, 185, 129, 0.6),
+            0 0 50px rgba(16, 185, 129, 0.3);
+    }
+}
+
+@keyframes glowPulse {
+    0%, 100% {
+        text-shadow:
+            0 0 5px rgba(16, 185, 129, 0.5),
+            0 0 15px rgba(16, 185, 129, 0.4),
+            0 0 30px rgba(16, 185, 129, 0.2);
+    }
+    50% {
+        text-shadow:
+            0 0 10px rgba(16, 185, 129, 0.9),
+            0 0 25px rgba(16, 185, 129, 0.6),
+            0 0 50px rgba(16, 185, 129, 0.3);
+    }
+}
+
 .layout-resizer {
     position: relative;
     z-index: 10;
@@ -364,16 +406,10 @@ body::before {
 .cyber-dropzone input[type="file"] {
     position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;
 }
-
-/* FIX 5: Formatted element text wrapping rules to prevent dropzone compression */
-.dz-text {
+.cyber-dropzone span {
     font-size: 12px;
     color: var(--white-mist);
     font-weight: 500;
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .input-row {
@@ -393,14 +429,13 @@ body::before {
     letter-spacing: 0.08em;
 }
 
-/* FIX 2: Swapped out low-contrast layout typography variables for deep gray readable color profiles */
 select, input[type="number"], input[type="text"] {
     width: 100%;
     background: rgba(255, 255, 255, 0.7);
     border: 1px solid var(--border-soft);
     border-radius: 8px;
     padding: 0 12px;
-    color: #111827;
+    color: var(--white-snow);
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 500;
@@ -412,23 +447,22 @@ select, input[type="number"], input[type="text"] {
 select, input[type="number"] {
     font-family: var(--font-mono);
 }
-option {
-    color: #111827;
-}
-select:focus, input[type="number"]:focus {
-    border-color: var(--survey-blue);
-    background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 0 10px rgba(101, 163, 13, 0.18);
+select:focus,
+input[type="number"]:focus {
+    border-color: #22c55e; /* bright emerald green */
+    background: rgba(255, 255, 255, 0.95);
+
+    box-shadow:
+        0 0 0 3px rgba(34, 197, 94, 0.15),
+        0 0 10px rgba(34, 197, 94, 0.25),
+        0 0 20px rgba(34, 197, 94, 0.15);
+
+    outline: none;
 }
 input[type="text"]:focus {
     border-color: var(--border-active);
     background: rgba(255, 255, 255, 0.9);
     box-shadow: 0 0 10px var(--glow-mint);
-}
-
-/* FIX 4: Explicit scaling dimensions for programmatic drop-down elements */
-#shp-select {
-    width: 100%;
 }
 
 .toggle-switch-container {
@@ -499,7 +533,7 @@ input[type="text"]:focus {
 .fill-arc {
     fill: none; stroke: var(--mint); stroke-width: 4;
     stroke-dasharray: 150.7; stroke-dashoffset: 150.7;
-    transition: stroke-dashoffset 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: stroke-dashoffset 0.6s ease;
 }
 
 .visualizer-desk {
@@ -509,18 +543,21 @@ input[type="text"]:focus {
     height: 100%;
 }
 
-/* FIX 3: Rewrote workspace visualizer bounds to feature solid white matching output.png specs */
 .canvas-wrapper {
     flex: 1;
-    background: #ffffff;
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background-color: #0f0a12;
+    background-image:
+        linear-gradient(rgba(101, 163, 13, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(101, 163, 13, 0.045) 1px, transparent 1px);
+    background-size: 28px 28px;
+    border: 1px solid rgba(241, 245, 249, 0.02);
     border-radius: 16px;
     position: relative;
     overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: none;
+    box-shadow: inset 0 10px 40px rgba(0,0,0,0.7);
 }
 
 .canvas-wrapper::before {
@@ -547,9 +584,7 @@ input[type="text"]:focus {
     justify-content: space-between;
 }
 
-/* FIX 6: Flexible inline alignment properties for delivery vectors */
 .btn-download {
-    display: none;
     background: rgba(28, 43, 34, 0.06);
     border: 1px solid var(--border-soft);
     color: var(--white-snow);
@@ -558,18 +593,15 @@ input[type="text"]:focus {
     font-size: 12px;
     text-decoration: none;
     font-weight: 500;
+    display: none;
     transition: all 0.2s ease;
-}
-.btn-download.show {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
 }
 .btn-download:hover {
     background: var(--white-snow);
     color: var(--white-pure);
     border-color: var(--white-snow);
 }
+
 </style>
 </head>
 
@@ -592,7 +624,7 @@ input[type="text"]:focus {
         </div>
         <div class="header-readout">
             <div class="pip"><span class="pip-dot"></span><span>Engine Status</span><span class="pip-value">Online</span></div>
-            <div class="pip"><span>Projection</span><span class="pip-value">EPSG:32644</span></div>
+            <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs-label">UTM Zone 44N (EPSG:32644)</span></div>
             <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
         </div>
     </header>
@@ -611,7 +643,7 @@ input[type="text"]:focus {
                     <div class="field-group">
                         <label>Target GIS Projection</label>
                         <select id="zone">
-                            <option value="44">UTM Zone 44N (EPSG:32644)</option>
+                            <option value="44" selected>UTM Zone 44N (EPSG:32644)</option>
                             <option value="45">UTM Zone 45N (EPSG:32645)</option>
                         </select>
                     </div>
@@ -638,8 +670,8 @@ input[type="text"]:focus {
                          
                         <div class="group-content-card active-card" id="card-A">
                             <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select ExcelData</span>
-                                <input type="file" class="file">
+                                <span class="dz-text">✨ Select Excel/CSV Data</span>
+                                <input type="file" class="file" accept=".csv,.xlsx,.xls">
                             </div>
                             <div class="input-row">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
@@ -655,7 +687,7 @@ input[type="text"]:focus {
                         </div>
 
                         <div class="group-content-card" id="card-B">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel Data</span><input type="file" class="file"></div>
+                            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel/CSV Data</span><input type="file" class="file" accept=".csv,.xlsx,.xls"></div>
                             <div class="input-row">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
                                 <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
@@ -669,71 +701,90 @@ input[type="text"]:focus {
 
                         <div class="group-content-card" id="card-C">
                             <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
-                                <input type="file" class="file">
+                                <span class="dz-text">✨ Drop Flat File (CSV/Excel) or ZIP Archive</span>
+                                <input type="file" class="file" accept=".csv,.xlsx,.xls,.zip,.rar">
                             </div>
 
-                            <div id="c-dynamic-content">
-                                <div class="field-group" id="c-mode-selector-wrapper">
-                                    <label>Mode Selection</label>
-                                    <div class="toggle-switch-container">
-                                        <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
-                                        <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
-                                    </div>
+                            <div class="field-group" id="c-mode-selector-wrapper">
+                                <label>Base Geometry Sub-Context</label>
+                                <div class="toggle-switch-container">
+                                    <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Mode A (Simple Poly)</div>
+                                    <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Mode B (Segmented)</div>
                                 </div>
+                            </div>
 
-                                <div class="field-group hidden" id="shp-select-container">
-                                    <label>Available Layers</label>
-                                    <select id="shp-select"></select>
-                                </div>
+                            <div class="field-group hidden" id="shp-select-container">
+                                <label>Select Shapefile Layer from ZIP</label>
+                                <select id="shp-select">
+                                    <option value="">Awaiting archive mapping analysis...</option>
+                                </select>
+                            </div>
 
-                                <div class="input-row" id="c-vector-row-1">
-                                    <div class="field-group"><label>X</label><select data-key="X"></select></div>
-                                    <div class="field-group"><label>Y</label><select data-key="Y"></select></div>
-                                </div>
-                                
-                                <div class="input-row" id="c-vector-row-2">
-                                    <div class="field-group">
-                                        <label>Order</label>
-                                        <select data-key="Order"></select>
-                                    </div>
+                            <div class="input-row" id="c-vector-row-1">
+                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
+                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
+                            </div>
 
-                                    <div class="field-group hidden" id="c-forest-wrapper">
-                                        <label>Forest</label>
-                                        <select data-key="Forest"></select>
-                                    </div>
+                            <div class="input-row" id="c-vector-row-2">
+                                <div class="field-group"><label>Point Order Sequence</label><select data-key="Order"></select></div>
+                                <div class="field-group hidden" id="c-forest-wrapper">
+                                    <label>Forest Column Field</label>
+                                    <select data-key="Forest" id="c-field-forest"></select>
                                 </div>
+                            </div>
 
-                                <div class="field-group hidden" id="c-compartment-wrapper">
-                                    <label>Compartment</label>
-                                    <select data-key="Compartment"></select>
-                                </div>
+                            <div class="field-group hidden" id="c-compartment-wrapper">
+                                <label>Compartment Column Field</label>
+                                <select data-key="Compartment" id="c-field-compartment"></select>
+                            </div>
 
-                                <div style="margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 10px;">
-                                    <label style="font-size: 9px; color: var(--mint);">Grid Parameters (Sampling Density)</label>
-                                    <div class="input-row">
-                                        <div class="field-group"><label>Width (m)</label><input type="number" data-key="w" value="50"></div>
-                                        <div class="field-group"><label>Height (m)</label><input type="number" data-key="h" value="50"></div>
-                                    </div>
-                                    <div class="input-row">
-                                        <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
-                                        <div class="field-group"><label>Cols</label><input type="number" data-key="cols" value="10"></div>
-                                    </div>
-                                </div>
+                            <div style="border-top: 1px dashed rgba(20,40,30,0.08); margin: 6px 0; padding-top: 10px;">
+                                <div class="field-group"><label style="color: var(--gold-accent);">Grid Overlay Configuration</label></div>
+                            </div>
+
+                            <div class="input-row">
+                                <div class="field-group"><label>Cell Width (w)</label><input type="number" data-key="w" value="50"></div>
+                                <div class="field-group"><label>Cell Height (h)</label><input type="number" data-key="h" value="50"></div>
+                            </div>
+
+                            <div class="input-row">
+                                <div class="field-group"><label>Grid Rows</label><input type="number" data-key="rows" value="10"></div>
+                                <div class="field-group"><label>Grid Columns</label><input type="number" data-key="cols" value="10"></div>
                             </div>
                         </div>
 
                         <div class="group-content-card" id="card-D">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Engine File</span><input type="file" class="file"></div>
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
-                            </div>
-                        </div>
+    <div class="cyber-dropzone">
+        <span class="dz-text">✨ Select Excel/CSV Data (Forest Dataset)</span>
+        <input type="file" class="file" accept=".csv,.xlsx,.xls">
+    </div>
+
+    <div class="input-row">
+        <div class="field-group">
+            <label>X Coordinate</label>
+            <select data-key="X"></select>
+        </div>
+        <div class="field-group">
+            <label>Y Coordinate</label>
+            <select data-key="Y"></select>
+        </div>
+    </div>
+
+    <div class="input-row">
+        <div class="field-group">
+            <label>Point Order</label>
+            <select data-key="Order"></select>
+        </div>
+        <div class="field-group">
+            <label>Forest ID</label>
+            <select data-key="Forest"></select>
+        </div>
+    </div>
+
+    <div style="padding: 6px 10px; background: rgba(5,150,105,0.08); border-radius: 8px; font-size: 11px; color: var(--text-muted);">
+        🌲 Group D builds forest polygons grouped by Forest column.
+    </div>
+</div>
 
                     </div>
                 </div>
@@ -766,7 +817,7 @@ input[type="text"]:focus {
         <div class="holo-panel visualizer-desk">
             <div class="panel-title" style="padding:0 0 12px 0;">Dynamic Preview</div>
             <div class="canvas-wrapper">
-                <div id="empty-notice" style="font-size:12px; font-family: var(--font-mono); letter-spacing:0.04em; color:var(--text-muted); text-align: center; padding: 0 10px;">Awaiting data rendering execution...</div>
+                <div id="empty-notice" style="font-size:12px; font-family: var(--font-mono); letter-spacing:0.04em; color:var(--text-muted);">Awaiting data rendering execution...</div>
                 <img id="output-img" alt="Spatial Matrix Layout Output Workspace">
             </div>
             <div class="meta-footer">
@@ -782,7 +833,7 @@ input[type="text"]:focus {
 </div>
 
 <script>
-// ================= NAV PANEL DRAG RESIZER LAYOUT LOGIC =================
+// ================= RESIZERS =================
 const mainLayout = document.getElementById('main-layout-container');
 const centerWorkspace = document.getElementById('center-workspace-container');
 
@@ -794,87 +845,121 @@ let currentLeftWidth = 280;
 let currentRightWidth = 420;
 let currentConsoleHeight = 120;
 
-leftColHandle.addEventListener('pointerdown', function(e) {
+// LEFT RESIZE
+leftColHandle.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     leftColHandle.classList.add('dragging');
+
     const startX = e.clientX;
     const startWidth = currentLeftWidth;
 
-    function onPointerMove(ev) {
-        const deltaX = ev.clientX - startX;
-        currentLeftWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentRightWidth - 300));
-        mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
-    }
-    function onPointerUp() {
+    const move = (ev) => {
+        const dx = ev.clientX - startX;
+        currentLeftWidth = Math.max(150, Math.min(startWidth + dx, window.innerWidth - currentRightWidth - 300));
+
+        mainLayout.style.gridTemplateColumns =
+            `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
+    };
+
+    const up = () => {
         leftColHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-    }
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
 });
 
-rightColHandle.addEventListener('pointerdown', function(e) {
+// RIGHT RESIZE
+rightColHandle.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     rightColHandle.classList.add('dragging');
+
     const startX = e.clientX;
     const startWidth = currentRightWidth;
 
-    function onPointerMove(ev) {
-        const deltaX = startX - ev.clientX; 
-        currentRightWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentLeftWidth - 300));
-        mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
-    }
-    function onPointerUp() {
+    const move = (ev) => {
+        const dx = startX - ev.clientX;
+        currentRightWidth = Math.max(150, Math.min(startWidth + dx, window.innerWidth - currentLeftWidth - 300));
+
+        mainLayout.style.gridTemplateColumns =
+            `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
+    };
+
+    const up = () => {
         rightColHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-    }
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
 });
 
-centerRowHandle.addEventListener('pointerdown', function(e) {
+// CENTER RESIZE
+centerRowHandle.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     centerRowHandle.classList.add('dragging');
+
     const startY = e.clientY;
     const startHeight = currentConsoleHeight;
 
-    function onPointerMove(ev) {
-        const deltaY = startY - ev.clientY; 
-        currentConsoleHeight = Math.max(80, Math.min(startHeight + deltaY, centerWorkspace.clientHeight - 100));
-        centerWorkspace.style.gridTemplateRows = `1fr 6px ${currentConsoleHeight}px`;
-    }
-    function onPointerUp() {
+    const move = (ev) => {
+        const dy = startY - ev.clientY;
+        currentConsoleHeight = Math.max(80, Math.min(startHeight + dy, centerWorkspace.clientHeight - 100));
+
+        centerWorkspace.style.gridTemplateRows =
+            `1fr 6px ${currentConsoleHeight}px`;
+    };
+
+    const up = () => {
         centerRowHandle.classList.remove('dragging');
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-    }
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
 });
 
-document.getElementById('zone').addEventListener('change', function() {
-    const pips = document.querySelectorAll('.header-readout .pip-value');
-    if (pips[1]) pips[1].innerText = "EPSG:326" + this.value;
-});
 
-// ================= APP LEVEL STATE ENGINE =================
-let mode = "A";        
-let groupCSubMode = "A"; 
+// ================= CRS =================
+const zoneSelect = document.getElementById('zone');
+
+function updateCRS() {
+    const label = document.getElementById('header-crs-label');
+    label.innerText =
+        zoneSelect.value === "44"
+            ? "UTM Zone 44N (EPSG:32644)"
+            : "UTM Zone 45N (EPSG:32645)";
+}
+
+zoneSelect.addEventListener('change', updateCRS);
+window.addEventListener("load", updateCRS);
+
+
+// ================= STATE =================
+let mode = "A";
+let groupCSubMode = "A";
+let globalFileCache = null;
 
 function switchTab(targetMode) {
     mode = targetMode;
-    
-    document.querySelectorAll('.matrix-tab').forEach(t => t.classList.remove('active-tab'));
+
+    document.querySelectorAll('.matrix-tab')
+        .forEach(t => t.classList.remove('active-tab'));
     document.getElementById(`tab-${targetMode}`).classList.add('active-tab');
-    
-    document.querySelectorAll('.group-content-card').forEach(c => c.classList.remove('active-card'));
+
+    document.querySelectorAll('.group-content-card')
+        .forEach(c => c.classList.remove('active-card'));
     document.getElementById(`card-${targetMode}`).classList.add('active-card');
 
-    document.querySelectorAll('.tree-node').forEach((node, idx) => {
-        node.classList.remove('active');
-        if(["A","B","C","D"][idx] === targetMode) node.classList.add('active');
+    const nodes = document.querySelectorAll('.tree-node');
+    const order = ["A","B","C","D"];
+
+    nodes.forEach((node, idx) => {
+        node.classList.toggle('active', order[idx] === targetMode);
     });
 
     const labels = {
@@ -883,111 +968,227 @@ function switchTab(targetMode) {
         C: "C · Sample Plot",
         D: "D · Complex Version A"
     };
-    const headerModule = document.getElementById('header-module');
-    if (headerModule) headerModule.innerText = labels[targetMode];
+
+    document.getElementById('header-module').innerText = labels[targetMode];
 }
 
+
+// ================= GROUP C MODE =================
 function setGroupCSubMode(subMode) {
     groupCSubMode = subMode;
-    
-    document.querySelectorAll('#c-mode-selector-wrapper .toggle-option').forEach(opt => opt.classList.remove('active-toggle'));
-    document.getElementById(`c-toggle-${subMode}`).classList.add('active-toggle');
-    
-    const forestWrapper = document.getElementById('c-forest-wrapper');
-    const compartmentWrapper = document.getElementById('c-compartment-wrapper');
 
-    if (subMode === "B") {
-        if(forestWrapper) forestWrapper.classList.remove('hidden');
-        if(compartmentWrapper) compartmentWrapper.classList.remove('hidden');
-    } else {
-        if(forestWrapper) forestWrapper.classList.add('hidden');
-        if(compartmentWrapper) compartmentWrapper.classList.add('hidden');
-    }
+    document.querySelectorAll('#c-mode-selector-wrapper .toggle-option')
+        .forEach(o => o.classList.remove('active-toggle'));
+
+    document.getElementById(`c-toggle-${subMode}`).classList.add('active-toggle');
+
+    const forest = document.getElementById('c-forest-wrapper');
+    const comp = document.getElementById('c-compartment-wrapper');
+
+    const showExtra = subMode === "B";
+    forest.classList.toggle('hidden', !showExtra);
+    comp.classList.toggle('hidden', !showExtra);
 }
 
+
+// ================= ZIP HANDLER =================
 async function extractZipShp(file) {
     const zip = await JSZip.loadAsync(file);
     const shpFiles = [];
-    zip.forEach((path, entry) => {
+
+    zip.forEach((path) => {
         if (path.toLowerCase().endsWith(".shp")) {
             shpFiles.push(path);
         }
     });
+
     return shpFiles;
 }
 
-// ================= DYNAMIC FILE PARSER & INTERFACE MUTATION =================
+function getFileType(file) {
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (ext === "zip") return "archive";
+    if (ext === "rar") return "unsupported";
+    return "excel";
+}
+
+
+// ================= OUTPUT =================
+const outImg = document.getElementById("output-img");
+const notice = document.getElementById("empty-notice");
+
+outImg.onerror = () => {
+    outImg.style.display = "none";
+    notice.style.display = "block";
+    notice.innerText = "Preview failed to load output image";
+};
+
+
+// ================= FILE INPUT =================
 document.querySelectorAll(".file").forEach(input => {
-    input.addEventListener("change", async function() {
-        let file = this.files[0];
-        if(!file) return;
+    input.addEventListener("change", async function () {
+
+        const file = this.files[0];
+        if (!file) return;
 
         const activeCard = this.closest(".group-content-card");
-        const activeMode = activeCard.id.replace("card-","");
-        let dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
-        
-        const modeSelector = document.getElementById("c-mode-selector-wrapper");
-        const shpContainer = document.getElementById("shp-select-container");
-        const row1 = document.getElementById("c-vector-row-1");
-        const row2 = document.getElementById("c-vector-row-2");
-        const compWrapper = document.getElementById("c-compartment-wrapper");
-        const forestWrapper = document.getElementById("c-forest-wrapper");
+        const activeMode = activeCard.id.replace("card-", "");
 
-        if (activeMode === "C") {
-            if (file.name.toLowerCase().endsWith(".zip")) {
-                shpContainer.classList.remove("hidden");
-                if (modeSelector) modeSelector.classList.add("hidden");
-                if (row1) row1.classList.add("hidden");
-                if (row2) row2.classList.add("hidden");
-                if (compWrapper) compWrapper.classList.add("hidden");
-                if (forestWrapper) forestWrapper.classList.add("hidden");
+        globalFileCache = file;
 
-                dzText.innerText = `📦 Reading ZIP Layer Bundle...`;
-                dzText.style.color = "var(--white-snow)";
+        const fileType = getFileType(file);
 
-                try {
-                    const shpSelect = document.getElementById("shp-select");
-                    shpSelect.innerHTML = "";
+        // store per mode
+        if (!window.globalFiles) window.globalFiles = {};
+        window.globalFiles[activeMode] = file;
 
-                    const shpFiles = await extractZipShp(file);
+        const dz = activeCard.querySelector(".dz-text");
 
-                    if (shpFiles.length === 0) {
-                        shpSelect.innerHTML = `<option value="">No .shp found</option>`;
-                        dzText.innerText = "⚠ No shapefiles inside ZIP";
-                        dzText.style.color = "var(--amber-timber)";
-                        return;
-                    }
+        // ================= ARCHIVE =================
+        if (fileType === "archive") {
 
-                    shpFiles.forEach(f => {
-                        let opt = document.createElement("option");
-                        opt.value = f;
-                        opt.textContent = f;
-                        shpSelect.appendChild(opt);
-                    });
-
-                    groupCSubMode = "A";
-
-                    dzText.innerText = `🌿 Active Bundle: ${file.name}`;
-                    dzText.style.color = "var(--border-active)";
-
-                } catch (err) {
-                    console.error(err);
-                    dzText.innerText = "❌ Failed to parse ZIP";
-                    dzText.style.color = "#ef4444";
-                }
+            if (activeMode !== "C") {
+                alert("ZIP only allowed in Group C");
+                this.value = "";
                 return;
             }
+
+            dz.innerHTML = `📦 Selected ZIP: <b>${file.name}</b>`;
+            dz.classList.add("loaded-success");
+
+            const shpContainer = document.getElementById("shp-select-container");
+            shpContainer.classList.remove("hidden");
+
+            const shpSelect = document.getElementById("shp-select");
+            shpSelect.innerHTML = "";
+
+            const shpFiles = await extractZipShp(file);
+
+            if (!shpFiles.length) {
+                shpSelect.innerHTML = `<option>No .shp found</option>`;
+                return;
+            }
+
+            shpFiles.forEach(f => {
+                const opt = document.createElement("option");
+                opt.value = f;
+                opt.textContent = f;
+                shpSelect.appendChild(opt);
+            });
+
+            return;
         }
+
+        // ================= EXCEL/CSV =================
+        dz.innerHTML = `📂 Selected: <b>${file.name}</b>`;
+        dz.classList.add("loaded-success");
+
+        const fd = new FormData();
+        fd.append("file", file);
+
+        const res = await fetch("/get-columns", {
+            method: "POST",
+            body: fd
+        });
+
+        const cols = await res.json();
+
+        if (!Array.isArray(cols)) return;
+
+        activeCard.querySelectorAll("select").forEach(sel => {
+            sel.innerHTML = `<option value="">Select field</option>`;
+            cols.forEach(c => {
+                sel.innerHTML += `<option value="${c}">${c}</option>`;
+            });
+        });
     });
 });
 
-function runPipeline() {
-    // Pipeline delivery placeholder code implementation
-    console.log("Pipeline processing initiated across mode " + mode);
-    
-    // FIX 6 target usage illustration:
-    // const dlBtn = document.getElementById("download-btn");
-    // dlBtn.classList.add("show");
+
+// ================= PIPELINE =================
+async function runPipeline() {
+
+    const activeCard = document.getElementById(`card-${mode}`);
+    const fileInput = activeCard.querySelector(".file");
+    const file = fileInput.files[0];
+
+    if (!file) {
+        alert("Please select a file first");
+        return;
+    }
+
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("mode", mode);
+    fd.append("zone", zoneSelect.value);
+
+    if (mode === "A") {
+        const forest = activeCard.querySelector('[data-key="forest"]');
+        fd.append("forest", forest?.value || "FOREST");
+    }
+
+    if (mode === "C") {
+        fd.append("w", activeCard.querySelector('[data-key="w"]').value);
+        fd.append("h", activeCard.querySelector('[data-key="h"]').value);
+        fd.append("rows", activeCard.querySelector('[data-key="rows"]').value);
+        fd.append("cols", activeCard.querySelector('[data-key="cols"]').value);
+        fd.append("base_mode", groupCSubMode);
+
+        if (file.name.toLowerCase().endsWith(".zip")) {
+            fd.append("selected_shp",
+                document.getElementById("shp-select").value
+            );
+        }
+    }
+
+    const mapping = {};
+    activeCard.querySelectorAll("select[data-key]").forEach(el => {
+        if (el.value !== "") {
+            mapping[el.getAttribute("data-key")] = el.value;
+        }
+    });
+
+    fd.append("mapping", JSON.stringify(mapping));
+
+    const headline = document.getElementById("status-headline");
+    const sub = document.getElementById("status-sub");
+    const radial = document.getElementById("radial-bar");
+
+    headline.innerText = "Processing...";
+    sub.innerText = "Running GIS Engine";
+    radial.style.strokeDashoffset = "75";
+
+    try {
+        const res = await fetch("/upload", {
+            method: "POST",
+            body: fd
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Server error");
+
+        headline.innerText = "Complete";
+        sub.innerText = "Success";
+        radial.style.strokeDashoffset = "0";
+
+        outImg.src = `/outputs/${data.run_id}/output.png?t=${Date.now()}`;
+        outImg.style.display = "block";
+        notice.style.display = "none";
+
+        const dl = document.getElementById("download-btn");
+        dl.href = data.download;
+        dl.style.display = "inline-block";
+
+        document.getElementById("run-meta").innerText =
+            `Run: ${data.run_id.slice(0,8)} | OK`;
+
+    } catch (e) {
+        console.error(e);
+        headline.innerText = "Error";
+        sub.innerText = "Pipeline failed";
+        radial.style.strokeDashoffset = "150";
+        alert(e.message);
+    }
 }
 </script>
 </body>
