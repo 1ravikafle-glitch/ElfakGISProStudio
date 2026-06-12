@@ -45,74 +45,60 @@ def read_input(file):
 
 # ================= CRS FIX =================
 def get_crs(zone):
-    return f"EPSG:326{int(zone)}"
+    zone = str(zone).replace("UTM Zone", "").replace("N", "").strip()
+    return f"EPSG:326{zone}"
 
-# ================= ORDER NORMALIZER =================
-def normalize_order(df):
-    df = normalize_columns(df)
 
-    rename_map = {}
-
-    for col in df.columns:
-        if col in ["order", "ordering", "ord", "serial", "sno", "sn", "s.n"]:
-            rename_map[col] = "order"
-
-    if rename_map:
-        df = df.rename(columns=rename_map)
-
-    return df
 # ================= NORMALIZE =================
-def normalize_columns(df):
-    df.columns = (
-        df.columns
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "")
-        .str.replace("-", "")
-        .str.replace("_", "")
-    )
+def normalize_order(df):
+    df.columns = [str(c).strip() for c in df.columns]
+
+    for c in df.columns:
+        if str(c).lower() in ["sn", "s.n", "order"]:
+            df = df.rename(columns={c: "Order"})
     return df
+
 
 # ================= SAFE COLUMN RESOLVER =================
-def resolve_col(df, mapping, key):
-    df = normalize_columns(df)
+def resolve_col(df, mapping, key, fallback_list):
+    if mapping and key in mapping and mapping[key]:
+        return mapping[key]
 
-    mapping = mapping or {}
+    cols_lower = {c.lower().strip(): c for c in df.columns}
 
-    # normalize mapping keys only (NOT values)
-    clean_mapping = {
-        normalize_key(k): v
-        for k, v in mapping.items()
-    }
+    for f in fallback_list:
+        if f.lower() in cols_lower:
+            return cols_lower[f.lower()]
 
-    cols = {normalize_key(c): c for c in df.columns}
+    # last fallback
+    if fallback_list:
+        return fallback_list[0]
 
-    # REQUIRED: must come from UI mapping
-    if key in clean_mapping and clean_mapping[key]:
-        target = normalize_key(clean_mapping[key])
+    raise ValueError(f"Missing column for {key}")
 
-        if target in cols:
-            return cols[target]
 
-        raise ValueError(
-            f"UI mapping error: '{clean_mapping[key]}' not found in uploaded file columns."
-        )
+# ================= OUTPUT SERVE =================
+@app.route("/outputs/<run_id>/<filename>")
+def outputs(run_id, filename):
+    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
 
-    # ❌ NO fallback, NO guessing
-    raise ValueError(
-        f"Missing UI mapping for required field: '{key}'"
-    )
+
+# ================= GET COLUMNS =================
+@app.route("/get-columns", methods=["POST"])
+def get_columns():
+    try:
+        df = read_input(request.files["file"])
+        return jsonify(list(df.columns))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 # ================= GROUP A (FIXED) =================
 def group_a(df, forest, crs, out, mapping):
+    df = normalize_order(df).sort_values("Order")
 
-    df = normalize_columns(df)
-
-    x = resolve_col(df, mapping, "X")
-    y = resolve_col(df, mapping, "Y")
-    order = resolve_col(df, mapping, "Order")
-
-    df = df.sort_values(order)
+    x = resolve_col(df, mapping, "X", ["X", "x", "Longitude"])
+    y = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude"])
 
     coords = list(zip(df[x], df[y]))
     if len(coords) < 3:
@@ -141,27 +127,22 @@ def group_a(df, forest, crs, out, mapping):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP B =================
+# ================= GROUP B (FIXED) =================
 def group_b(df, crs, out, mapping):
-
     df = normalize_order(df)
 
-    x = resolve_col(df, mapping, "X")
-    y = resolve_col(df, mapping, "Y")
-    order = resolve_col(df, mapping, "Order")
-    forest_col = resolve_col(df, mapping, "Forest")
-    comp_col = resolve_col(df, mapping, "Compartment")
+    x = resolve_col(df, mapping, "X", ["X", "x"])
+    y = resolve_col(df, mapping, "Y", ["Y", "y"])
+    order = resolve_col(df, mapping, "Order", ["Order"])
+    forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
+    comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
 
-    polys = []
-    lines = []
-    pts = []
+    polys, lines, pts = [], [], []
 
     for f, g in df.groupby(forest_col):
-
         for c, cg in g.groupby(comp_col):
 
             cg = cg.sort_values(order)
-
             coords = list(zip(cg[x], cg[y]))
 
             if len(coords) < 3:
@@ -171,13 +152,6 @@ def group_b(df, crs, out, mapping):
                 coords.append(coords[0])
 
             poly = Polygon(coords)
-            
-            if poly.is_empty:
-                continue
-
-            if not poly.is_valid:
-                poly = poly.buffer(0)
-           
             line = LineString(coords)
 
             polys.append({
@@ -206,14 +180,9 @@ def group_b(df, crs, out, mapping):
     line_gdf = gpd.GeoDataFrame(lines, crs=crs)
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-    if not poly_gdf.empty:
-        poly_gdf.to_file(os.path.join(out, "polygon.shp"))
-
-    if not line_gdf.empty:
-        line_gdf.to_file(os.path.join(out, "line.shp"))
-
-    if not pts_gdf.empty:
-        pts_gdf.to_file(os.path.join(out, "points.shp"))
+    poly_gdf.to_file(os.path.join(out, "polygon.shp"))
+    line_gdf.to_file(os.path.join(out, "line.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
 
     return poly_gdf, line_gdf, pts_gdf
 
@@ -290,9 +259,9 @@ def group_c(file, crs, w, h, rows, cols, out,
         # ================= MODE A =================
         if base_mode == "A":
 
-            x_col = resolve_col(df, mapping, "X")
-            y_col = resolve_col(df, mapping, "Y")
-            order_col = resolve_col(df, mapping, "Order")
+            x_col = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
+            y_col = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
+            order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
 
             df = df.sort_values(order_col)
 
@@ -309,12 +278,11 @@ def group_c(file, crs, w, h, rows, cols, out,
         # ================= MODE B =================
         elif base_mode == "B":
 
-            x_col = resolve_col(df, mapping, "X")
-            y_col = resolve_col(df, mapping, "Y")
-            order_col = resolve_col(df, mapping, "Order")
-            forest_col = resolve_col(df, mapping, "Forest")
-            comp_col = resolve_col(df, mapping, "Compartment")
-            
+            x_col = resolve_col(df, mapping, "X", ["X", "x"])
+            y_col = resolve_col(df, mapping, "Y", ["Y", "y"])
+            order_col = resolve_col(df, mapping, "Order", ["Order"])
+            forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
+            comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
 
             for f, fg in df.groupby(forest_col):
 
@@ -350,7 +318,7 @@ def group_c(file, crs, w, h, rows, cols, out,
         crs=crs
     )
 
-    union = poly_gdf.unary_union
+    union = poly_gdf.geometry.union_all()
     minx, miny, maxx, maxy = union.bounds
 
     # ===================== GRID GENERATION =====================
@@ -376,79 +344,31 @@ def group_c(file, crs, w, h, rows, cols, out,
 
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-        # ===================== SAFE LINE GENERATION =====================
-    lines = []
+    # ===================== SAFE LINE GENERATION =====================
+    line_gdf = gpd.GeoDataFrame(
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons if p and not p.is_empty],
+        crs=crs
+    )
 
-    for p in polygons:
-        if p is None or p.is_empty:
-            continue
-
-        if p.geom_type == "Polygon":
-            lines.append({
-                "geometry": LineString(p.exterior.coords)
-            })
-
-        elif p.geom_type == "MultiPolygon":
-            for sub in p.geoms:
-                lines.append({
-                    "geometry": LineString(sub.exterior.coords)
-                })
-
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
     # ===================== OUTPUT =====================
+    poly_gdf.to_file(os.path.join(out, "poly.shp"))
+    line_gdf.to_file(os.path.join(out, "line.shp"))
+    pts_gdf.to_file(os.path.join(out, "sample.shp"))
 
-    if not poly_gdf.empty:
-        poly_gdf.to_file(os.path.join(out, "poly.shp"))
-
-    if not line_gdf.empty:
-        line_gdf.to_file(os.path.join(out, "line.shp"))
-
-    if not pts_gdf.empty:
-        pts_gdf.to_file(os.path.join(out, "sample.shp"))
-
-    # Excel export
-    if pts_gdf.empty:
-        raise ValueError("No valid sample points generated")
-
-    excel_df = pd.DataFrame({
-        "SN": pts_gdf["SN"],
-        "X": pts_gdf.geometry.x,
-        "Y": pts_gdf.geometry.y
-    })
-
-    excel_df.to_excel(os.path.join(out, "sample_points.xlsx"), index=False)
-    excel_df.to_csv(os.path.join(out, "sample_points.csv"), index=False)
-                
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP D (FIXED CLEAN VERSION) =================
-def group_d(df, crs, out, mapping):
+# ================= GROUP D (FIXED LIGHTLY) =================
+def group_d(df, crs, out):
+    df = normalize_order(df).sort_values("Order")
 
-    df = normalize_columns(df)
-
-    x = resolve_col(df, mapping, "X")
-    y = resolve_col(df, mapping, "Y")
-    order_col = resolve_col(df, mapping, "Order")
-    forest_col = resolve_col(df, mapping, "Forest")
+    if "Forest" not in df.columns:
+        raise ValueError("Forest column missing")
 
     polys, lines, pts = [], [], []
 
-    for f, g in df.groupby(forest_col):
-
-        # ================= SAFE FOREST NAME =================
-        safe_name = str(f)
-        for ch in '<>:"/\\|?*':
-            safe_name = safe_name.replace(ch, "_")
-        safe_name = safe_name.replace(" ", "_")
-
-        forest_path = os.path.join(out, safe_name)
-        os.makedirs(forest_path, exist_ok=True)
-
-        # ================= SORT POINTS =================
-        g = g.sort_values(order_col)
-
-        coords = list(zip(g[x], g[y]))
+    for f, g in df.groupby("Forest"):
+        coords = list(zip(g["X"], g["Y"]))
 
         if len(coords) < 3:
             continue
@@ -459,60 +379,23 @@ def group_d(df, crs, out, mapping):
         poly = Polygon(coords)
         line = LineString(coords)
 
-        if poly.is_empty:
-            continue
+        polys.append({"Forest": f, "Area": poly.area / 10000, "Perim": poly.length, "geometry": poly})
+        lines.append({"Forest": f, "geometry": line})
 
-        if not poly.is_valid:
-            poly = poly.buffer(0)
+        for _, r in g.iterrows():
+            pts.append({"Forest": f, "Order": r["Order"], "geometry": Point(r["X"], r["Y"])})
 
-        area_ha = poly.area / 10000
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-        # ================= POINTS =================
-        pts_gdf = gpd.GeoDataFrame(
-            g.copy(),
-            geometry=gpd.points_from_xy(g[x], g[y]),
-            crs=crs
-        )
+    poly_gdf.to_file(os.path.join(out, "poly.shp"))
+    line_gdf.to_file(os.path.join(out, "line.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
 
-        # ================= LINE =================
-        line_gdf = gpd.GeoDataFrame(
-            [{
-                "Forest": f,
-                "geometry": line
-            }],
-            crs=crs
-        )
+    return poly_gdf, line_gdf, pts_gdf
 
-        # ================= POLYGON =================
-        poly_gdf = gpd.GeoDataFrame(
-            [{
-                "Forest": f,
-                "Area_Ha": round(area_ha, 4),
-                "geometry": poly
-            }],
-            crs=crs
-        )
 
-        # ================= EXACT OUTPUT FILE NAMES =================
-        poly_path = os.path.join(forest_path, f"{safe_name}_polygon.shp")
-        line_path = os.path.join(forest_path, f"{safe_name}_line.shp")
-        pts_path = os.path.join(forest_path, f"{safe_name}_points.shp")
-
-        # ================= SAVE SHAPEFILES =================
-        poly_gdf.to_file(poly_path)
-        line_gdf.to_file(line_path)
-        pts_gdf.to_file(pts_path)
-
-        polys.append(poly_gdf)
-        lines.append(line_gdf)
-        pts.append(pts_gdf)
-
-    # ================= MERGED OUTPUT (FOR PREVIEW ONLY) =================
-    poly_all = gpd.GeoDataFrame(pd.concat(polys, ignore_index=True), crs=crs) if polys else gpd.GeoDataFrame()
-    line_all = gpd.GeoDataFrame(pd.concat(lines, ignore_index=True), crs=crs) if lines else gpd.GeoDataFrame()
-    pts_all = gpd.GeoDataFrame(pd.concat(pts, ignore_index=True), crs=crs) if pts else gpd.GeoDataFrame()
-
-    return poly_all, line_all, pts_all
 # ================= PREVIEW (UNCHANGED) =================
 def preview(poly, line, pts, path, pc, lc, ptc):
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -524,28 +407,15 @@ def preview(poly, line, pts, path, pc, lc, ptc):
 
         # POLYGON → YELLOW (FIXED)
         if not poly.empty:
-            poly.plot(
-                ax=ax,
-                facecolor="#fde047",
-                edgecolor="black",
-                linewidth=1
-            )
+            poly.plot(ax=ax, facecolor="#fde047", edgecolor="black", linewidth=1)
 
         # LINE → BLACK
         if not line.empty:
-            line.plot(
-                ax=ax,
-                color="black",
-                linewidth=1.5
-            )
+            line.plot(ax=ax, color="black", linewidth=1.5)
 
         # POINTS → RED
         if not pts.empty:
-            pts.plot(
-                ax=ax,
-                color="red",
-                markersize=20
-            )
+            pts.plot(ax=ax, color="red", markersize=20)
 
         ax.set_axis_off()
 
@@ -602,7 +472,7 @@ def upload():
             )
         else:
             df = read_input(file)
-            poly, line, pts = group_d(df, crs, out, mapping)
+            poly, line, pts = group_d(df, crs, out)
 
         preview_path = os.path.join(out, "output.png")
         preview(poly, line, pts, preview_path, "#34d399", "#6b7280", "#f59e0b")
