@@ -75,52 +75,34 @@ def normalize_columns(df):
     return df
 
 # ================= SAFE COLUMN RESOLVER =================
-def normalize_key(col):
-    return str(col).strip().lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
-
-
 def resolve_col(df, mapping, key):
     df = normalize_columns(df)
+
+    mapping = mapping or {}
+
+    # normalize mapping keys only (NOT values)
+    clean_mapping = {
+        normalize_key(k): v
+        for k, v in mapping.items()
+    }
+
     cols = {normalize_key(c): c for c in df.columns}
 
-    # UI mapping
-    if mapping and key in mapping and mapping[key]:
-        target = normalize_key(mapping[key])
+    # REQUIRED: must come from UI mapping
+    if key in clean_mapping and clean_mapping[key]:
+        target = normalize_key(clean_mapping[key])
 
         if target in cols:
             return cols[target]
 
         raise ValueError(
-            f"UI mapped column '{mapping[key]}' not found. Available: {list(df.columns)}"
+            f"UI mapping error: '{clean_mapping[key]}' not found in uploaded file columns."
         )
 
-    # fallback auto-detect
-    key_norm = normalize_key(key)
-    for k, original in cols.items():
-        if k == key_norm:
-            return original
-
+    # ❌ NO fallback, NO guessing
     raise ValueError(
         f"Missing UI mapping for required field: '{key}'"
     )
-
-
-# ================= OUTPUT SERVE =================
-@app.route("/outputs/<run_id>/<filename>")
-def outputs(run_id, filename):
-    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
-
-
-# ================= GET COLUMNS =================
-@app.route("/get-columns", methods=["POST"])
-def get_columns():
-    try:
-        df = read_input(request.files["file"])
-        return jsonify(list(df.columns))
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-
 # ================= GROUP A (FIXED) =================
 def group_a(df, forest, crs, out, mapping):
 
