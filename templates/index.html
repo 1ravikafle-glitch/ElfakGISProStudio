@@ -9,7 +9,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght=500;600;700&family=IBM+Plex+Mono:wght=400;500;600&family=Inter:wght=400;500;600&display=swap" rel="stylesheet">
 
 <style>
 :root {
@@ -650,58 +650,47 @@ input[type="text"]:focus {
                         </div>
 
                         <div class="group-content-card" id="card-C">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Click or Drop Flat File (CSV/Excel) or ZIP Archive</span>
-                                <input type="file" class="file">
-                            </div>
+    <div class="cyber-dropzone">
+        <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
+        <input type="file" class="file">
+    </div>
 
-                            <div class="field-group" id="c-mode-selector-wrapper">
-                                <label>Base Geometry Sub-Context</label>
-                                <div class="toggle-switch-container">
-                                    <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Mode A (Simple Poly)</div>
-                                    <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Mode B (Segmented)</div>
-                                </div>
-                            </div>
+    <div id="c-dynamic-content">
+        <div class="field-group" id="c-mode-selector-wrapper">
+            <label>Mode Selection</label>
+            <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
+                <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
+            </div>
+        </div>
 
-                            <div class="field-group hidden" id="shp-select-container">
-                                <label>Select Shapefile Layer from ZIP</label>
-                                <select data-key="selected_shp" id="shp-select">
-                                    <option value="">Awaiting archive mapping analysis...</option>
-                                </select>
-                            </div>
+        <div class="field-group hidden" id="shp-select-container">
+            <label>Available Layers</label>
+            <select id="shp-select"></select>
+        </div>
 
-                            <div class="input-row" id="c-vector-row-1">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
+        <div class="input-row" id="c-vector-row-1">
+            <div class="field-group"><label>X</label><select data-key="X"></select></div>
+            <div class="field-group"><label>Y</label><select data-key="Y"></select></div>
+        </div>
+        <div class="input-row" id="c-vector-row-2">
+            <div class="field-group"><label>Order</label><select data-key="Order"></select></div>
+            <div class="field-group" id="c-forest-wrapper"><label>Forest</label><select data-key="Forest"></select></div>
+        </div>
 
-                            <div class="input-row" id="c-vector-row-2">
-                                <div class="field-group"><label>Point Order Sequence</label><select data-key="Order"></select></div>
-                                <div class="field-group" id="c-forest-wrapper">
-                                    <label>Forest Column Field</label>
-                                    <select data-key="Forest" id="c-field-forest"></select>
-                                </div>
-                            </div>
-
-                            <div class="field-group hidden" id="c-compartment-wrapper">
-                                <label>Compartment Column Field</label>
-                                <select data-key="Compartment" id="c-field-compartment"></select>
-                            </div>
-
-                            <div style="border-top: 1px dashed rgba(20,40,30,0.08); margin: 6px 0; padding-top: 10px;">
-                                <div class="field-group"><label style="color: var(--gold-accent);">Grid Overlay Configuration</label></div>
-                            </div>
-
-                            <div class="input-row">
-                                <div class="field-group"><label>Cell Width (w)</label><input type="number" data-key="w" value="50"></div>
-                                <div class="field-group"><label>Cell Height (h)</label><input type="number" data-key="h" value="50"></div>
-                            </div>
-
-                            <div class="input-row">
-                                <div class="field-group"><label>Grid Rows</label><input type="number" data-key="rows" value="10"></div>
-                                <div class="field-group"><label>Grid Columns</label><input type="number" data-key="cols" value="10"></div>
-                            </div>
-                        </div>
+        <div style="margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 10px;">
+            <label style="font-size: 9px; color: var(--mint);">Grid Parameters (Sampling Density)</label>
+            <div class="input-row">
+                <div class="field-group"><label>Width (m)</label><input type="number" data-key="w" value="50"></div>
+                <div class="field-group"><label>Height (m)</label><input type="number" data-key="h" value="50"></div>
+            </div>
+            <div class="input-row">
+                <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
+                <div class="field-group"><label>Cols</label><input type="number" data-key="cols" value="10"></div>
+            </div>
+        </div>
+    </div>
+</div>
 
                         <div class="group-content-card" id="card-D">
                             <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Engine File</span><input type="file" class="file"></div>
@@ -945,6 +934,9 @@ document.querySelectorAll(".file").forEach(input => {
                         shpSelect.appendChild(opt);
                     });
 
+                    // PATCH #2: Visual selector is hidden, default state to "A" safely
+                    groupCSubMode = "A";
+
                     dzText.innerText = `🌿 Active Bundle: ${file.name}`;
                     dzText.style.color = "var(--border-active)";
 
@@ -966,7 +958,6 @@ document.querySelectorAll(".file").forEach(input => {
         dzText.innerText = `🌿 Active Table: ${file.name}`;
         dzText.style.color = "var(--border-active)";
 
-        // Route directly to /get-columns to fetch schema variables dynamically
         let fd = new FormData();
         fd.append("file", file);
 
@@ -1001,11 +992,10 @@ async function runPipeline() {
 
     const isZip = file.name.toLowerCase().endsWith(".zip");
 
-    if (mode === "C" && isZip) {
-        const shp = document.getElementById("shp-select").value;
-        if (!shp) {
-            return alert("Please select a target shapefile inside the structural archive before running pipeline process.");
-        }
+    // PATCH #3: Safety validation check ensuring select element is populated
+    if (mode === "C" && isZip && !document.getElementById("shp-select").value) {
+        alert("Select shapefile first");
+        return;
     }
 
     let fd = new FormData();
@@ -1013,32 +1003,29 @@ async function runPipeline() {
     fd.append("mode", mode);
     fd.append("zone", document.getElementById("zone").value);
 
-    // Dynamic Parameter Passing Matching Backend Requirements Context
     if (mode === "A") {
         const forestInput = activeCard.querySelector('[data-key="forest"]');
         fd.append("forest", forestInput ? forestInput.value : "FOREST");
     } else if (mode === "C") {
-        // Append grid configuration values directly into payload keys
         fd.append("w", activeCard.querySelector('[data-key="w"]').value);
         fd.append("h", activeCard.querySelector('[data-key="h"]').value);
         fd.append("rows", activeCard.querySelector('[data-key="rows"]').value);
         fd.append("cols", activeCard.querySelector('[data-key="cols"]').value);
         
+        // PATCH #1: Structural reorganization ensuring base_mode is explicitly sent inside all conditions
+        fd.append("base_mode", groupCSubMode);
+
         if (isZip) {
-            fd.append("selected_shp", document.getElementById("shp-select").value);
-        } else {
-            fd.append("base_mode", groupCSubMode);
+            const shp = document.getElementById("shp-select").value;
+            fd.append("selected_shp", shp);
         }
     }
 
-    // Build the dynamic column mapping JSON payload
     let mapping = {};
     activeCard.querySelectorAll("select, input").forEach(field => {
         let key = field.getAttribute("data-key");
         if (!key || field.type === "file") return;
-        
-        // Skip mapping append for non-column system parameters
-        if (["w", "h", "rows", "cols", "forest", "selected_shp"].includes(key)) return;
+        if (["w", "h", "rows", "cols", "forest"].includes(key)) return;
 
         mapping[key] = field.value;
     });
@@ -1053,7 +1040,6 @@ async function runPipeline() {
     if(radialBar) radialBar.style.strokeDashoffset = "75"; 
 
     try {
-        // POST to direct /upload route as defined in Flask
         let response = await fetch("/upload", { method: "POST", body: fd });
         
         if (!response.ok) {
@@ -1074,7 +1060,6 @@ async function runPipeline() {
             const meta = document.getElementById("run-meta");
 
             if(outImg) {
-                // Route to standard outputs path using run_id
                 outImg.src = `/outputs/${result.run_id}/output.png?t=` + new Date().getTime();
                 outImg.style.display = "block";
                 if(notice) notice.style.display = "none";
