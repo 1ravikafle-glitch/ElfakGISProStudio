@@ -211,17 +211,23 @@ def group_c(file, crs, w, h, rows, cols, out, mapping=None, selected_shp=None):
             shp_path = None
             for root, _, files in os.walk(temp_dir):
                 for f in files:
-                    if f == selected_shp or f.endswith(".shp") and f == selected_shp:
-                        shp_path = os.path.join(root, f)
-                        break
+            if f.lower().endswith(".shp") and f == os.path.basename(selected_shp):
+                shp_path = os.path.join(root, f)
+            break
 
             if not shp_path:
                 raise ValueError("Shapefile not found in ZIP")
 
             gdf = gpd.read_file(shp_path)
-            geom = gdf.unary_union
-
-            polygons = list(geom.geoms) if geom.geom_type != "Polygon" else [geom]
+        if gdf.crs is None:
+                gdf.set_crs(crs, inplace=True)
+            geom = gdf.geometry.unary_union
+        if geom.geom_type == "Polygon":
+            polygons = [geom]
+        elif geom.geom_type == "MultiPolygon":
+            polygons = list(geom.geoms)
+        else:
+            raise ValueError(f"Unsupported geometry: {geom.geom_type}")
 
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
