@@ -11,8 +11,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import (
-    Flask, render_template, request,
-    send_file, jsonify
+    Flask,
+    render_template,
+    request,
+    send_file,
+    jsonify,
+    send_from_directory
 )
 
 from shapely.geometry import Polygon, Point, LineString
@@ -123,7 +127,7 @@ def group_b(df, crs, out, mapping):
     for f, g in df.groupby(forest_col):
         for c, cg in g.groupby(comp_col):
             cg = cg.sort_values(order)
-            coords = list(zip(cg[x], cg[y]))
+            coords = list(zip(cg[x_col], cg[y_col]))
             if len(coords) < 3:
                 continue
             if coords[0] != coords[-1]:
@@ -354,7 +358,7 @@ def preview(poly, line, pts, path, pc, lc, ptc):
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
         # POLYGON
-        if not poly.empty:
+        if poly is not None and not poly.empty:
             poly.plot(ax=ax, facecolor="#fde047", edgecolor="black", linewidth=1)
         # LINE
         if not line.empty:
@@ -382,6 +386,47 @@ def get_columns():
         return jsonify([]), 400
 
 # ================= UPLOAD (UNCHANGED) =================
+@app.route("/get-shp-list", methods=["POST"])
+def get_shp_list():
+
+    file = request.files.get("file")
+
+    if not file:
+        return jsonify([])
+
+    temp_dir = os.path.join(
+        UPLOAD,
+        f"tmp_{uuid.uuid4()}"
+    )
+
+    os.makedirs(temp_dir, exist_ok=True)
+
+    try:
+
+        zip_path = os.path.join(
+            temp_dir,
+            "input.zip"
+        )
+
+        file.save(zip_path)
+
+        with zipfile.ZipFile(zip_path) as z:
+            z.extractall(temp_dir)
+
+        shp_files = []
+
+        for root, _, files in os.walk(temp_dir):
+            for f in files:
+                if f.lower().endswith(".shp"):
+                    shp_files.append(f)
+
+        return jsonify(shp_files)
+
+    finally:
+        shutil.rmtree(
+            temp_dir,
+            ignore_errors=True
+        )
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
@@ -429,11 +474,27 @@ def download(run_id):
     folder = os.path.join(OUTPUT, run_id)
     if not os.path.exists(folder):
         return "Output not found", 404
-    zip_path = shutil.make_archive(
-        os.path.join(OUTPUT, f"export_{run_id}"),
+    zip_path = os.path.join(
+    OUTPUT,
+    f"export_{run_id}.zip"
+)
+
+if not os.path.exists(zip_path):
+
+    shutil.make_archive(
+        zip_path.replace(".zip", ""),
         "zip",
         root_dir=folder
     )
+    )
+    @app.route("/outputs/<run_id>/<path:filename>")
+def serve_output(run_id, filename):
+    folder = os.path.join(OUTPUT, run_id)
+
+    if not os.path.exists(folder):
+        return "Not found", 404
+
+    return send_from_directory(folder, filename)
     return send_file(zip_path, as_attachment=True, download_name="gis_export.zip")
 
 # ================= HOME =================
