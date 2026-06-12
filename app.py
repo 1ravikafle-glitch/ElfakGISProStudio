@@ -405,9 +405,9 @@ def preview(poly, line, pts, path, pc, lc, ptc):
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
 
-        # POLYGON (optional outline, keep subtle or same as line)
+        # POLYGON → YELLOW (FIXED)
         if not poly.empty:
-            poly.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1)
+            poly.plot(ax=ax, facecolor="#fde047", edgecolor="black", linewidth=1)
 
         # LINE → BLACK
         if not line.empty:
@@ -428,7 +428,6 @@ def preview(poly, line, pts, path, pc, lc, ptc):
 
     finally:
         plt.close(fig)
-
 
 # ================= UPLOAD (UNCHANGED) =================
 @app.route("/upload", methods=["POST"])
