@@ -399,14 +399,13 @@ def group_c(file, crs, w, h, rows, cols, out,
     # ===================== OUTPUT =====================
 
     if not poly_gdf.empty:
-    poly_gdf.to_file(os.path.join(out, "poly.shp"))
+        poly_gdf.to_file(os.path.join(out, "poly.shp"))
 
     if not line_gdf.empty:
-    line_gdf.to_file(os.path.join(out, "line.shp"))
+        line_gdf.to_file(os.path.join(out, "line.shp"))
 
     if not pts_gdf.empty:
-
-    pts_gdf.to_file(os.path.join(out, "sample.shp"))
+        pts_gdf.to_file(os.path.join(out, "sample.shp"))
 
     # Excel export
     excel_df = pd.DataFrame({
