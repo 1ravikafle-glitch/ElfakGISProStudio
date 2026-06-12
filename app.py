@@ -45,10 +45,7 @@ def read_input(file):
 
 # ================= CRS FIX =================
 def get_crs(zone):
-    zone = str(zone).replace("UTM Zone", "").replace("N", "").strip()
-    zone = ''.join([c for c in str(zone) if c.isdigit()])
-    zone = int(zone)
-    return f"EPSG:326{zone}"
+    return f"EPSG:326{int(zone)}"
 
 # ================= ORDER NORMALIZER =================
 def normalize_order(df):
@@ -193,7 +190,8 @@ def group_b(df, crs, out, mapping):
                 coords.append(coords[0])
 
             poly = Polygon(coords)
-             if poly.is_empty:
+            
+            if poly.is_empty:
                 continue
 
             if not poly.is_valid:
@@ -427,6 +425,8 @@ def group_c(file, crs, w, h, rows, cols, out,
 
     excel_df.to_excel(os.path.join(out, "sample_points.xlsx"), index=False)
     excel_df.to_csv(os.path.join(out, "sample_points.csv"), index=False)
+                
+    return poly_gdf, line_gdf, pts_gdf
 
 
 # ================= GROUP D (FIXED CLEAN VERSION) =================
