@@ -89,6 +89,8 @@ def resolve_col(df, mapping, key):
 # ================= GROUP A (FIXED) =================
 def group_a(df, forest, crs, out, mapping):
     df = normalize_columns(df)
+    print(df.columns.tolist())
+    print(mapping)
     x = resolve_col(df, mapping, "X")
     y = resolve_col(df, mapping, "Y")
     order = resolve_col(df, mapping, "Order")
@@ -116,6 +118,8 @@ def group_a(df, forest, crs, out, mapping):
 # ================= GROUP B =================
 def group_b(df, crs, out, mapping):
     df = normalize_order(df)
+    print(df.columns.tolist())
+    print(mapping)
     x = resolve_col(df, mapping, "X")
     y = resolve_col(df, mapping, "Y")
     order = resolve_col(df, mapping, "Order")
@@ -298,6 +302,8 @@ def group_c(file, crs, w, h, rows, cols, out,
 # ================= GROUP D (FIXED CLEAN VERSION) =================
 def group_d(df, crs, out, mapping):
     df = normalize_columns(df)
+    print(df.columns.tolist())
+    print(mapping)
     x = resolve_col(df, mapping, "X")
     y = resolve_col(df, mapping, "Y")
     order_col = resolve_col(df, mapping, "Order")
