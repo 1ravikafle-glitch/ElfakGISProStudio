@@ -244,16 +244,16 @@ def group_c(file, crs, w, h, rows, cols, out,
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # ===================== CASE 2: CSV/EXCEL INPUT =====================
-    else:
-        df = normalize_order(read_input(file))
+# ===================== CASE 2: CSV/EXCEL INPUT =====================
+else:
+    df = normalize_order(read_input(file))
 
-        x_col = resolve_col(df, mapping, "X",
-                            ["X", "x", "Longitude", "Lon"])
-        y_col = resolve_col(df, mapping, "Y",
-                            ["Y", "y", "Latitude", "Lat"])
-        order_col = resolve_col(df, mapping, "Order",
-                                ["Order", "S.N", "SN", "s.n"])
+    # ================= MODE A =================
+    if base_mode == "A":
+
+        x_col = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
+        y_col = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
+        order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
 
         df = df.sort_values(order_col)
 
@@ -265,36 +265,36 @@ def group_c(file, crs, w, h, rows, cols, out,
         if coords[0] != coords[-1]:
             coords.append(coords[0])
 
-        # ===================== A / B MODE LOGIC =====================
+        polygons = [Polygon(coords)]
 
-        if base_mode == "A":
-            # SINGLE POLYGON MODE
-            polygons = [Polygon(coords)]
+    # ================= MODE B =================
+    elif base_mode == "B":
 
-        elif base_mode == "B":
-            # MULTI FOREST MODE (simulate Group B logic)
-            forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
-            comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
+        x_col = resolve_col(df, mapping, "X", ["X", "x"])
+        y_col = resolve_col(df, mapping, "Y", ["Y", "y"])
 
-            polygons = []
+        order_col = resolve_col(df, mapping, "Order", ["Order"])
+        forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
+        comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
 
-            for _, g in df.groupby(forest_col):
-                for _, cg in g.groupby(comp_col):
+        polygons = []
 
-                    cg = cg.sort_values(order_col)
-                    c = list(zip(cg[x_col], cg[y_col]))
+        for f, fg in df.groupby(forest_col):
+            for c, cg in fg.groupby(comp_col):
 
-                    if len(c) < 3:
-                        continue
+                cg = cg.sort_values(order_col)
+                coords = list(zip(cg[x_col], cg[y_col]))
 
-                    if c[0] != c[-1]:
-                        c.append(c[0])
+                if len(coords) < 3:
+                    continue
 
-                    polygons.append(Polygon(c))
+                if coords[0] != coords[-1]:
+                    coords.append(coords[0])
 
-        else:
-            raise ValueError("Invalid base_mode. Use 'A' or 'B'")
+                polygons.append(Polygon(coords))
 
+    else:
+        raise ValueError("Invalid base_mode. Use 'A' or 'B'")
     # ===================== BUILD GEODATAFRAME =====================
     poly_gdf = gpd.GeoDataFrame(
         [{"geometry": p} for p in polygons],
