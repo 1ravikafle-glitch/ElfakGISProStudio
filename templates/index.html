@@ -550,6 +550,20 @@ input[type="text"]:focus {
     color: var(--white-pure);
     border-color: var(--white-snow);
 }
+
+.btn-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.loading-glow {
+    animation: pulse 1s infinite alternate;
+}
+
+@keyframes pulse {
+    from { opacity: 0.6; }
+    to { opacity: 1; }
+}
 </style>
 </head>
 
@@ -618,7 +632,7 @@ input[type="text"]:focus {
                          
                         <div class="group-content-card active-card" id="card-A">
                             <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select ExcelData</span>
+                                <span class="dz-text">✨ Select Excel Data</span>
                                 <input type="file" class="file">
                             </div>
                             <div class="input-row">
@@ -648,47 +662,47 @@ input[type="text"]:focus {
                         </div>
 
                         <div class="group-content-card" id="card-C">
-    <div class="cyber-dropzone">
-        <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
-        <input type="file" class="file">
-    </div>
+                            <div class="cyber-dropzone">
+                                <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
+                                <input type="file" class="file">
+                            </div>
 
-    <div id="c-dynamic-content">
-        <div class="field-group" id="c-mode-selector-wrapper">
-            <label>Mode Selection</label>
-            <div class="toggle-switch-container">
-                <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
-                <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
-            </div>
-        </div>
+                            <div id="c-dynamic-content">
+                                <div class="field-group" id="c-mode-selector-wrapper">
+                                    <label>Mode Selection</label>
+                                    <div class="toggle-switch-container">
+                                        <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
+                                        <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
+                                    </div>
+                                </div>
 
-        <div class="field-group hidden" id="shp-select-container">
-            <label>Available Layers</label>
-            <select id="shp-select"></select>
-        </div>
+                                <div class="field-group hidden" id="shp-select-container">
+                                    <label>Available Layers</label>
+                                    <select id="shp-select"></select>
+                                </div>
 
-        <div class="input-row" id="c-vector-row-1">
-            <div class="field-group"><label>X</label><select data-key="X"></select></div>
-            <div class="field-group"><label>Y</label><select data-key="Y"></select></div>
-        </div>
-        <div class="input-row" id="c-vector-row-2">
-            <div class="field-group"><label>Order</label><select data-key="Order"></select></div>
-            <div class="field-group" id="c-forest-wrapper"><label>Forest</label><select data-key="Forest"></select></div>
-        </div>
+                                <div class="input-row" id="c-vector-row-1">
+                                    <div class="field-group"><label>X</label><select data-key="X"></select></div>
+                                    <div class="field-group"><label>Y</label><select data-key="Y"></select></div>
+                                </div>
+                                <div class="input-row" id="c-vector-row-2">
+                                    <div class="field-group"><label>Order</label><select data-key="Order"></select></div>
+                                    <div class="field-group" id="c-forest-wrapper"><label>Forest</label><select data-key="Forest"></select></div>
+                                </div>
 
-        <div style="margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 10px;">
-            <label style="font-size: 9px; color: var(--mint);">Grid Parameters (Sampling Density)</label>
-            <div class="input-row">
-                <div class="field-group"><label>Width (m)</label><input type="number" data-key="w" value="50"></div>
-                <div class="field-group"><label>Height (m)</label><input type="number" data-key="h" value="50"></div>
-            </div>
-            <div class="input-row">
-                <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
-                <div class="field-group"><label>Cols</label><input type="number" data-key="cols" value="10"></div>
-            </div>
-        </div>
-    </div>
-</div>
+                                <div style="margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 10px;">
+                                    <label style="font-size: 9px; color: var(--mint);">Grid Parameters (Sampling Density)</label>
+                                    <div class="input-row">
+                                        <div class="field-group"><label>Width (m)</label><input type="number" data-key="w" value="50"></div>
+                                        <div class="field-group"><label>Height (m)</label><input type="number" data-key="h" value="50"></div>
+                                    </div>
+                                    <div class="input-row">
+                                        <div class="field-group"><label>Rows</label><input type="number" data-key="rows" value="10"></div>
+                                        <div class="field-group"><label>Cols</label><input type="number" data-key="cols" value="10"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
                         <div class="group-content-card" id="card-D">
                             <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Engine File</span><input type="file" class="file"></div>
@@ -748,34 +762,7 @@ input[type="text"]:focus {
 
 </div>
 
-<style>
-/* ====== KEEP YOUR ORIGINAL CSS (UNCHANGED FOR SPACE) ====== */
-/* Only add small UX improvements below */
-
-.btn-disabled {
-    opacity: 0.5;
-    pointer-events: none;
-}
-
-.loading-glow {
-    animation: pulse 1s infinite alternate;
-}
-
-@keyframes pulse {
-    from { opacity: 0.6; }
-    to { opacity: 1; }
-}
-</style>
-</head>
-
-<body>
-
-<!-- ================= UI (YOUR ORIGINAL STRUCTURE — UNCHANGED) ================= -->
-<!-- KEEP YOUR FULL HTML HERE (same as you sent) -->
-<!-- ONLY JS IS FIXED BELOW -->
-
 <script>
-
 let mode = "A";
 
 /* TAB SWITCH */
@@ -792,8 +779,19 @@ function switchTab(t){
             n.classList.toggle("active", ["A","B","C","D"][i]===t);
         });
 
+    document.querySelectorAll(".matrix-tab")
+        .forEach(tab => {
+            tab.classList.toggle("active-tab", tab.id === "tab-" + t);
+        });
+
     document.getElementById("header-module").textContent =
         t + (t==="A"?" · Boundary Whole":" · GIS Mode");
+}
+
+/* SUB MODE FOR LOGIC PACKAGE C */
+function setGroupCSubMode(subMode) {
+    document.getElementById('c-toggle-A').classList.toggle('active-toggle', subMode === 'A');
+    document.getElementById('c-toggle-B').classList.toggle('active-toggle', subMode === 'B');
 }
 
 /* NORMALIZE */
@@ -808,11 +806,9 @@ function detect(cols){
     for(let c of cols){
         let n=norm(c);
 
-        if(!map.X && ["x","east","easting","lon","longitude"].includes(n)) map.X=c;
+        if(!map.X && ["x","east","easting","lon","longitude","lng"].includes(n)) map.X=c;
         if(!map.Y && ["y","north","northing","lat","latitude"].includes(n)) map.Y=c;
-
-        if(!map.Order && ["sn","sno","id","index","order","seq"].includes(n)) map.Order=c;
-
+        if(!map.Order && ["sn","sno","id","index","order","seq","rowid","fid"].includes(n)) map.Order=c;
         if(!map.Forest && n.includes("forest")) map.Forest=c;
         if(!map.Compartment && n.includes("comp")) map.Compartment=c;
     }
@@ -825,6 +821,7 @@ function fill(card, cols){
     const m=detect(cols);
 
     card.querySelectorAll("select").forEach(sel=>{
+        if(sel.id === "shp-select") return; // Skip internal system arrays
         sel.innerHTML="";
 
         cols.forEach(c=>{
@@ -843,15 +840,25 @@ function fill(card, cols){
 document.querySelectorAll(".file").forEach(inp=>{
     inp.onchange=async function(){
         let file=this.files[0];
+        if(!file) return;
+        
         let card=this.closest(".group-content-card");
+        let dzText = card.querySelector(".dz-text");
+        if(dzText) dzText.textContent = "📄 " + file.name;
 
-        let cols=["X","Y","S.N","Forest","Compartment"];
+        let cols=["X","Y","Order","Forest","Compartment"];
 
-        if(file.name.endsWith(".csv")){
-            let txt=await file.text();
-            cols=txt.split("\n")[0].split(",").map(x=>x.trim());
+        if(file.name.toLowerCase().endsWith(".csv")){
+            try {
+                let txt=await file.text();
+                let firstLine = txt.split("\n")[0];
+                if(firstLine.includes(",")) {
+                    cols=firstLine.split(",").map(x=>x.trim().replace(/^["']|["']$/g, ""));
+                }
+            } catch(e) {
+                console.error("Error reading columns, using system defaults", e);
+            }
         }
-
         fill(card,cols);
     }
 });
@@ -860,47 +867,76 @@ document.querySelectorAll(".file").forEach(inp=>{
 function mapping(card){
     let m={};
     card.querySelectorAll("select[data-key]").forEach(s=>{
-        m[s.dataset.key]=s.value;
+        if(s.value) m[s.dataset.key]=s.value;
     });
     return m;
 }
 
 /* RUN PIPELINE */
 async function runPipeline(){
-
     let card=document.getElementById("card-"+mode);
-    let file=card.querySelector("input[type=file]").files[0];
+    let fileInput=card.querySelector("input[type=file]");
+    let file=fileInput ? fileInput.files[0] : null;
 
     if(!file){
         alert("Upload file first");
         return;
     }
 
+    let headline = document.getElementById("status-headline");
+    let sub = document.getElementById("status-sub");
+    let radial = document.getElementById("radial-bar");
+
+    headline.textContent = "Processing...";
+    sub.textContent = "Running GIS Pipeline Engine";
+    radial.style.strokeDashoffset = "75"; // Animate progress visualizer
+
     let fd=new FormData();
     fd.append("file",file);
     fd.append("mode",mode);
     fd.append("zone",document.getElementById("zone").value);
-
-    /* 🔥 FIX HERE (THIS SOLVES YOUR ERROR) */
     fd.append("mapping",JSON.stringify(mapping(card)));
 
-    let res=await fetch("/upload",{method:"POST",body:fd});
-    let data=await res.json();
+    try {
+        let res=await fetch("/upload",{method:"POST",body:fd});
+        let data=await res.json();
 
-    if(data.error){
-        alert(data.error);
-        return;
+        if(data.error){
+            alert(data.error);
+            headline.textContent = "Error Occurred";
+            sub.textContent = "Pipeline execution dropped";
+            radial.style.strokeDashoffset = "150.7";
+            return;
+        }
+
+        headline.textContent = "Process Complete";
+        sub.textContent = "Topology successfully balanced";
+        radial.style.strokeDashoffset = "0"; // Complete processing bar ring
+
+        // Since Group C skips image rendering in the backend, conditionally hide notice or update image source
+        if(mode === "C") {
+            document.getElementById("output-img").style.display="none";
+            document.getElementById("empty-notice").style.display="block";
+            document.getElementById("empty-notice").textContent = "Shapefile Export Packages Generated Successfully.";
+        } else {
+            document.getElementById("output-img").src = "/outputs/"+data.run_id+"/output.png";
+            document.getElementById("output-img").style.display="block";
+            document.getElementById("empty-notice").style.display="none";
+        }
+
+        let dlBtn = document.getElementById("download-btn");
+        dlBtn.href=data.download;
+        dlBtn.style.display="inline-block";
+
+        document.getElementById("run-meta").textContent = "ID: " + data.run_id.substring(0,8) + "... | Status: Vector Export Ready";
+
+    } catch(err) {
+        alert("Pipeline communication dropped.");
+        headline.textContent = "Connection Lost";
+        sub.textContent = "Check API status";
+        radial.style.strokeDashoffset = "150.7";
     }
-
-    document.getElementById("output-img").src =
-        "/outputs/"+data.run_id+"/output.png";
-
-    document.getElementById("output-img").style.display="block";
-    document.getElementById("empty").style.display="none";
-
-    document.getElementById("download-btn").href=data.download;
 }
-
 </script>
 </body>
 </html>
