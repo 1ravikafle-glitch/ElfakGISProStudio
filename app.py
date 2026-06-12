@@ -224,11 +224,23 @@ def group_c(file, crs, w, h, rows, cols, out, selected_shp=None):
             shutil.rmtree(temp, ignore_errors=True)
 
     else:
-        df = normalize_order(read_input(file)).sort_values("Order")
-        coords = list(zip(df["X"], df["Y"]))
-        if coords and coords[0] != coords[-1]:
-            coords.append(coords[0])
-        polygons = [Polygon(coords)]
+        df = normalize_order(read_input(file))
+
+        x = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
+        y = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
+        order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
+
+    # safe sorting (only if column exists)
+    if order_col in df.columns:
+        df = df.sort_values(order_col)
+
+    coords = list(zip(df[x], df[y]))
+
+    # close polygon safely
+    if coords and coords[0] != coords[-1]:
+        coords.append(coords[0])
+
+    polygons = [Polygon(coords)]
 
     poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
     union = poly_gdf.unary_union
