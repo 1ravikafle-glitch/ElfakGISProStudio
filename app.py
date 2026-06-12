@@ -46,6 +46,8 @@ def read_input(file):
 # ================= CRS FIX =================
 def get_crs(zone):
     zone = str(zone).replace("UTM Zone", "").replace("N", "").strip()
+    zone = ''.join([c for c in str(zone) if c.isdigit()])
+    zone = int(zone)
     return f"EPSG:326{zone}"
 
 # ================= ORDER NORMALIZER =================
@@ -99,7 +101,7 @@ def resolve_col(df, mapping, key):
         )
 
     for c in cols:
-        if key.lower() in c:
+        if c.strip().lower() == key.strip().lower():
             return c
 
     raise ValueError(
@@ -185,15 +187,18 @@ def group_b(df, crs, out, mapping):
             coords = list(zip(cg[x], cg[y]))
 
             if len(coords) < 3:
-                raise ValueError(f"Not enough points in Forest={f}, Compartment={c}")
+                continue
 
             if coords[0] != coords[-1]:
                 coords.append(coords[0])
 
             poly = Polygon(coords)
+             if poly.is_empty:
+                continue
 
             if not poly.is_valid:
                 poly = poly.buffer(0)
+           
             line = LineString(coords)
 
             polys.append({
@@ -413,15 +418,15 @@ def group_c(file, crs, w, h, rows, cols, out,
     # Excel export
     if pts_gdf.empty:
         raise ValueError("No valid sample points generated")
-    if not pts_gdf.empty:
-        excel_df = pd.DataFrame({
+
+    excel_df = pd.DataFrame({
         "SN": pts_gdf["SN"],
         "X": pts_gdf.geometry.x,
         "Y": pts_gdf.geometry.y
     })
 
-    excel_df.to_excel(os.path.join(out, "sample_points.xlsx"),index=False)
-    excel_df.to_csv(os.path.join(out, "sample_points.csv"),index=False)
+    excel_df.to_excel(os.path.join(out, "sample_points.xlsx"), index=False)
+    excel_df.to_csv(os.path.join(out, "sample_points.csv"), index=False)
 
 
 # ================= GROUP D (FIXED CLEAN VERSION) =================
