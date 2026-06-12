@@ -396,16 +396,34 @@ def group_c(file, crs, w, h, rows, cols, out,
     )
 
     # ===================== OUTPUT =====================
+    # ===================== OUTPUT =====================
+
     if not poly_gdf.empty:
-        poly_gdf.to_file(...)
+    poly_gdf.to_file(os.path.join(out, "poly.shp"))
 
     if not line_gdf.empty:
-        line_gdf.to_file(...)
+    line_gdf.to_file(os.path.join(out, "line.shp"))
 
     if not pts_gdf.empty:
-        pts_gdf.to_file(...)
 
-    return poly_gdf, line_gdf, pts_gdf
+    pts_gdf.to_file(os.path.join(out, "sample.shp"))
+
+    # Excel export
+    excel_df = pd.DataFrame({
+        "SN": pts_gdf["SN"],
+        "X": pts_gdf.geometry.x,
+        "Y": pts_gdf.geometry.y
+    })
+
+    excel_df.to_excel(
+        os.path.join(out, "sample_points.xlsx"),
+        index=False
+    )
+
+    excel_df.to_csv(
+        os.path.join(out, "sample_points.csv"),
+        index=False
+    )
 
 
 # ================= GROUP D (FIXED CLEAN VERSION) =================
