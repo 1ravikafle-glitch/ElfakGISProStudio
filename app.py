@@ -8,12 +8,9 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
-from flask import Flask, request, jsonify, send_file, send_from_directory
-
+from flask import Flask, request, jsonify, send_file
 from shapely.geometry import Polygon, Point, LineString
-from shapely.ops import unary_union
 
 app = Flask(__name__)
 
@@ -23,60 +20,60 @@ OUTPUT = "outputs"
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 
-
-# ================= SAFE NORMALIZER =================
+# ================= NORMALIZER =================
 def norm(col):
     return re.sub(r"[^a-z0-9]", "", str(col).lower())
 
+# ================= KEY MAPS =================
+X_KEYS = {"x", "xcoord", "xcoordinate", "east", "easting", "longitude", "lon", "lng"}
+Y_KEYS = {"y", "ycoord", "ycoordinate", "north", "northing", "latitude", "lat"}
+ORDER_KEYS = {"sn", "sno", "s.n", "sno", "serial", "id", "index", "order", "seq", "rowid", "fid"}
 
-# ================= FIXED KEY SETS =================
-X_KEYS = {"x","xcoord","xcoordinate","easting","east","longitude","lon","lng"}
-Y_KEYS = {"y","ycoord","ycoordinate","northing","north","latitude","lat"}
-ORDER_KEYS = {"sn","sno","snno","sno","serial","serialno","id","index","order","seq","sequence","rowid","fid"}
+# ================= SAFE GEOMETRY =================
+def safe_geom(g):
+    if g is None:
+        return None
+    try:
+        if not g.is_valid:
+            g = g.buffer(0)
 
+        if g.geom_type == "GeometryCollection":
+            g = g.buffer(0)
 
-# ================= SAFE MULTIPOLYGON FIX =================
-def safe_geometry(poly):
-    if poly is None:
+        if g.geom_type not in ["Polygon", "MultiPolygon", "LineString"]:
+            g = g.buffer(0)
+
+        return g
+    except:
         return None
 
-    if not poly.is_valid:
-        poly = poly.buffer(0)
-
-    # convert GeometryCollection → Polygon
-    if poly.geom_type not in ["Polygon", "MultiPolygon"]:
-        poly = poly.buffer(0)
-
-    return poly
-
-
-# ================= FILE READER (FULL FIX) =================
+# ================= FILE READER =================
 def read_input(file):
     name = file.filename.lower()
 
-    # 🔥 ZIP FIX
+    # ZIP FIX
     if name.endswith(".zip"):
-        temp_dir = os.path.join(UPLOAD, str(uuid.uuid4()))
-        os.makedirs(temp_dir, exist_ok=True)
+        tmp = os.path.join(UPLOAD, str(uuid.uuid4()))
+        os.makedirs(tmp, exist_ok=True)
 
-        zip_path = os.path.join(temp_dir, "data.zip")
+        zip_path = os.path.join(tmp, "data.zip")
         file.save(zip_path)
 
         with zipfile.ZipFile(zip_path, "r") as z:
-            z.extractall(temp_dir)
+            z.extractall(tmp)
 
-        for root, _, files in os.walk(temp_dir):
+        for root, _, files in os.walk(tmp):
             for f in files:
-                path = os.path.join(root, f)
+                p = os.path.join(root, f)
                 try:
                     if f.endswith(".csv"):
-                        return pd.read_csv(path, encoding="utf-8-sig")
+                        return pd.read_csv(p, encoding="utf-8-sig")
                     if f.endswith((".xlsx", ".xls")):
-                        return pd.read_excel(path)
+                        return pd.read_excel(p)
                 except:
                     continue
 
-        raise ValueError("ZIP has no valid CSV/XLSX")
+        raise ValueError("ZIP contains no valid CSV/XLSX")
 
     # CSV FIX
     if name.endswith(".csv"):
@@ -86,69 +83,67 @@ def read_input(file):
             file.seek(0)
             return pd.read_csv(file, encoding="latin1")
 
-    # Excel FIX
+    # EXCEL FIX
     if name.endswith((".xlsx", ".xls")):
         return pd.read_excel(file)
 
     raise ValueError("Only CSV / Excel / ZIP supported")
 
-
-# ================= COLUMN RESOLVER (FIXED 'X,Y,S.N' ERROR) =================
+# ================= COLUMN RESOLVER (FIXED CORE ERROR) =================
 def resolve_xyz(df, mapping=None):
 
     df.columns = [str(c).strip() for c in df.columns]
 
-    x_col = y_col = order_col = None
+    x = y = order = None
 
-    # UI mapping first
+    # 1. UI mapping override
     if mapping:
-        x_col = mapping.get("X")
-        y_col = mapping.get("Y")
-        order_col = mapping.get("Order")
+        x = mapping.get("X")
+        y = mapping.get("Y")
+        order = mapping.get("Order")
 
-    # AUTO DETECT SAFE
+    # 2. AUTO DETECTION
     for col in df.columns:
         c = norm(col)
 
-        if x_col is None and c in X_KEYS:
-            x_col = col
-        if y_col is None and c in Y_KEYS:
-            y_col = col
-        if order_col is None and c in ORDER_KEYS:
-            order_col = col
+        if x is None and c in X_KEYS:
+            x = col
+        if y is None and c in Y_KEYS:
+            y = col
+        if order is None and c in ORDER_KEYS:
+            order = col
 
-    # 🔥 HARD FIX: common broken headers like "X,Y,S.N"
-    if x_col is None:
-        for col in df.columns:
-            if "x" in col.lower():
-                x_col = col
+    # 3. HARD FIX (handles X,Y,S.N weird headers)
+    if x is None:
+        for c in df.columns:
+            if "x" in c.lower():
+                x = c
+                break
 
-    if y_col is None:
-        for col in df.columns:
-            if "y" in col.lower():
-                y_col = col
+    if y is None:
+        for c in df.columns:
+            if "y" in c.lower():
+                y = c
+                break
 
-    if x_col is None or y_col is None:
-        raise ValueError(f"Missing X/Y columns. Found: {df.columns.tolist()}")
-
-    if order_col is None:
+    # 4. ORDER fallback
+    if order is None:
         df["Order"] = range(1, len(df) + 1)
-        order_col = "Order"
+        order = "Order"
 
-    return x_col, y_col, order_col
+    if x is None or y is None:
+        raise ValueError(f"Missing UI mapping X/Y. Columns: {df.columns.tolist()}")
 
+    return x, y, order
 
 # ================= SAFE POLYGON =================
 def safe_polygon(coords):
     poly = Polygon(coords)
-
     if not poly.is_valid:
         poly = poly.buffer(0)
-
     return poly
 
-
-# ================= GROUP C + EXCEL OUTPUT FIX =================
+# ================= GROUP C (FIXED + EXCEL OUTPUT) =================
 def group_c(df, crs, out, mapping):
 
     x, y, order = resolve_xyz(df, mapping)
@@ -158,7 +153,7 @@ def group_c(df, crs, out, mapping):
     coords = list(zip(df[x], df[y]))
 
     if len(coords) < 3:
-        raise ValueError("Not enough points")
+        raise ValueError("Need at least 3 points")
 
     if coords[0] != coords[-1]:
         coords.append(coords[0])
@@ -166,7 +161,7 @@ def group_c(df, crs, out, mapping):
     poly = safe_polygon(coords)
 
     poly_gdf = gpd.GeoDataFrame([{
-        "Area": poly.area / 10000,
+        "Area_ha": poly.area / 10000,
         "Perimeter": poly.length,
         "geometry": poly
     }], crs=crs)
@@ -181,12 +176,12 @@ def group_c(df, crs, out, mapping):
         crs=crs
     )
 
-    # SHP EXPORT
+    # SHP EXPORT SAFE
     poly_gdf.to_file(os.path.join(out, "polygon.shp"))
     line_gdf.to_file(os.path.join(out, "line.shp"))
     pts_gdf.to_file(os.path.join(out, "points.shp"))
 
-    # 🔥 EXCEL OUTPUT FIX
+    # ================= EXCEL FIX =================
     excel_path = os.path.join(out, "output.xlsx")
 
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
@@ -197,54 +192,17 @@ def group_c(df, crs, out, mapping):
 
     return poly_gdf, line_gdf, pts_gdf
 
-
-# ================= GROUP B (MULTIPOLYGON SAFE) =================
-def group_b(df, crs, out, mapping):
-
-    x, y, order = resolve_xyz(df, mapping)
-
-    forest_col = "Forest" if "Forest" in df.columns else df.columns[0]
-    comp_col = "Compartment" if "Compartment" in df.columns else None
-
-    polys, lines, pts = [], [], []
-
-    for f, g in df.groupby(forest_col):
-
-        if comp_col:
-            groups = g.groupby(comp_col)
-        else:
-            groups = [(f, g)]
-
-        for c, cg in groups:
-
-            cg = cg.sort_values(order)
-            coords = list(zip(cg[x], cg[y]))
-
-            if len(coords) < 3:
-                continue
-
-            if coords[0] != coords[-1]:
-                coords.append(coords[0])
-
-            poly = safe_polygon(coords)
-
-            polys.append({
-                "Forest": f,
-                "Compartment": c,
-                "geometry": poly
-            })
-
-    return None, None, None
-
-
-# ================= UPLOAD ROUTE =================
+# ================= ROUTE =================
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
         file = request.files["file"]
         mode = request.form.get("mode", "A")
         zone = request.form.get("zone", "44")
-        mapping = json.loads(request.form.get("mapping", "{}"))
+
+        # 🔥 FIX: mapping must come from frontend
+        mapping_raw = request.form.get("mapping", "{}")
+        mapping = json.loads(mapping_raw) if mapping_raw else {}
 
         run_id = str(uuid.uuid4())
         out = os.path.join(OUTPUT, run_id)
@@ -254,9 +212,9 @@ def upload():
         df = read_input(file)
 
         if mode == "C":
-            poly, line, pts = group_c(df, crs, out, mapping)
+            group_c(df, crs, out, mapping)
         else:
-            return jsonify({"error": "Only Group C fixed version shown"}), 400
+            return jsonify({"error": "Only Group C enabled in fixed version"}), 400
 
         return jsonify({
             "run_id": run_id,
@@ -265,7 +223,6 @@ def upload():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # ================= DOWNLOAD =================
 @app.route("/download/<run_id>")
@@ -279,7 +236,6 @@ def download(run_id):
     )
 
     return send_file(zip_path, as_attachment=True)
-
 
 if __name__ == "__main__":
     app.run(debug=True)
