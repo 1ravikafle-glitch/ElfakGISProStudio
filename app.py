@@ -5,14 +5,18 @@ import shutil
 import json
 import pandas as pd
 import geopandas as gpd
-
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from flask import Flask, request, jsonify, send_file, send_from_directory
-
+from flask import (
+    Flask,
+    render_template,
+    request,
+    send_file,
+    jsonify,
+    send_from_directory
+)
 from shapely.geometry import Polygon, Point, LineString
+from io import BytesIO
 
 app = Flask(__name__)
 
@@ -22,85 +26,86 @@ OUTPUT = "outputs"
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 
-# ================= FILE READER =================
+# ================= SAFE CSV READER =================
 def read_input(file):
     name = file.filename.lower()
+
     if name.endswith(".csv"):
         try:
             return pd.read_csv(file, encoding="utf-8-sig")
         except:
             file.seek(0)
             return pd.read_csv(file, encoding="latin1")
-    return pd.read_excel(file)
+
+    elif name.endswith(".xlsx") or name.endswith(".xls"):
+        return pd.read_excel(file)
+
+    else:
+        raise ValueError("Only CSV and Excel files are supported")
+
 
 # ================= CRS =================
 def get_crs(zone):
-    return f"EPSG:326{int(zone)}"
+    return "EPSG:32644" if zone == "44" else "EPSG:32645"
 
-# ================= NORMALIZE =================
-def normalize_columns(df):
-    df.columns = (
-        df.columns.astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "")
-        .str.replace("-", "")
-        .str.replace("_", "")
-    )
+
+# ================= ORDER =================
+def normalize_order(df):
+    for c in df.columns:
+        if c.lower() in ["sn", "s.n", "order"]:
+            df = df.rename(columns={c: "Order"})
     return df
 
-# ================= COLUMN RESOLVER =================
-def resolve_col(df, mapping, key):
-    df = normalize_columns(df)
-    mapping = mapping or {}
 
-    def norm(x):
-        return str(x).strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+# ================= SAFE GET COLUMN =================
+def col(mapping, key, fallback):
+    if mapping and key in mapping and mapping[key]:
+        return mapping[key]
+    return fallback
 
-    clean = {norm(k): v for k, v in mapping.items()}
-    cols = {norm(c): c for c in df.columns}
 
-    k = norm(key)
+# ================= FILE SERVE =================
+@app.route("/outputs/<run_id>/<filename>")
+def outputs(run_id, filename):
+    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
 
-    if k in clean and clean[k]:
-        target = norm(clean[k])
-        if target in cols:
-            return cols[target]
 
-        raise ValueError(f"Column '{clean[k]}' not found")
+# ================= GET COLUMNS =================
+@app.route("/get-columns", methods=["POST"])
+def get_columns():
+    file = request.files["file"]
 
-    raise ValueError(f"Missing UI mapping for '{key}'")
+    filter_forest = request.form.get("filterForest")
+    filter_comp = request.form.get("filterCompartment")
 
-# ================= SAFE POLYGON =================
-def safe_polygon(coords):
-    if len(coords) < 3:
-        return None
-    if coords[0] != coords[-1]:
-        coords.append(coords[0])
+    df = read_input(file)
 
-    poly = Polygon(coords)
-    if not poly.is_valid:
-        poly = poly.buffer(0)
+    if filter_forest and "Forest" in df.columns:
+        df = df[df["Forest"] == filter_forest]
 
-    return poly if not poly.is_empty else None
+    if filter_comp and "Compartment" in df.columns:
+        df = df[df["Compartment"] == filter_comp]
+
+    return jsonify(list(df.columns))
+
 
 # ================= GROUP A =================
-def group_a(df, forest, crs, out, mapping):
-    df = normalize_columns(df)
+def group_a(df, forest, crs, out, mapping=None):
+    df = normalize_order(df).sort_values("Order")
 
-    x = resolve_col(df, mapping, "X")
-    y = resolve_col(df, mapping, "Y")
-    order = resolve_col(df, mapping, "Order")
+    x_col = col(mapping, "X", "X")
+    y_col = col(mapping, "Y", "Y")
 
-    df = df.sort_values(order)
+    coords = list(zip(df[x_col], df[y_col]))
+    coords.append(coords[0])
 
-    coords = list(zip(df[x], df[y]))
-
-    poly = safe_polygon(coords)
+    poly = Polygon(coords)
     line = LineString(coords)
 
     poly_gdf = gpd.GeoDataFrame([{
         "Forest": forest,
+        "Area": poly.area / 10000,
+        "Perim": poly.length,
         "geometry": poly
     }], crs=crs)
 
@@ -111,7 +116,7 @@ def group_a(df, forest, crs, out, mapping):
 
     pts_gdf = gpd.GeoDataFrame(
         df,
-        geometry=gpd.points_from_xy(df[x], df[y]),
+        geometry=gpd.points_from_xy(df[x_col], df[y_col]),
         crs=crs
     )
 
@@ -121,66 +126,279 @@ def group_a(df, forest, crs, out, mapping):
 
     return poly_gdf, line_gdf, pts_gdf
 
-# ================= ROUTES =================
 
-@app.route("/")
-def home():
-    return "Forest Survey Plotter API is running"
+# ================= GROUP B (FIXED) =================
+def group_b(df, crs, out, mapping=None):
+    df = normalize_order(df)
 
-@app.route("/get-columns", methods=["POST"])
-def get_columns():
-    file = request.files["file"]
-    df = read_input(file)
-    df = normalize_columns(df)
-    return jsonify(list(df.columns))
+    x_col = col(mapping, "X", "X")
+    y_col = col(mapping, "Y", "Y")
+    order_col = col(mapping, "Order", "Order")
 
+    if "Forest" not in df.columns or "Compartment" not in df.columns:
+        raise ValueError("CSV must contain Forest and Compartment columns")
+
+    polys, lines, pts = [], [], []
+
+    for f, g in df.groupby("Forest"):
+        for c, cg in g.groupby("Compartment"):
+
+            cg = cg.sort_values(order_col)
+
+            coords = list(zip(cg[x_col], cg[y_col]))
+            coords.append(coords[0])
+
+            poly = Polygon(coords)
+            line = LineString(coords)
+
+            polys.append({
+                "Forest": f,
+                "Compartment": c,
+                "Area": poly.area / 10000,
+                "Perim": poly.length,
+                "geometry": poly
+            })
+
+            lines.append({
+                "Forest": f,
+                "Compartment": c,
+                "geometry": line
+            })
+
+            for _, r in cg.iterrows():
+                pts.append({
+                    "Forest": f,
+                    "Compartment": c,
+                    "Order": r[order_col],
+                    "geometry": Point(r[x_col], r[y_col])
+                })
+
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
+
+
+# ================= GROUP C (UNCHANGED LOGIC) =================
+def group_c(file, crs, w, h, rows, cols, out):
+
+    polygons = []
+
+    if file.filename.lower().endswith(".zip"):
+        folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+        os.makedirs(folder, exist_ok=True)
+
+        zip_path = os.path.join(folder, "input.zip")
+        file.save(zip_path)
+
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(folder)
+
+        gdf = None
+        for root, _, files in os.walk(folder):
+            for f in files:
+                if f.endswith(".shp"):
+                    gdf = gpd.read_file(os.path.join(root, f))
+                    break
+
+        geom = gdf.unary_union
+
+        if geom.geom_type == "Polygon":
+            polygons = [geom]
+        elif geom.geom_type == "MultiPolygon":
+            polygons = list(geom.geoms)
+        else:
+            polygons = [g for g in geom.geoms if g.geom_type == "Polygon"]
+
+    else:
+        df = read_input(file)
+
+        if {"Forest", "Compartment"}.issubset(df.columns):
+            for (f, c), g in df.groupby(["Forest", "Compartment"]):
+                g = g.sort_values("Order")
+                coords = list(zip(g["X"], g["Y"]))
+                coords.append(coords[0])
+                polygons.append(Polygon(coords))
+        else:
+            df = normalize_order(df).sort_values("Order")
+            coords = list(zip(df["X"], df["Y"]))
+            coords.append(coords[0])
+            polygons.append(Polygon(coords))
+
+    poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
+    poly_union = poly_gdf.unary_union
+
+    line_gdf = gpd.GeoDataFrame(
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
+        crs=crs
+    )
+
+    minx, miny, _, _ = poly_union.bounds
+
+    inside_points = []
+    sn = 1
+
+    for r in range(rows):
+        for c in range(cols):
+            x = minx + c * w
+            y = miny + r * h
+            center = Point(x + w / 2, y + h / 2)
+
+            if poly_union.contains(center):
+                inside_points.append({
+                    "SN": sn,
+                    "X": center.x,
+                    "Y": center.y,
+                    "geometry": center
+                })
+                sn += 1
+
+    pts_gdf = gpd.GeoDataFrame(inside_points, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "boundary_polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "boundary_lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
+
+    pd.DataFrame(inside_points)[["SN", "X", "Y"]].to_excel(
+        os.path.join(out, "sampleplot.xlsx"),
+        index=False
+    )
+
+    return poly_gdf, line_gdf, pts_gdf
+
+
+# ================= GROUP D (FIXED) =================
+def group_d(df, crs, out):
+    df = normalize_order(df).sort_values("Order")
+
+    if "Forest" not in df.columns:
+        raise ValueError("CSV must contain Forest column")
+
+    polys, lines, pts = [], [], []
+
+    for f, g in df.groupby("Forest"):
+
+        coords = list(zip(g["X"], g["Y"]))
+        coords.append(coords[0])
+
+        poly = Polygon(coords)
+        line = LineString(coords)
+
+        polys.append({
+            "Forest": f,
+            "Area": poly.area / 10000,
+            "Perim": poly.length,
+            "geometry": poly
+        })
+
+        lines.append({
+            "Forest": f,
+            "geometry": line
+        })
+
+        for _, r in g.iterrows():
+            pts.append({
+                "Forest": f,
+                "Order": r["Order"],
+                "geometry": Point(r["X"], r["Y"])
+            })
+
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
+
+
+# ================= PREVIEW =================
+def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
+    fig, ax = plt.subplots()
+
+    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
+    line_gdf.plot(ax=ax, color=lc, linewidth=2)
+    pts_gdf.plot(ax=ax, color=ptc, markersize=8)
+
+    plt.axis("off")
+    plt.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+
+# ================= UPLOAD =================
 @app.route("/upload", methods=["POST"])
 def upload():
+
     file = request.files["file"]
     mode = request.form["mode"]
     zone = request.form["zone"]
+
+    mapping_raw = request.form.get("mapping")
+    mapping = json.loads(mapping_raw) if mapping_raw else {}
+
+    w = float(request.form.get("w", 50))
+    h = float(request.form.get("h", 50))
+    rows = int(request.form.get("rows", 10))
+    cols = int(request.form.get("cols", 10))
     forest = request.form.get("forest", "FOREST")
-    mapping = json.loads(request.form.get("mapping", "{}"))
 
     run_id = str(uuid.uuid4())
     out = os.path.join(OUTPUT, run_id)
     os.makedirs(out, exist_ok=True)
 
     crs = get_crs(zone)
-
-    df = read_input(file)
+    preview_path = os.path.join(out, "output.png")
 
     if mode == "A":
+        df = read_input(file)
         poly, line, pts = group_a(df, forest, crs, out, mapping)
 
-        # preview
-        fig, ax = plt.subplots()
-        poly.plot(ax=ax, color="yellow")
-        line.plot(ax=ax, color="black")
-        pts.plot(ax=ax, color="red")
-        plt.axis("off")
+    elif mode == "B":
+        df = read_input(file)
+        poly, line, pts = group_b(df, crs, out, mapping)
 
-        img_path = os.path.join(out, "output.png")
-        plt.savefig(img_path)
-        plt.close()
+    elif mode == "C":
+        poly, line, pts = group_c(file, crs, w, h, rows, cols, out)
 
-    zip_path = os.path.join(out, "result.zip")
-    shutil.make_archive(zip_path.replace(".zip",""), "zip", out)
+    else:
+        df = read_input(file)
+        poly, line, pts = group_d(df, crs, out)
+
+    preview(poly, line, pts, preview_path, "yellow", "black", "red")
 
     return jsonify({
         "run_id": run_id,
-        "download": f"/download/{run_id}"
+        "download": "/download/" + run_id
     })
+
+
+def zip_folder(folder_path):
+    zip_path = folder_path + ".zip"
+    shutil.make_archive(folder_path, 'zip', folder_path)
+    return zip_path
+
 
 @app.route("/download/<run_id>")
 def download(run_id):
-    path = os.path.join(OUTPUT, run_id, "result.zip")
-    return send_file(path, as_attachment=True)
+    folder = os.path.join(OUTPUT, run_id)
 
-@app.route("/outputs/<run_id>/<file>")
-def outputs(run_id, file):
-    return send_from_directory(os.path.join(OUTPUT, run_id), file)
+    zip_path = zip_folder(folder)
 
-# ================= RUN =================
+    return send_file(
+        zip_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="output.zip"
+    )
+
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(debug=True)
