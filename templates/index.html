@@ -704,707 +704,208 @@
 <script>
 (function(){
 
-  /* ---------------------------------------------------------------- */
-  /*  STATE                                                             */
-  /* ---------------------------------------------------------------- */
   const state = {
     file: null,
-    fileKind: null,     // 'csv' | 'excel' | 'zip'
-    columns: [],         // raw column names from /get-columns
+    fileKind: null,
+    columns: [],
     mode: 'A',
-    baseMode: 'A',       // only relevant for mode C
-    zipShapefiles: [],   // list of .shp basenames found in uploaded zip
+    baseMode: 'A',
+    zipShapefiles: [],
     mapping: {X:'', Y:'', Order:'', Forest:'', Compartment:''}
   };
 
-  /* Field definitions used for the mapping UI + auto-match synonyms */
   const FIELD_DEFS = {
-    X:            {label:'X / Easting',  hint:'Numeric horizontal coordinate of each point.',
-                    synonyms:['x','xcoordinate','xcoord','easting','east','xcood','xcord','longitude','long','lon']},
-    Y:            {label:'Y / Northing', hint:'Numeric vertical coordinate of each point.',
-                    synonyms:['y','ycoordinate','ycoord','northing','north','ycood','ycord','latitude','lat']},
-    Order:        {label:'Point order',  hint:'Sequence number that traces the boundary in order.',
-                    synonyms:['order','ordering','ord','serial','sno','sn','s.n','seq','sequence','pointno','pointnumber']},
-    Forest:       {label:'Forest name',  hint:'Name of the forest each point belongs to.',
-                    synonyms:['forest','forestname','fname','rangepost','range','beat','cfug']},
-    Compartment:  {label:'Compartment',  hint:'Compartment / block within the forest.',
-                    synonyms:['compartment','comp','cpt','block','blockno','blockname','compartmentno']}
+    X:{label:'X / Easting',synonyms:['x','easting','longitude','lon','xcoord','xcoordinate']},
+    Y:{label:'Y / Northing',synonyms:['y','northing','latitude','lat','ycoord','ycoordinate']},
+    Order:{label:'Point order',synonyms:['order','seq','sequence','pointno','sno','serial']},
+    Forest:{label:'Forest name',synonyms:['forest','forestname','fname']},
+    Compartment:{label:'Compartment',synonyms:['compartment','comp','block']}
   };
 
-  /* Which mapping fields are required, per mode (and per base mode for C) */
-  function activeFields(){
-    switch(state.mode){
-      case 'A': return ['X','Y','Order'];
-      case 'B': return ['X','Y','Order','Forest','Compartment'];
-      case 'D': return ['X','Y','Order','Forest'];
-      case 'C':
-        if (state.fileKind === 'zip') return [];
-        return state.baseMode === 'B'
-          ? ['X','Y','Order','Forest','Compartment']
-          : ['X','Y','Order'];
-      default: return [];
-    }
-  }
+  const $ = id => document.getElementById(id);
 
-  /* ---------------------------------------------------------------- */
-  /*  DOM SHORTCUTS                                                     */
-  /* ---------------------------------------------------------------- */
-  const $ = (id) => document.getElementById(id);
+  const fileInput = $('file-input');
+  const dropzone = $('dropzone');
+  const fileChip = $('file-chip');
+  const fcName = $('fc-name');
+  const fcMeta = $('fc-meta');
+  const fcIcon = $('fc-icon');
 
-  const dropzone   = $('dropzone');
-  const fileInput  = $('file-input');
-  const fileChip   = $('file-chip');
-  const fcIcon     = $('fc-icon');
-  const fcName     = $('fc-name');
-  const fcMeta     = $('fc-meta');
-  const fcRemove   = $('fc-remove');
-  const dzText     = $('dz-text');
-  const dzSub      = $('dz-sub');
-  const uploadMsg  = $('upload-msg');
-  const pillUpload = $('pill-upload');
+  const modeCards = document.querySelectorAll('.mode-card');
 
-  const modeCards  = document.querySelectorAll('.mode-card');
-  const pillConfig = $('pill-config');
-  const configSub  = $('config-sub');
-
-  const forestField   = $('forest-field');
-  const forestInput   = $('forest-input');
-  const basemodeField = $('basemode-field');
-  const basemodeSelect= $('basemode-select');
-  const gridSection   = $('grid-section');
-  const shpSection    = $('shp-section');
-  const shpSelect     = $('shp-select');
-  const zoneInput     = $('zone-input');
-
-  const mappingSection = $('mapping-section');
-  const mappingDesc    = $('mapping-desc');
-  const mappingEmpty   = $('mapping-empty');
-  const mappingRows    = $('mapping-rows');
-  const autoMatchBtn   = $('auto-match-btn');
-
-  const diagList = $('diag-list');
-  const pillDiag = $('pill-diag');
+  const mappingRows = $('mapping-rows');
+  const mappingEmpty = $('mapping-empty');
 
   const generateBtn = $('generate-btn');
-  const runMessage  = $('run-message');
-  const spinner     = $('spinner');
-  const resultCard  = $('result-card');
-  const resultMeta  = $('result-meta');
-  const downloadLink= $('download-link');
+  const runMessage = $('run-message');
+  const spinner = $('spinner');
 
-  const roFile = $('ro-file');
-  const roMode = $('ro-mode');
-  const roZone = $('ro-zone');
-  const roMap  = $('ro-map');
-  const dotFile = $('dot-file');
-  const dotZone = $('dot-zone');
-  const dotMap  = $('dot-map');
+  const zoneInput = $('zone-input');
+  const forestInput = $('forest-input');
 
-  const MODE_LABELS = {
-    A: 'A · Single Boundary',
-    B: 'B · Multi-Compartment',
-    C: 'C · Sampling Grid',
-    D: 'D · Forest-wise Export'
-  };
+  const shpSelect = $('shp-select');
 
-  /* ---------------------------------------------------------------- */
-  /*  SIDEBAR NAV (smooth scroll)                                       */
-  /* ---------------------------------------------------------------- */
-  document.querySelectorAll('.step-link').forEach(link => {
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      const target = $(link.dataset.target);
-      if (target) target.scrollIntoView({behavior:'smooth', block:'start'});
-    });
-  });
+  const resultCard = $('result-card');
+  const downloadLink = $('download-link');
+  const resultMeta = $('result-meta');
 
-  /* ---------------------------------------------------------------- */
-  /*  FILE HANDLING                                                     */
-  /* ---------------------------------------------------------------- */
-  function kindFromName(name){
-    const n = name.toLowerCase();
-    if (n.endsWith('.zip')) return 'zip';
-    if (n.endsWith('.csv')) return 'csv';
-    if (n.endsWith('.xlsx') || n.endsWith('.xls')) return 'excel';
+  const previewWrapper = $('preview-wrapper');
+  const previewImg = $('preview-image');
+
+  function kind(name){
+    name = name.toLowerCase();
+    if(name.endsWith('.zip')) return 'zip';
+    if(name.endsWith('.csv')) return 'csv';
+    if(name.endsWith('.xlsx') || name.endsWith('.xls')) return 'excel';
     return null;
   }
 
-  dropzone.addEventListener('click', () => fileInput.click());
-  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag'); });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
-  dropzone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag');
-    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-  });
-  fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length) handleFile(e.target.files[0]);
-  });
-  fcRemove.addEventListener('click', (e) => {
-    e.stopPropagation();
-    resetFile();
-  });
-
-  function showUploadMsg(text, isError){
-    uploadMsg.textContent = text;
-    uploadMsg.classList.remove('hidden');
-    uploadMsg.style.borderColor = isError ? 'var(--err)' : 'var(--line)';
-    uploadMsg.style.color = isError ? 'var(--err)' : 'var(--text-dim)';
-  }
-  function clearUploadMsg(){ uploadMsg.classList.add('hidden'); }
-
-  function resetFile(){
-    state.file = null;
-    state.fileKind = null;
-    state.columns = [];
-    state.zipShapefiles = [];
-    state.mapping = {X:'', Y:'', Order:'', Forest:'', Compartment:''};
-    fileInput.value = '';
-    fileChip.classList.remove('show');
-    clearUploadMsg();
-    pillUpload.textContent = 'No file yet';
-    pillUpload.className = 'status-pill';
-    roFile.textContent = 'none';
-    dotFile.classList.remove('on');
-    renderMapping();
-    renderDiagnostics();
-    updateReadiness();
-  }
-
-  function handleFile(file){
-    const kind = kindFromName(file.name);
-    if (!kind){
-      showUploadMsg('Unsupported file type. Use .csv, .xlsx, .xls or .zip.', true);
-      return;
-    }
-    if (kind === 'zip' && state.mode !== 'C'){
-      showUploadMsg('Zipped shapefiles are only used in the Sampling Grid mode (03). Switch modes, or upload a CSV/Excel file.', true);
-      return;
-    }
-    if (kind === 'zip' && state.mode === 'C' && state.baseMode){
-      // zip is allowed for C regardless of base mode
-    }
-
-    clearUploadMsg();
-    state.file = file;
-    state.fileKind = kind;
-    state.columns = [];
-    state.zipShapefiles = [];
-    state.mapping = {X:'', Y:'', Order:'', Forest:'', Compartment:''};
-
-    fcIcon.textContent = kind === 'zip' ? 'ZIP' : (kind === 'excel' ? 'XLS' : 'CSV');
-    fcName.textContent = file.name;
-    fcMeta.textContent = kind === 'zip' ? 'Reading shapefiles…' : 'Reading columns…';
-    fileChip.classList.add('show');
-    pillUpload.textContent = 'File loaded';
-    pillUpload.className = 'status-pill ready';
-    roFile.textContent = file.name.length > 22 ? file.name.slice(0,19) + '…' : file.name;
-    dotFile.classList.add('on');
-
-    if (kind === 'zip'){
-      readZipShapefiles(file);
-    } else {
-      fetchColumns(file);
-    }
-    renderConfigVisibility();
-    updateReadiness();
-  }
-
-  function fetchColumns(file){
-    const fd = new FormData();
-    fd.append('file', file);
-    fetch('/get-columns', {method:'POST', body: fd})
-      .then(r => r.json())
-      .then(cols => {
-        if (!Array.isArray(cols) || cols.length === 0){
-          fcMeta.textContent = 'No columns detected — check the file.';
-          showUploadMsg('Could not read any columns from this file. Make sure it has a header row.', true);
-          state.columns = [];
-        } else {
-          state.columns = cols;
-          fcMeta.textContent = cols.length + ' column' + (cols.length === 1 ? '' : 's') + ' detected';
-        }
-        renderMapping();
-        autoMatchColumns(true);
-        renderDiagnostics();
-        updateReadiness();
-      })
-      .catch(() => {
-        fcMeta.textContent = 'Could not read columns automatically.';
-        showUploadMsg('Could not reach the server to read columns — you can still continue, but column mapping will be unavailable until this file loads.', true);
-        state.columns = [];
-        renderMapping();
-        renderDiagnostics();
-        updateReadiness();
-      });
-  }
-
-  function readZipShapefiles(file){
-    if (typeof JSZip === 'undefined'){
-      fcMeta.textContent = 'Uploaded — select shapefile manually if needed.';
-      renderConfigVisibility();
-      renderDiagnostics();
-      updateReadiness();
-      return;
-    }
-    JSZip.loadAsync(file).then(zip => {
-      const shp = [];
-      zip.forEach((relPath, entry) => {
-        if (!entry.dir && relPath.toLowerCase().endsWith('.shp')){
-          shp.push(relPath.split('/').pop());
-        }
-      });
-      state.zipShapefiles = shp;
-      fcMeta.textContent = shp.length
-        ? shp.length + ' shapefile' + (shp.length === 1 ? '' : 's') + ' found in archive'
-        : 'No .shp file found in this archive.';
-      renderShpOptions();
-      renderDiagnostics();
-      updateReadiness();
-    }).catch(() => {
-      fcMeta.textContent = 'Could not read this zip file.';
-      showUploadMsg('Could not open this zip archive — make sure it contains a valid shapefile (.shp, .shx, .dbf...).', true);
-      renderDiagnostics();
-      updateReadiness();
-    });
-  }
-
-  function renderShpOptions(){
-    shpSelect.innerHTML = '';
-    if (!state.zipShapefiles.length){
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = state.file ? 'No .shp found in this zip' : 'Upload a .zip to list shapefiles…';
-      shpSelect.appendChild(opt);
-      return;
-    }
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Select a shapefile…';
-    shpSelect.appendChild(placeholder);
-    state.zipShapefiles.forEach(name => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      shpSelect.appendChild(opt);
-    });
-    if (state.zipShapefiles.length === 1){
-      shpSelect.value = state.zipShapefiles[0];
-    }
-  }
-  shpSelect.addEventListener('change', () => { renderDiagnostics(); updateReadiness(); });
-
-  /* ---------------------------------------------------------------- */
-  /*  MODE SELECTION                                                    */
-  /* ---------------------------------------------------------------- */
-  modeCards.forEach(card => {
-    card.addEventListener('click', () => {
-      const mode = card.dataset.mode;
-      if (mode === state.mode) return;
-      state.mode = mode;
-      modeCards.forEach(c => c.classList.toggle('active', c === card));
-      roMode.textContent = MODE_LABELS[mode];
-
-      // If a zip was uploaded but the new mode isn't C, drop the file —
-      // it's no longer valid input.
-      if (state.fileKind === 'zip' && mode !== 'C'){
-        resetFile();
-        showUploadMsg('Switched away from Sampling Grid mode — the zipped shapefile no longer applies. Upload a CSV/Excel file instead.', false);
-      }
-
-      renderConfigVisibility();
-      renderMapping();
-      autoMatchColumns(true);
-      renderDiagnostics();
-      updateReadiness();
-    });
-  });
-
-  basemodeSelect.addEventListener('change', () => {
-    state.baseMode = basemodeSelect.value;
-    renderMapping();
-    autoMatchColumns(true);
-    renderDiagnostics();
-    updateReadiness();
-  });
-
-  /* Update the accept-attribute + helper copy on the dropzone for the active mode */
-  function renderConfigVisibility(){
-    // Forest name field — only meaningful for mode A
-    forestField.classList.toggle('hidden', state.mode !== 'A');
-
-    // Base-mode toggle — only for mode C, and only matters for non-zip input
-    basemodeField.classList.toggle('hidden', !(state.mode === 'C' && state.fileKind !== 'zip'));
-
-    // Grid spacing — only for mode C
-    gridSection.classList.toggle('hidden', state.mode !== 'C');
-
-    // Shapefile picker — only for mode C with a zip uploaded
-    shpSection.classList.toggle('hidden', !(state.mode === 'C' && state.fileKind === 'zip'));
-    if (state.mode === 'C' && state.fileKind === 'zip') renderShpOptions();
-
-    // Mapping section — hidden entirely for mode C + zip (geometry comes from the shapefile)
-    const showMapping = activeFields().length > 0;
-    mappingSection.classList.toggle('hidden', !showMapping);
-
-    // Dropzone copy + accept types per mode
-    if (state.mode === 'C'){
-      fileInput.setAttribute('accept', '.csv,.xlsx,.xls,.zip');
-      dzText.textContent = 'Drop a CSV/Excel boundary file, or a zipped shapefile';
-      dzSub.textContent = '.csv, .xlsx, .xls (points) — or .zip (existing boundary shapefile)';
-    } else {
-      fileInput.setAttribute('accept', '.csv,.xlsx,.xls');
-      dzText.textContent = 'Drop a CSV or Excel file here, or click to browse';
-      dzSub.textContent = '.csv, .xlsx, .xls with X / Y survey points';
-    }
-
-    // Mapping description per mode
-    const fields = activeFields();
-    if (!fields.length){
-      mappingDesc.textContent = 'Not needed — geometry comes from the uploaded shapefile.';
-    } else {
-      mappingDesc.textContent = 'Match your file\'s columns to: ' + fields.map(f => FIELD_DEFS[f].label).join(', ') + '.';
-    }
-
-    // Config panel subhead per mode
-    const subheads = {
-      A: 'Set the projection zone, the boundary\'s forest name, and map your X / Y / order columns.',
-      B: 'Set the projection zone, then map the columns that identify each point, forest and compartment.',
-      C: 'Set the projection zone and grid spacing, then describe the boundary the grid will fill — either from points or an uploaded shapefile.',
-      D: 'Set the projection zone, then map the columns that will split your data into one folder per forest.'
-    };
-    configSub.textContent = subheads[state.mode] || '';
-  }
-
-  /* ---------------------------------------------------------------- */
-  /*  COLUMN MAPPING UI                                                 */
-  /* ---------------------------------------------------------------- */
-  function normKey(s){
-    return String(s).trim().toLowerCase().replace(/[\s\-_]/g, '');
+  function activeFields(){
+    if(state.mode==='A') return ['X','Y','Order'];
+    if(state.mode==='B') return ['X','Y','Order','Forest','Compartment'];
+    if(state.mode==='D') return ['X','Y','Order','Forest'];
+    if(state.mode==='C') return state.baseMode==='B'
+      ? ['X','Y','Order','Forest','Compartment']
+      : ['X','Y','Order'];
+    return [];
   }
 
   function renderMapping(){
     const fields = activeFields();
-    mappingRows.innerHTML = '';
+    mappingRows.innerHTML='';
 
-    if (!fields.length){
-      mappingEmpty.classList.add('hidden');
+    if(!state.columns.length){
+      mappingEmpty.style.display='block';
       return;
     }
 
-    if (!state.columns.length){
-      mappingEmpty.classList.remove('hidden');
-      mappingEmpty.textContent = (state.fileKind === 'zip')
-        ? ''
-        : 'Upload a CSV or Excel file to see its columns here.';
-      return;
-    }
-    mappingEmpty.classList.add('hidden');
+    mappingEmpty.style.display='none';
 
-    fields.forEach(fieldKey => {
-      const def = FIELD_DEFS[fieldKey];
-      const row = document.createElement('div');
-      row.className = 'map-row';
-      row.dataset.field = fieldKey;
+    fields.forEach(f=>{
+      const row=document.createElement('div');
+      row.className='map-row';
 
-      const labelDiv = document.createElement('div');
-      labelDiv.innerHTML = `<div class="map-row-title">${def.label}</div><div class="map-row-hint">${def.hint}</div>`;
+      const left=document.createElement('div');
+      left.innerHTML=`<b>${FIELD_DEFS[f].label}</b>`;
 
-      const select = document.createElement('select');
-      select.dataset.field = fieldKey;
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = 'Select column…';
-      select.appendChild(placeholder);
-      state.columns.forEach(col => {
-        const opt = document.createElement('option');
-        opt.value = col;
-        opt.textContent = col;
-        select.appendChild(opt);
-      });
-      select.value = state.mapping[fieldKey] || '';
+      const sel=document.createElement('select');
+      const opt0=document.createElement('option');
+      opt0.value='';
+      opt0.text='Select';
+      sel.appendChild(opt0);
 
-      const tick = document.createElement('span');
-      tick.className = 'tick';
-      tick.textContent = '✓';
-      tick.title = 'Mapped';
-
-      select.addEventListener('change', () => {
-        state.mapping[fieldKey] = select.value;
-        select.classList.remove('matched');
-        tick.classList.toggle('show', !!select.value);
-        renderDiagnostics();
-        updateReadiness();
+      state.columns.forEach(c=>{
+        const o=document.createElement('option');
+        o.value=c;
+        o.text=c;
+        sel.appendChild(o);
       });
 
-      row.appendChild(labelDiv);
-      row.appendChild(select);
-      row.appendChild(tick);
+      sel.value=state.mapping[f]||'';
+
+      sel.onchange=()=>{
+        state.mapping[f]=sel.value;
+        update();
+      };
+
+      row.appendChild(left);
+      row.appendChild(sel);
+
       mappingRows.appendChild(row);
-
-      if (select.value) tick.classList.add('show');
     });
   }
 
-  /* Auto-match: scans normalized column headers against the synonym lists
-     for each active field and pre-selects the best match. */
-  function autoMatchColumns(silent){
+  function update(){
     const fields = activeFields();
-    if (!fields.length || !state.columns.length) {
-      if (!silent) flashAutoMatchBtn('No columns to match yet');
-      return;
-    }
+    const mapped = fields.filter(f=>state.mapping[f]);
 
-    const normCols = state.columns.map(c => ({raw: c, norm: normKey(c)}));
-    let matchedCount = 0;
+    generateBtn.disabled = !(state.file && mapped.length===fields.length);
 
-    fields.forEach(fieldKey => {
-      // keep an existing manual choice if it's still a valid column
-      if (state.mapping[fieldKey] && state.columns.includes(state.mapping[fieldKey])) {
-        matchedCount++;
-        return;
-      }
-      const synonyms = FIELD_DEFS[fieldKey].synonyms.map(normKey);
-      const hit = normCols.find(c => synonyms.includes(c.norm));
-      if (hit){
-        state.mapping[fieldKey] = hit.raw;
-        matchedCount++;
-      }
-    });
+    runMessage.textContent =
+      generateBtn.disabled
+        ? 'Complete mapping + upload file'
+        : 'Ready to generate';
+  }
 
-    // re-render rows and mark matched ones
+  fileInput.onchange = e=>{
+    const file = e.target.files[0];
+    if(!file) return;
+
+    state.file=file;
+    state.fileKind=kind(file.name);
+
+    fcName.textContent=file.name;
+    fcMeta.textContent='Loaded';
+    fcIcon.textContent=state.fileKind.toUpperCase();
+
     renderMapping();
-    fields.forEach(fieldKey => {
-      const row = mappingRows.querySelector(`.map-row[data-field="${fieldKey}"]`);
-      if (!row) return;
-      const select = row.querySelector('select');
-      const tick = row.querySelector('.tick');
-      if (select.value){
-        select.classList.add('matched');
-        tick.classList.add('show');
-      }
+    update();
+  };
+
+  modeCards.forEach(c=>{
+    c.onclick=()=>{
+      modeCards.forEach(x=>x.classList.remove('active'));
+      c.classList.add('active');
+      state.mode=c.dataset.mode;
+      renderMapping();
+      update();
+    };
+  });
+
+  generateBtn.onclick=async ()=>{
+    const fd=new FormData();
+
+    fd.append('file',state.file);
+    fd.append('mode',state.mode);
+    fd.append('zone',zoneInput.value);
+    fd.append('forest',forestInput.value||'FOREST');
+
+    const fields=activeFields();
+
+    // ✅ FIX: ALWAYS SEND ALL REQUIRED KEYS (even empty)
+    const mapping={};
+    fields.forEach(f=>{
+      mapping[f]=state.mapping[f] || '';
     });
 
-    if (!silent){
-      flashAutoMatchBtn(matchedCount + ' / ' + fields.length + ' matched');
-    }
-    renderDiagnostics();
-    updateReadiness();
-  }
-
-  function flashAutoMatchBtn(text){
-    const original = '✨ Auto-match columns';
-    autoMatchBtn.textContent = '✓ ' + text;
-    autoMatchBtn.disabled = true;
-    setTimeout(() => {
-      autoMatchBtn.textContent = original;
-      autoMatchBtn.disabled = false;
-    }, 1400);
-  }
-
-  autoMatchBtn.addEventListener('click', () => autoMatchColumns(false));
-
-  /* ---------------------------------------------------------------- */
-  /*  DIAGNOSTICS PANEL                                                 */
-  /* ---------------------------------------------------------------- */
-  function diagItem(ok, label, note){
-    return `<div class="diag-item ${ok ? 'ok-txt' : ''}">
-      <span class="diag-dot ${ok === true ? 'ok' : (ok === 'warn' ? 'warn' : '')}"></span>
-      <span>${label}</span>
-      ${note ? `<span class="diag-note">${note}</span>` : ''}
-    </div>`;
-  }
-
-  function renderDiagnostics(){
-    const items = [];
-    let allOk = true;
-
-    // file
-    if (state.file){
-      items.push(diagItem(true, 'File uploaded', state.fileKind.toUpperCase()));
-    } else {
-      items.push(diagItem(false, 'No file uploaded yet'));
-      allOk = false;
-    }
-
-    // zone
-    const zoneOk = !!String(zoneInput.value).trim();
-    items.push(diagItem(zoneOk, 'UTM zone set', zoneOk ? ('EPSG:326' + zoneInput.value) : null));
-    if (!zoneOk) allOk = false;
-
-    // mode-specific
-    if (state.mode === 'A'){
-      const forestOk = !!forestInput.value.trim();
-      items.push(diagItem(forestOk, 'Forest name set', forestOk ? forestInput.value.trim() : null));
-      if (!forestOk) allOk = false;
-    }
-
-    if (state.mode === 'C'){
-      const w = parseFloat($('grid-w').value), h = parseFloat($('grid-h').value);
-      const rows = parseInt($('grid-rows').value), cols = parseInt($('grid-cols').value);
-      const gridOk = w > 0 && h > 0 && rows > 0 && cols > 0;
-      items.push(diagItem(gridOk, 'Grid spacing valid', gridOk ? `${w}×${h} m, ${rows}×${cols}` : null));
-      if (!gridOk) allOk = false;
-
-      if (state.fileKind === 'zip'){
-        const shpOk = !!shpSelect.value;
-        items.push(diagItem(shpOk, 'Boundary shapefile selected', shpOk ? shpSelect.value : null));
-        if (!shpOk) allOk = false;
-      } else if (state.fileKind){
-        items.push(diagItem(true, 'Boundary source', state.baseMode === 'B' ? 'Multi-compartment' : 'Single boundary'));
-      }
-    }
-
-    // column mapping
-    const fields = activeFields();
-    if (fields.length){
-      if (!state.columns.length && state.fileKind){
-        items.push(diagItem('warn', 'Columns not detected yet', 'check file format'));
-        allOk = false;
-      } else if (state.columns.length){
-        const matched = fields.filter(f => state.mapping[f]);
-        const unmatched = fields.filter(f => !state.mapping[f]);
-        matched.forEach(f => items.push(diagItem(true, FIELD_DEFS[f].label + ' mapped', state.mapping[f])));
-        unmatched.forEach(f => items.push(diagItem(false, FIELD_DEFS[f].label + ' — needs a column', 'select manually')));
-        if (unmatched.length) allOk = false;
-      } else if (state.fileKind === 'zip'){
-        // no mapping needed
-      } else {
-        allOk = false;
-      }
-    }
-
-    diagList.innerHTML = items.join('');
-    pillDiag.textContent = allOk ? 'All set' : 'Needs attention';
-    pillDiag.className = 'status-pill ' + (allOk ? 'ready' : 'attn');
-
-    return allOk;
-  }
-
-  /* ---------------------------------------------------------------- */
-  /*  READINESS / TOPBAR READOUT                                        */
-  /* ---------------------------------------------------------------- */
-  zoneInput.addEventListener('input', () => {
-    roZone.textContent = (zoneInput.value || '—') + ' N';
-    dotZone.classList.toggle('on', !!String(zoneInput.value).trim());
-    renderDiagnostics();
-    updateReadiness();
-  });
-  forestInput.addEventListener('input', () => { renderDiagnostics(); updateReadiness(); });
-  ['grid-w','grid-h','grid-rows','grid-cols'].forEach(id => {
-    $(id).addEventListener('input', () => { renderDiagnostics(); updateReadiness(); });
-  });
-
-  function isReady(){
-    const diagOk = renderDiagnostics();
-    return !!state.file && diagOk;
-  }
-
-  function updateReadiness(){
-    const fields = activeFields();
-    const mappedCount = fields.filter(f => state.mapping[f]).length;
-    roMap.textContent = `${mappedCount} / ${fields.length} mapped`;
-    dotMap.classList.toggle('on', fields.length === 0 ? !!state.file : mappedCount === fields.length);
-
-    const ready = isReady();
-    generateBtn.disabled = !ready;
-    pillConfig.textContent = ready ? 'Ready' : 'Incomplete';
-    pillConfig.className = 'status-pill ' + (ready ? 'ready' : 'attn');
-
-    if (ready){
-      runMessage.textContent = 'Ready to generate.';
-      runMessage.className = 'run-message ok';
-    } else if (!state.file){
-      runMessage.textContent = 'Upload a file in step 01 to get started.';
-      runMessage.className = 'run-message';
-    } else {
-      runMessage.textContent = 'Finish step 03 — check the diagnostics panel for what\'s missing.';
-      runMessage.className = 'run-message';
-    }
-  }
-
-  /* ---------------------------------------------------------------- */
-  /*  GENERATE / SUBMIT                                                 */
-  /* ---------------------------------------------------------------- */
-  generateBtn.addEventListener('click', () => {
-    if (!isReady()) return;
+    fd.append('mapping',JSON.stringify(mapping));
 
     spinner.classList.add('show');
-    generateBtn.disabled = true;
-    runMessage.textContent = 'Generating shapefiles, preview and exports…';
-    runMessage.className = 'run-message';
-    resultCard.classList.remove('show');
+    generateBtn.disabled=true;
 
-    const fd = new FormData();
-    fd.append('file', state.file);
-    fd.append('mode', state.mode);
-    fd.append('zone', zoneInput.value);
-    fd.append('forest', forestInput.value || 'FOREST');
+    try{
+      const res=await fetch('/upload',{method:'POST',body:fd});
+      const data=await res.json();
 
-    const fields = activeFields();
-    const mapping = {};
-    fields.forEach(f => { if (state.mapping[f]) mapping[f] = state.mapping[f]; });
-    fd.append('mapping', JSON.stringify(mapping));
+      spinner.classList.remove('show');
+      generateBtn.disabled=false;
 
-    if (state.mode === 'C'){
-      fd.append('w', $('grid-w').value);
-      fd.append('h', $('grid-h').value);
-      fd.append('rows', $('grid-rows').value);
-      fd.append('cols', $('grid-cols').value);
-      if (state.fileKind === 'zip'){
-        fd.append('selected_shp', shpSelect.value);
-      } else {
-        fd.append('base_mode', state.baseMode);
+      if(data.error){
+        runMessage.textContent=data.error;
+        return;
       }
+
+      resultCard.classList.add('show');
+      resultMeta.textContent='run id '+data.run_id;
+      downloadLink.href=data.download;
+
+      previewWrapper.style.display='block';
+      previewImg.src='/outputs/'+data.run_id+'/output.png?t='+Date.now();
+
+      runMessage.textContent='Done';
+
+    }catch(err){
+      spinner.classList.remove('show');
+      generateBtn.disabled=false;
+      runMessage.textContent='Server error';
     }
-document.getElementById("preview-wrapper").style.display = "none";
-    fetch('/upload', {method:'POST', body: fd})
-      .then(r => r.json().then(data => ({status:r.status, data})))
-      .then(({status, data}) => {
-        spinner.classList.remove('show');
-        generateBtn.disabled = false;
-        if (status !== 200 || data.error){
-          runMessage.textContent = 'Error: ' + (data.error || 'Something went wrong.');
-          runMessage.className = 'run-message err';
-          return;
-        }
-        runMessage.textContent = 'Done.';
-        runMessage.className = 'run-message ok';
-        resultMeta.textContent = 'run id ' + data.run_id;
-downloadLink.href = data.download;
-resultCard.classList.add('show');
+  };
 
-/* preview */
-const preview = document.getElementById("preview-image");
-const wrapper = document.getElementById("preview-wrapper");
-
-preview.src =
-    "/outputs/" +
-    data.run_id +
-    "/output.png?t=" +
-    Date.now();
-
-wrapper.style.display = "block";
-      })
-      .catch(() => {
-        spinner.classList.remove('show');
-        generateBtn.disabled = false;
-        runMessage.textContent = 'Error: could not reach the server. Check your connection and try again.';
-        runMessage.className = 'run-message err';
-      });
-  });
-
-  /* ---------------------------------------------------------------- */
-  /*  INIT                                                              */
-  /* ---------------------------------------------------------------- */
-  renderConfigVisibility();
   renderMapping();
-  renderDiagnostics();
-  updateReadiness();
-  roZone.textContent = zoneInput.value + ' N';
-  dotZone.classList.add('on');
+  update();
 
 })();
+</script>
 </script>
 </body>
 </html>
