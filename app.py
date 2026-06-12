@@ -210,7 +210,7 @@ def group_c(file, crs, w, h, rows, cols, out, mapping=None, selected_shp=None):
 
             shp_path = None
             for root, _, files in os.walk(temp_dir):
-                for f in files:
+            for f in files:
             if f.lower().endswith(".shp") and f == os.path.basename(selected_shp):
                 shp_path = os.path.join(root, f)
             break
