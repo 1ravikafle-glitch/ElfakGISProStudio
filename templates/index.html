@@ -343,7 +343,6 @@ body::before {
     display: flex;
 }
 
-/* Operational Safeguard: CSS Class Toggling Architecture */
 .hidden {
     display: none !important;
 }
@@ -752,7 +751,7 @@ input[type="text"]:focus {
             </div>
             <div class="meta-footer">
                 <div>
-                    <div id="run-meta" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Metrics: Standby</div>
+                    <div id="run-meta" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Metrics: Ready</div>
                 </div>
                 <a id="download-btn" class="btn-download" href="#">Export Package (ZIP)</a>
             </div>
@@ -763,7 +762,7 @@ input[type="text"]:focus {
 </div>
 
 <script>
-// ================= INTERFACE RESIZER LOGIC (POINTER DRAG ENGINE) =================
+// ================= NAV PANEL DRAG RESIZER LAYOUT LOGIC =================
 const mainLayout = document.getElementById('main-layout-container');
 const centerWorkspace = document.getElementById('center-workspace-container');
 
@@ -786,13 +785,11 @@ leftColHandle.addEventListener('pointerdown', function(e) {
         currentLeftWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentRightWidth - 300));
         mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
     }
-
     function onPointerUp() {
         leftColHandle.classList.remove('dragging');
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('pointerup', onPointerUp);
     }
-
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 });
@@ -808,13 +805,11 @@ rightColHandle.addEventListener('pointerdown', function(e) {
         currentRightWidth = Math.max(150, Math.min(startWidth + deltaX, window.innerWidth - currentLeftWidth - 300));
         mainLayout.style.gridTemplateColumns = `${currentLeftWidth}px 10px 1fr 10px ${currentRightWidth}px`;
     }
-
     function onPointerUp() {
         rightColHandle.classList.remove('dragging');
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('pointerup', onPointerUp);
     }
-
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 });
@@ -830,13 +825,11 @@ centerRowHandle.addEventListener('pointerdown', function(e) {
         currentConsoleHeight = Math.max(80, Math.min(startHeight + deltaY, centerWorkspace.clientHeight - 100));
         centerWorkspace.style.gridTemplateRows = `1fr 6px ${currentConsoleHeight}px`;
     }
-
     function onPointerUp() {
         centerRowHandle.classList.remove('dragging');
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('pointerup', onPointerUp);
     }
-
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 });
@@ -846,7 +839,7 @@ document.getElementById('zone').addEventListener('change', function() {
     if (pips[1]) pips[1].innerText = "EPSG:326" + this.value;
 });
 
-// Global Modules Tracking State
+// ================= APP LEVEL STATE ENGINE =================
 let mode = "A";        
 let groupCSubMode = "A"; 
 
@@ -874,7 +867,6 @@ function switchTab(targetMode) {
     if (headerModule) headerModule.innerText = labels[targetMode];
 }
 
-// Group C Sub-mode Visibility Router for Flat Input Contexts (Mode A vs Mode B Column Specifications)
 function setGroupCSubMode(subMode) {
     groupCSubMode = subMode;
     
@@ -888,7 +880,6 @@ function setGroupCSubMode(subMode) {
         if(forestWrapper) forestWrapper.classList.remove('hidden');
         if(compartmentWrapper) compartmentWrapper.classList.remove('hidden');
     } else {
-        // Mode A specifies flat vector coordinates only, hiding sub-segmented attributes
         if(forestWrapper) forestWrapper.classList.add('hidden');
         if(compartmentWrapper) compartmentWrapper.classList.add('hidden');
     }
@@ -905,6 +896,7 @@ async function extractZipShp(file) {
     return shpFiles;
 }
 
+// ================= DYNAMIC FILE PARSER & INTERFACE MUTATION =================
 document.querySelectorAll(".file").forEach(input => {
     input.addEventListener("change", async function() {
         let file = this.files[0];
@@ -914,7 +906,6 @@ document.querySelectorAll(".file").forEach(input => {
         const activeMode = activeCard.id.replace("card-","");
         let dzText = this.closest('.cyber-dropzone').querySelector('.dz-text');
         
-        // Group C Targeted Interface DOM Hooks
         const modeSelector = document.getElementById("c-mode-selector-wrapper");
         const shpContainer = document.getElementById("shp-select-container");
         const row1 = document.getElementById("c-vector-row-1");
@@ -924,7 +915,6 @@ document.querySelectorAll(".file").forEach(input => {
 
         if (activeMode === "C") {
             if (file.name.toLowerCase().endsWith(".zip")) {
-                // UI Mutation Block: Enter Shapefile Pipeline Mode
                 shpContainer.classList.remove("hidden");
                 if (modeSelector) modeSelector.classList.add("hidden");
                 if (row1) row1.classList.add("hidden");
@@ -966,25 +956,25 @@ document.querySelectorAll(".file").forEach(input => {
                 return;
             }
 
-            // UI Mutation Block: Restore Table Mapping Fields
             if (modeSelector) modeSelector.classList.remove("hidden");
             if (row1) row1.classList.remove("hidden");
             if (row2) row2.classList.remove("hidden");
             shpContainer.classList.add("hidden");
-            
-            // Re-trigger layout alignment matching the current toggle state
             setGroupCSubMode(groupCSubMode);
         }
 
         dzText.innerText = `🌿 Active Table: ${file.name}`;
         dzText.style.color = "var(--border-active)";
 
+        // Route directly to /get-columns to fetch schema variables dynamically
         let fd = new FormData();
         fd.append("file", file);
 
         try {
             let res = await fetch("/get-columns", { method: "POST", body: fd });
             let cols = await res.json();
+
+            if (cols.error) throw new Error(cols.error);
 
             activeCard.querySelectorAll("select").forEach(s => {
                 if(s.id === "shp-select") return; 
@@ -994,12 +984,12 @@ document.querySelectorAll(".file").forEach(input => {
                 });
             });
         } catch (err) {
-            console.error("Failed executing coordinate vector sync mappings:", err);
+            console.error("Failed executing columns synchronization layout matrix:", err);
         }
     });
 });
 
-// ================= POST EXECUTION PIPELINE PROCESSING CONTROL =================
+// ================= TRANSACTION PIPELINE HANDLER =================
 async function runPipeline() {
     let activeCard = document.getElementById(`card-${mode}`);
     let fileInput = activeCard.querySelector(".file");
@@ -1011,7 +1001,6 @@ async function runPipeline() {
 
     const isZip = file.name.toLowerCase().endsWith(".zip");
 
-    // Operational Safeguard: Ensure valid layer identification inside ZIP packages
     if (mode === "C" && isZip) {
         const shp = document.getElementById("shp-select").value;
         if (!shp) {
@@ -1021,47 +1010,40 @@ async function runPipeline() {
 
     let fd = new FormData();
     fd.append("file", file);
-    
-    // Pass execution matrix paths safely to endpoint context targets
-    if (mode === "C") {
-        fd.append("mode", mode);
-        fd.append("base_mode", isZip ? "A" : groupCSubMode); 
-    } else {
-        fd.append("mode", mode);
-    }
-    
+    fd.append("mode", mode);
     fd.append("zone", document.getElementById("zone").value);
 
-    let mapping = {};
-    const directKeys = ["w", "h", "rows", "cols", "selected_shp"];
+    // Dynamic Parameter Passing Matching Backend Requirements Context
+    if (mode === "A") {
+        const forestInput = activeCard.querySelector('[data-key="forest"]');
+        fd.append("forest", forestInput ? forestInput.value : "FOREST");
+    } else if (mode === "C") {
+        // Append grid configuration values directly into payload keys
+        fd.append("w", activeCard.querySelector('[data-key="w"]').value);
+        fd.append("h", activeCard.querySelector('[data-key="h"]').value);
+        fd.append("rows", activeCard.querySelector('[data-key="rows"]').value);
+        fd.append("cols", activeCard.querySelector('[data-key="cols"]').value);
+        
+        if (isZip) {
+            fd.append("selected_shp", document.getElementById("shp-select").value);
+        } else {
+            fd.append("base_mode", groupCSubMode);
+        }
+    }
 
-    // Refactored Polymorphic Payload Mapping Construction Engine
+    // Build the dynamic column mapping JSON payload
+    let mapping = {};
     activeCard.querySelectorAll("select, input").forEach(field => {
         let key = field.getAttribute("data-key");
         if (!key || field.type === "file") return;
+        
+        // Skip mapping append for non-column system parameters
+        if (["w", "h", "rows", "cols", "forest", "selected_shp"].includes(key)) return;
 
-        // Extract DOM field mapping structural identifiers
-        const rawKey = key;
-        key = key.toLowerCase();
-
-        // Skip internal/hidden input variables that aren't relevant to current file type context
-        if (mode === "C") {
-            if (isZip && !directKeys.includes(key)) return; 
-            if (!isZip && key === "selected_shp") return;
-            if (!isZip && groupCSubMode === "A" && ["forest", "compartment"].includes(key)) return;
-        }
-
-        if (directKeys.includes(key)) {
-            fd.append(key, field.value);
-        } else {
-            // Retain absolute case matching for structural mapping keys (e.g., "X", "Y", "Order", "Forest", "Compartment")
-            mapping[rawKey] = field.value;
-        }
+        mapping[key] = field.value;
     });
-
     fd.append("mapping", JSON.stringify(mapping));
 
-    // Client Execution States Visualizer Engine UI Logic
     const radialBar = document.getElementById("radial-bar");
     const headline = document.getElementById("status-headline");
     const subline = document.getElementById("status-sub");
@@ -1071,34 +1053,41 @@ async function runPipeline() {
     if(radialBar) radialBar.style.strokeDashoffset = "75"; 
 
     try {
-        let response = await fetch("/run", { method: "POST", body: fd });
+        // POST to direct /upload route as defined in Flask
+        let response = await fetch("/upload", { method: "POST", body: fd });
+        
+        if (!response.ok) {
+            let errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+
         let result = await response.json();
 
-        if(result.success || result.status === "success") {
+        if(result.run_id) {
             headline.innerText = "Process Complete";
             subline.innerText = "Matrix Balanced";
             if(radialBar) radialBar.style.strokeDashoffset = "0";
 
-            // Visualizer canvas asset pipeline mapping updates
             const outImg = document.getElementById("output-img");
             const notice = document.getElementById("empty-notice");
             const dlBtn = document.getElementById("download-btn");
             const meta = document.getElementById("run-meta");
 
-            if(outImg && result.image_url) {
-                outImg.src = result.image_url + "?t=" + new Date().getTime();
+            if(outImg) {
+                // Route to standard outputs path using run_id
+                outImg.src = `/outputs/${result.run_id}/output.png?t=` + new Date().getTime();
                 outImg.style.display = "block";
                 if(notice) notice.style.display = "none";
             }
-            if(dlBtn && result.zip_url) {
-                dlBtn.href = result.zip_url;
+            if(dlBtn && result.download) {
+                dlBtn.href = result.download;
                 dlBtn.style.display = "inline-block";
             }
-            if(meta && result.metrics) {
-                meta.innerText = `Points: ${result.metrics.points || 0} | Area: ${result.metrics.area || 0}`;
+            if(meta) {
+                meta.innerText = `Run ID: ${result.run_id.substring(0,8)}... | Status: Success`;
             }
         } else {
-            throw new Error(result.error || "Execution Pipeline Failure");
+            throw new Error(result.error || "Execution Pipeline Processing Error");
         }
     } catch (err) {
         console.error(err);
