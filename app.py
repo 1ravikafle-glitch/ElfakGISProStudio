@@ -48,52 +48,63 @@ def get_crs(zone):
     zone = str(zone).replace("UTM Zone", "").replace("N", "").strip()
     return f"EPSG:326{zone}"
 
-
-# ================= NORMALIZE =================
+# ================= ORDER NORMALIZER =================
 def normalize_order(df):
-    df.columns = [str(c).strip() for c in df.columns]
+    df = normalize_columns(df)
 
-    for c in df.columns:
-        if str(c).lower() in ["sn", "s.n", "order"]:
-            df = df.rename(columns={c: "Order"})
+    rename_map = {}
+
+    for col in df.columns:
+        if col in ["order", "ordering", "ord", "serial", "sno", "sn", "s.n"]:
+            rename_map[col] = "order"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    return df
+# ================= NORMALIZE =================
+def normalize_columns(df):
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "")
+        .str.replace("-", "")
+        .str.replace("_", "")
+    )
     return df
 
-# ================= CANONICAL SCHEMA =================
-CANONICAL_SCHEMA = {
-    "X": ["x", "longitude", "lon", "easting"],
-    "Y": ["y", "latitude", "lat", "northing"],
-    "Order": ["order", "s.n", "sn", "s.n.", "serial", "sno"],
-    "Forest": ["forest"],
-    "Compartment": ["compartment"]
-}
-
-
 # ================= SAFE COLUMN RESOLVER =================
-def resolve_col(df, mapping, key, fallback_list):
-    # 1. UI mapping always wins
+def resolve_col(df, mapping, key):
+
+    df = normalize_columns(df)
+    cols = set(df.columns)
+
     if mapping and key in mapping and mapping[key]:
-        return mapping[key]
+        col = (
+            str(mapping[key])
+            .strip()
+            .lower()
+            .replace(" ", "")
+            .replace("-", "")
+            .replace("_", "")
+        )
 
-    # 2. canonical schema match
-    cols_lower = {c.lower().strip(): c for c in df.columns}
+        if col in cols:
+            return col
 
-    if key in CANONICAL_SCHEMA:
-        for alias in CANONICAL_SCHEMA[key]:
-            if alias in cols_lower:
-                return cols_lower[alias]
+        raise ValueError(
+            f"UI mapped column '{mapping[key]}' not found"
+        )
 
-    # 3. fallback list (last safety layer)
-    for f in fallback_list:
-        if f.lower() in cols_lower:
-            return cols_lower[f.lower()]
+    for c in cols:
+        if c == key.lower():
+            return c
 
-    # 4. final safe fallback (NO KeyError, no broken indentation)
-    if fallback_list:
-        fallback = fallback_list[0].lower()
-        if fallback in cols_lower:
-            return cols_lower[fallback]
-
-    raise ValueError(f"Missing column for {key}")
+    raise ValueError(
+        f"Missing UI mapping for required field: '{key}'"
+    )
 
 
 # ================= OUTPUT SERVE =================
@@ -114,10 +125,14 @@ def get_columns():
 
 # ================= GROUP A (FIXED) =================
 def group_a(df, forest, crs, out, mapping):
-    df = normalize_order(df).sort_values("Order")
 
-    x = resolve_col(df, mapping, "X", ["X", "x", "Longitude"])
-    y = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude"])
+    df = normalize_columns(df)
+
+    x = resolve_col(df, mapping, "X")
+    y = resolve_col(df, mapping, "Y")
+    order = resolve_col(df, mapping, "Order")
+
+    df = df.sort_values(order)
 
     coords = list(zip(df[x], df[y]))
     if len(coords) < 3:
@@ -146,22 +161,27 @@ def group_a(df, forest, crs, out, mapping):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP B (FIXED) =================
+# ================= GROUP B =================
 def group_b(df, crs, out, mapping):
+
     df = normalize_order(df)
 
-    x = resolve_col(df, mapping, "X", ["X", "x"])
-    y = resolve_col(df, mapping, "Y", ["Y", "y"])
-    order = resolve_col(df, mapping, "Order", ["Order"])
-    forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
-    comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
+    x = resolve_col(df, mapping, "X")
+    y = resolve_col(df, mapping, "Y")
+    order = resolve_col(df, mapping, "Order")
+    forest_col = resolve_col(df, mapping, "Forest")
+    comp_col = resolve_col(df, mapping, "Compartment")
 
-    polys, lines, pts = [], [], []
+    polys = []
+    lines = []
+    pts = []
 
     for f, g in df.groupby(forest_col):
+
         for c, cg in g.groupby(comp_col):
 
             cg = cg.sort_values(order)
+
             coords = list(zip(cg[x], cg[y]))
 
             if len(coords) < 3:
@@ -278,9 +298,9 @@ def group_c(file, crs, w, h, rows, cols, out,
         # ================= MODE A =================
         if base_mode == "A":
 
-            x_col = resolve_col(df, mapping, "X", ["X", "x", "Longitude", "Lon"])
-            y_col = resolve_col(df, mapping, "Y", ["Y", "y", "Latitude", "Lat"])
-            order_col = resolve_col(df, mapping, "Order", ["Order", "S.N", "SN", "s.n"])
+            x_col = resolve_col(df, mapping, "X")
+            y_col = resolve_col(df, mapping, "Y")
+            order_col = resolve_col(df, mapping, "Order")
 
             df = df.sort_values(order_col)
 
@@ -297,11 +317,12 @@ def group_c(file, crs, w, h, rows, cols, out,
         # ================= MODE B =================
         elif base_mode == "B":
 
-            x_col = resolve_col(df, mapping, "X", ["X", "x"])
-            y_col = resolve_col(df, mapping, "Y", ["Y", "y"])
-            order_col = resolve_col(df, mapping, "Order", ["Order"])
-            forest_col = resolve_col(df, mapping, "Forest", ["Forest"])
-            comp_col = resolve_col(df, mapping, "Compartment", ["Compartment"])
+            x_col = resolve_col(df, mapping, "X")
+            y_col = resolve_col(df, mapping, "Y")
+            order_col = resolve_col(df, mapping, "Order")
+            forest_col = resolve_col(df, mapping, "Forest")
+            comp_col = resolve_col(df, mapping, "Compartment")
+            
 
             for f, fg in df.groupby(forest_col):
 
@@ -337,7 +358,7 @@ def group_c(file, crs, w, h, rows, cols, out,
         crs=crs
     )
 
-    union = poly_gdf.geometry.union_all()
+    union = poly_gdf.unary_union
     minx, miny, maxx, maxy = union.bounds
 
     # ===================== GRID GENERATION =====================
@@ -377,17 +398,23 @@ def group_c(file, crs, w, h, rows, cols, out,
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP D (FIXED LIGHTLY) =================
-def group_d(df, crs, out):
-    df = normalize_order(df).sort_values("Order")
+# ================= GROUP D (FIXED CLEAN VERSION) =================
+def group_d(df, crs, out, mapping):
 
-    if "Forest" not in df.columns:
-        raise ValueError("Forest column missing")
+    df = normalize_columns(df)
+
+    x = resolve_col(df, mapping, "X")
+    y = resolve_col(df, mapping, "Y")
+    order_col = resolve_col(df, mapping, "Order")
+    forest_col = resolve_col(df, mapping, "Forest")
 
     polys, lines, pts = [], [], []
 
-    for f, g in df.groupby("Forest"):
-        coords = list(zip(g["X"], g["Y"]))
+    for f, g in df.groupby(forest_col):
+
+        g = g.sort_values(order_col)
+
+        coords = list(zip(g[x], g[y]))
 
         if len(coords) < 3:
             continue
@@ -398,11 +425,24 @@ def group_d(df, crs, out):
         poly = Polygon(coords)
         line = LineString(coords)
 
-        polys.append({"Forest": f, "Area": poly.area / 10000, "Perim": poly.length, "geometry": poly})
-        lines.append({"Forest": f, "geometry": line})
+        polys.append({
+            "Forest": f,
+            "Area": poly.area / 10000,
+            "Perim": poly.length,
+            "geometry": poly
+        })
+
+        lines.append({
+            "Forest": f,
+            "geometry": line
+        })
 
         for _, r in g.iterrows():
-            pts.append({"Forest": f, "Order": r["Order"], "geometry": Point(r["X"], r["Y"])})
+            pts.append({
+                "Forest": f,
+                "Order": r[order_col],
+                "geometry": Point(r[x], r[y])
+            })
 
     poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
     line_gdf = gpd.GeoDataFrame(lines, crs=crs)
@@ -426,15 +466,28 @@ def preview(poly, line, pts, path, pc, lc, ptc):
 
         # POLYGON → YELLOW (FIXED)
         if not poly.empty:
-            poly.plot(ax=ax, facecolor="#fde047", edgecolor="black", linewidth=1)
+            poly.plot(
+                ax=ax,
+                facecolor="#fde047",
+                edgecolor="black",
+                linewidth=1
+            )
 
         # LINE → BLACK
         if not line.empty:
-            line.plot(ax=ax, color="black", linewidth=1.5)
+            line.plot(
+                ax=ax,
+                color="black",
+                linewidth=1.5
+            )
 
         # POINTS → RED
         if not pts.empty:
-            pts.plot(ax=ax, color="red", markersize=20)
+            pts.plot(
+                ax=ax,
+                color="red",
+                markersize=20
+            )
 
         ax.set_axis_off()
 
@@ -491,7 +544,7 @@ def upload():
             )
         else:
             df = read_input(file)
-            poly, line, pts = group_d(df, crs, out)
+            poly, line, pts = group_d(df, crs, out, mapping)
 
         preview_path = os.path.join(out, "output.png")
         preview(poly, line, pts, preview_path, "#34d399", "#6b7280", "#f59e0b")
