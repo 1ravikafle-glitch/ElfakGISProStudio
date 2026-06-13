@@ -15,8 +15,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, rende
 from shapely.geometry import Polygon, Point, LineString
 from io import BytesIO
 
-app = Flask(name)
-
+app = Flask(_name_)
 UPLOAD = "uploads"
 OUTPUT = "outputs"
 
