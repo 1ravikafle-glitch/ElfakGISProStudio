@@ -12,12 +12,9 @@ import matplotlib.pyplot as plt
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, render_template
 from shapely.geometry import Polygon, Point, LineString
+from import io import BytesIO
 
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-app = Flask(__name__)
+app = Flask(name)
 
 UPLOAD = "uploads"
 OUTPUT = "outputs"
@@ -282,6 +279,11 @@ def download(run_id):
         root_dir=folder
     )
     return send_file(zip_path, as_attachment=True)
+    # ================= HOME =================
+@app.route("/")
+def home():
+    return render_template("index.html")
 
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+
+if name == "main":
+    app.run(debug=True)
