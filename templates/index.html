@@ -15,23 +15,31 @@
     --bg-glass: rgba(255, 255, 255, 0.55);
     --bg-card: rgba(255, 255, 255, 0.55);
     --border-soft: rgba(20, 40, 30, 0.09);
-    --border-active: #10b981; 
-    --glow-mint: rgba(16, 185, 129, 0.18); 
+    --border-active: #10b981;
+    --glow-mint: rgba(16, 185, 129, 0.18);
 
     --white-pure: #ffffff;
     --white-snow: #1c2b22;
     --white-mist: #33453a;
     --text-muted: #74897d;
 
-    --mint: #10b981; 
-    --emerald-glow: linear-gradient(135deg, #34d399 0%, #059669 100%); 
+    --mint: #10b981;
+    --emerald-glow: linear-gradient(135deg, #34d399 0%, #059669 100%);
     --amber-timber: #d97706;
     --survey-blue: #65a30d;
-    --gold-accent: #059669; 
+    --gold-accent: #059669;
 
     --font-display: 'Space Grotesk', system-ui, sans-serif;
     --font-body: 'Inter', system-ui, -apple-system, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+    --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(16, 185, 129, 0.3) transparent;
 }
 
 body {
@@ -66,6 +74,13 @@ body::before {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    opacity: 0;
+    animation: shellEnter 0.7s var(--ease-smooth) forwards;
+}
+
+@keyframes shellEnter {
+    from { opacity: 0; transform: translateY(10px) scale(0.995); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .app-header {
@@ -74,6 +89,12 @@ body::before {
     align-items: center;
     justify-content: space-between;
     padding: 18px 28px 14px;
+    animation: headerSlide 0.6s var(--ease-smooth) 0.05s both;
+}
+
+@keyframes headerSlide {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .brand {
@@ -92,6 +113,12 @@ body::before {
     justify-content: center;
     box-shadow: 0 6px 18px var(--glow-mint);
     flex-shrink: 0;
+    transition: box-shadow 0.4s var(--ease-soft), transform 0.4s var(--ease-soft);
+}
+
+.brand:hover .brand-mark {
+    box-shadow: 0 8px 26px var(--glow-mint);
+    transform: rotate(-6deg) scale(1.05);
 }
 
 .brand-text {
@@ -135,7 +162,7 @@ body::before {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #10b981; 
+    background: #10b981;
     box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
     animation: pulseGlow 2s infinite alternate;
 }
@@ -143,6 +170,8 @@ body::before {
 .header-readout .pip-value {
     color: var(--white-mist);
     font-weight: 500;
+    transition: color 0.3s var(--ease-soft);
+    display: inline-block;
 }
 
 .app-layout {
@@ -152,16 +181,42 @@ body::before {
     min-height: 0;
     padding: 0 20px 20px;
     box-sizing: border-box;
+    animation: layoutRise 0.7s var(--ease-smooth) 0.1s both;
+}
+
+@keyframes layoutRise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .layout-resizer {
     position: relative;
     z-index: 10;
-    transition: background 0.2s;
+    transition: background 0.25s var(--ease-soft);
     border-radius: 4px;
 }
+.layout-resizer::after {
+    content: '';
+    position: absolute;
+    border-radius: 3px;
+    background: rgba(16, 185, 129, 0.0);
+    transition: background 0.25s var(--ease-soft);
+}
+.layout-resizer.col-resizer::after {
+    top: 50%; left: 50%;
+    width: 3px; height: 36px;
+    transform: translate(-50%, -50%);
+}
+.layout-resizer.row-resizer::after {
+    top: 50%; left: 50%;
+    width: 36px; height: 3px;
+    transform: translate(-50%, -50%);
+}
 .layout-resizer:hover, .layout-resizer.dragging {
-    background: rgba(16, 185, 129, 0.25);
+    background: rgba(16, 185, 129, 0.18);
+}
+.layout-resizer:hover::after, .layout-resizer.dragging::after {
+    background: rgba(16, 185, 129, 0.55);
 }
 
 .layout-resizer.col-resizer {
@@ -188,11 +243,16 @@ body::before {
     flex-direction: column;
     overflow: hidden;
     box-shadow: 0 10px 40px rgba(28, 60, 45, 0.10);
-    transition: border-color 0.3s, box-shadow 0.3s;
+    transition: border-color 0.4s var(--ease-soft), box-shadow 0.4s var(--ease-soft);
     position: relative;
     height: 100%;
-    min-width: 150px; 
+    min-width: 150px;
     min-height: 80px;
+}
+
+.holo-panel:hover {
+    border-color: rgba(16, 185, 129, 0.22);
+    box-shadow: 0 14px 50px rgba(28, 60, 45, 0.14);
 }
 
 .holo-panel::after {
@@ -204,6 +264,7 @@ body::before {
     border-left: 1.5px solid rgba(16, 185, 129, 0.35);
     border-radius: 3px 0 0 0;
     pointer-events: none;
+    transition: border-color 0.4s var(--ease-soft);
 }
 .holo-panel::before {
     content: '';
@@ -214,6 +275,11 @@ body::before {
     border-right: 1.5px solid rgba(16, 185, 129, 0.35);
     border-radius: 0 0 3px 0;
     pointer-events: none;
+    transition: border-color 0.4s var(--ease-soft);
+}
+.holo-panel:hover::after,
+.holo-panel:hover::before {
+    border-color: rgba(16, 185, 129, 0.6);
 }
 
 .panel-title {
@@ -240,12 +306,38 @@ body::before {
     background: #10b981;
     box-shadow: 0 0 6px rgba(16, 185, 129, 0.55);
     flex-shrink: 0;
+    transition: transform 0.4s var(--ease-soft), box-shadow 0.4s var(--ease-soft);
+}
+
+.holo-panel:hover .panel-title::before {
+    transform: rotate(45deg) scale(1.15);
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
 }
 
 .panel-scroll {
     flex: 1;
     overflow-y: auto;
     padding: 20px 24px;
+    scroll-behavior: smooth;
+}
+
+.panel-scroll::-webkit-scrollbar,
+.config-stack::-webkit-scrollbar {
+    width: 6px;
+}
+.panel-scroll::-webkit-scrollbar-track,
+.config-stack::-webkit-scrollbar-track {
+    background: transparent;
+}
+.panel-scroll::-webkit-scrollbar-thumb,
+.config-stack::-webkit-scrollbar-thumb {
+    background: rgba(16, 185, 129, 0.25);
+    border-radius: 10px;
+    transition: background 0.25s var(--ease-soft);
+}
+.panel-scroll::-webkit-scrollbar-thumb:hover,
+.config-stack::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.5);
 }
 
 .tree-node {
@@ -258,12 +350,16 @@ body::before {
     align-items: center;
     gap: 10px;
     margin-bottom: 6px;
-    transition: all 0.25s ease;
+    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
+                transform 0.3s var(--ease-soft), box-shadow 0.3s var(--ease-soft);
 }
 .tree-node:hover {
     background: rgba(20, 40, 30, 0.05);
     color: var(--white-snow);
-    transform: translateX(3px);
+    transform: translateX(4px);
+}
+.tree-node:active {
+    transform: translateX(4px) scale(0.985);
 }
 .tree-node.active {
     background: rgba(16, 185, 129, 0.12);
@@ -305,12 +401,15 @@ body::before {
     font-weight: 600;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+    transition: all 0.35s var(--ease-smooth);
 }
 .matrix-tab:hover {
     color: var(--white-snow);
     border-color: rgba(28, 60, 45, 0.25);
-    transform: scale(1.04);
+    transform: scale(1.06);
+}
+.matrix-tab:active {
+    transform: scale(0.97);
 }
 
 .matrix-tab.active-tab {
@@ -330,14 +429,21 @@ body::before {
     flex: 1;
     overflow-y: auto;
     padding-right: 6px;
+    scroll-behavior: smooth;
 }
 
 .group-content-card {
     display: none;
     flex-direction: column;
+    gap: 16px;
 }
 .group-content-card.active-card {
     display: flex;
+    animation: cardEnter 0.4s var(--ease-smooth) both;
+}
+@keyframes cardEnter {
+    from { opacity: 0; transform: translateY(8px) scale(0.992); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .hidden {
     display: none !important;
@@ -352,11 +458,22 @@ body::before {
     text-align: center;
     cursor: pointer;
     position: relative;
-    transition: all 0.3s;
+    transition: border-color 0.35s var(--ease-soft), background 0.35s var(--ease-soft),
+                transform 0.35s var(--ease-soft), box-shadow 0.35s var(--ease-soft);
 }
 .cyber-dropzone:hover {
     border-color: var(--border-active);
-    background: rgba(16, 185, 129, 0.03);
+    background: rgba(16, 185, 129, 0.04);
+    box-shadow: 0 6px 22px rgba(16, 185, 129, 0.10);
+    transform: translateY(-1px);
+}
+.cyber-dropzone:active {
+    transform: translateY(0) scale(0.995);
+}
+.cyber-dropzone.drag-over {
+    border-color: var(--border-active);
+    background: rgba(16, 185, 129, 0.08);
+    box-shadow: 0 0 0 3px var(--glow-mint);
 }
 .cyber-dropzone input[type="file"] {
     position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;
@@ -365,6 +482,10 @@ body::before {
     font-size: 12px;
     color: var(--white-mist);
     font-weight: 500;
+    transition: color 0.3s var(--ease-soft);
+}
+.cyber-dropzone:hover span {
+    color: var(--white-snow);
 }
 
 .input-row {
@@ -382,6 +503,10 @@ body::before {
     margin-bottom: 5px;
     font-weight: 500;
     letter-spacing: 0.08em;
+    transition: color 0.3s var(--ease-soft);
+}
+.field-group:focus-within label {
+    color: var(--mint);
 }
 
 .vector-badge {
@@ -395,6 +520,7 @@ body::before {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    animation: cardEnter 0.35s var(--ease-smooth) both;
 }
 select, input[type="number"], input[type="text"] {
     width: 100%;
@@ -402,26 +528,30 @@ select, input[type="number"], input[type="text"] {
     border: 1px solid var(--border-soft);
     border-radius: 8px;
     padding: 0 12px;
-    color: #1c2b22; /* FIXED readability */
+    color: #1c2b22;
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 500;
     outline: none;
     box-sizing: border-box;
     height: 32px;
-    transition: all 0.2s ease;
+    transition: border-color 0.25s var(--ease-soft), background 0.25s var(--ease-soft),
+                box-shadow 0.25s var(--ease-soft), transform 0.15s var(--ease-soft);
 }
 select, input[type="number"] {
     font-family: var(--font-mono);
 }
+select:hover, input[type="number"]:hover, input[type="text"]:hover {
+    border-color: rgba(28, 60, 45, 0.22);
+}
 select:focus, input[type="number"]:focus, input[type="text"]:focus {
     border-color: var(--survey-blue);
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.95);
     box-shadow: 0 0 10px rgba(101, 163, 13, 0.18);
 }
 input[type="text"]:focus {
     border-color: var(--border-active);
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.95);
     box-shadow: 0 0 10px var(--glow-mint);
 }
 
@@ -442,7 +572,14 @@ input[type="text"]:focus {
     border-radius: 6px;
     cursor: pointer;
     color: var(--text-muted);
-    transition: all 0.2s ease;
+    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
+                box-shadow 0.3s var(--ease-soft), transform 0.2s var(--ease-soft);
+}
+.toggle-option:hover {
+    color: var(--white-snow);
+}
+.toggle-option:active {
+    transform: scale(0.97);
 }
 .toggle-option.active-toggle {
     background: var(--white-pure);
@@ -469,20 +606,35 @@ input[type="text"]:focus {
     letter-spacing: 0.03em;
     cursor: pointer;
     box-shadow: 0 4px 15px rgba(16, 185, 129, 0.2);
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform 0.35s var(--ease-smooth), box-shadow 0.35s var(--ease-smooth), filter 0.3s var(--ease-soft);
+    position: relative;
+    overflow: hidden;
+}
+.btn-cyber-run::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.35) 50%, transparent 70%);
+    transform: translateX(-100%);
+    transition: transform 0.6s var(--ease-soft);
 }
 .btn-cyber-run:hover {
     transform: translateY(-2px);
     box-shadow: 0 8px 25px rgba(16, 185, 129, 0.45);
 }
+.btn-cyber-run:hover::after {
+    transform: translateX(100%);
+}
 .btn-cyber-run:active {
-    transform: translateY(0);
+    transform: translateY(0) scale(0.985);
+    filter: brightness(0.97);
 }
 
 .radial-progress-box {
     position: relative;
     width: 56px;
     height: 56px;
+    transition: transform 0.4s var(--ease-soft);
 }
 .radial-svg {
     transform: rotate(-90deg);
@@ -492,8 +644,31 @@ input[type="text"]:focus {
 }
 .fill-arc {
     fill: none; stroke: var(--mint); stroke-width: 4;
+    stroke-linecap: round;
     stroke-dasharray: 150.7; stroke-dashoffset: 150.7;
-    transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: stroke-dashoffset 0.8s var(--ease-soft), stroke 0.4s var(--ease-soft);
+}
+
+#status-headline {
+    transition: color 0.3s var(--ease-soft);
+}
+#status-headline.is-processing {
+    animation: pulse 1.1s infinite alternate;
+    color: var(--mint);
+}
+#status-headline.is-error {
+    color: #dc2626;
+}
+.radial-progress-box.is-processing {
+    animation: spinPulse 1.4s infinite linear;
+}
+@keyframes spinPulse {
+    0% { transform: rotate(0deg) scale(1); }
+    50% { transform: rotate(180deg) scale(1.04); }
+    100% { transform: rotate(360deg) scale(1); }
+}
+.fill-arc.is-error {
+    stroke: #dc2626 !important;
 }
 
 .visualizer-desk {
@@ -518,23 +693,37 @@ input[type="text"]:focus {
     align-items: center;
     justify-content: center;
     box-shadow: inset 0 10px 40px rgba(0,0,0,0.7);
+    transition: box-shadow 0.4s var(--ease-soft);
 }
 
 .canvas-wrapper::before {
     content: ''; position: absolute; inset: 0;
     border: 1px solid var(--border-active); border-radius: 16px;
     pointer-events: none; opacity: 0.12;
+    transition: opacity 0.4s var(--ease-soft);
+}
+
+.canvas-wrapper.is-active::before {
+    opacity: 0.35;
+}
+
+#empty-notice {
+    font-size:12px;
+    font-family: var(--font-mono);
+    letter-spacing:0.04em;
+    color: var(--text-muted);
+    transition: opacity 0.4s var(--ease-soft);
 }
 
 #output-img {
     max-width: 95%; max-height: 95%; object-fit: contain;
     display: none; border-radius: 10px;
-    animation: imageReveal 0.5s ease forwards;
+    animation: imageReveal 0.6s var(--ease-smooth) forwards;
 }
 
 @keyframes imageReveal {
-    from { opacity: 0; transform: scale(0.97); }
-    to { opacity: 1; transform: scale(1); }
+    from { opacity: 0; transform: scale(0.96); filter: blur(6px); }
+    to { opacity: 1; transform: scale(1); filter: blur(0); }
 }
 
 .meta-footer {
@@ -542,6 +731,13 @@ input[type="text"]:focus {
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
+}
+
+#run-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    transition: color 0.3s var(--ease-soft);
 }
 
 .btn-download {
@@ -554,12 +750,23 @@ input[type="text"]:focus {
     text-decoration: none;
     font-weight: 500;
     display: none;
-    transition: all 0.2s ease;
+    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
+                border-color 0.3s var(--ease-soft), transform 0.25s var(--ease-soft),
+                box-shadow 0.3s var(--ease-soft);
+}
+.btn-download.is-visible {
+    display: inline-block;
+    animation: cardEnter 0.4s var(--ease-smooth) both;
 }
 .btn-download:hover {
     background: var(--white-snow);
     color: var(--white-pure);
     border-color: var(--white-snow);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(28, 43, 34, 0.25);
+}
+.btn-download:active {
+    transform: translateY(0) scale(0.98);
 }
 
 .btn-disabled {
@@ -574,6 +781,14 @@ input[type="text"]:focus {
 @keyframes pulse {
     from { opacity: 0.6; }
     to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }
 </style>
 </head>
@@ -611,7 +826,7 @@ input[type="text"]:focus {
                 <div class="tree-node" onclick="switchTab('B')">🌲 Group B — Segment Forest</div>
                 <div class="tree-node" onclick="switchTab('C')">🌲 Group C — Sample Plot</div>
                 <div class="tree-node" onclick="switchTab('D')">🌲 Group D — Complex Version A</div>
-                 
+
                 <div style="margin-top: 35px;">
                     <div class="field-group">
                         <label>Target GIS Projection</label>
@@ -626,11 +841,11 @@ input[type="text"]:focus {
 
         <div class="layout-resizer col-resizer" id="left-col-handle"></div>
         <div class="workspace-split" id="center-workspace-container">
-             
+
             <div class="holo-panel">
                 <div class="panel-title">Parameter Settings Matrix</div>
                 <div class="panel-scroll matrix-container">
-                     
+
                     <div class="matrix-selectors">
                         <div class="matrix-tab active-tab" id="tab-A" onclick="switchTab('A')">A</div>
                         <div class="matrix-tab" id="tab-B" onclick="switchTab('B')">B</div>
@@ -639,7 +854,7 @@ input[type="text"]:focus {
                     </div>
 
                     <div class="config-stack">
-                         
+
                         <div class="group-content-card active-card" id="card-A">
                             <div class="cyber-dropzone">
                                 <span class="dz-text">✨ Select Excel Data</span>
@@ -690,7 +905,7 @@ input[type="text"]:focus {
                                     <div class="vector-badge">
                                         <div style="font-weight: 600; margin-bottom: 2px;">📦 Archive Bundle Map Detected</div>
                                         <div style="font-size: 10px; opacity: 0.8; margin-bottom: 8px;">Skipping XY matching. Select target layer from the package:</div>
-                                        
+
                                         <div class="field-group" style="width: 100%;">
                                             <label style="color: #064e3b;">Target Vector Layer (.shp)</label>
                                             <select id="c-shp-selector" style="background: #ffffff; border-color: rgba(16, 185, 129, 0.4); color: #064e3b;"></select>
@@ -709,6 +924,30 @@ input[type="text"]:focus {
                                             <label>Forest Identifier</label>
                                             <select data-key="Forest"></select>
                                         </div>
+                                    </div>
+                                </div>
+
+                                <div class="field-group" style="margin-top: 4px;">
+                                    <label>Sample Grid Settings (leave blank for defaults)</label>
+                                </div>
+                                <div class="input-row">
+                                    <div class="field-group">
+                                        <label>Cell Width — w (default 50)</label>
+                                        <input type="number" id="c-grid-w" min="0.01" step="any" placeholder="50">
+                                    </div>
+                                    <div class="field-group">
+                                        <label>Cell Height — h (default 50)</label>
+                                        <input type="number" id="c-grid-h" min="0.01" step="any" placeholder="50">
+                                    </div>
+                                </div>
+                                <div class="input-row">
+                                    <div class="field-group">
+                                        <label>Grid Rows (default 10)</label>
+                                        <input type="number" id="c-grid-rows" min="1" step="1" placeholder="10">
+                                    </div>
+                                    <div class="field-group">
+                                        <label>Grid Cols (default 10)</label>
+                                        <input type="number" id="c-grid-cols" min="1" step="1" placeholder="10">
                                     </div>
                                 </div>
                             </div>
@@ -797,6 +1036,10 @@ function switchTab(t){
 
     document.querySelectorAll(".matrix-tab").forEach(tab=>{
         tab.classList.toggle("active-tab", tab.id === "tab-" + t);
+    });
+
+    document.querySelectorAll(".tree-node").forEach(node=>{
+        node.classList.toggle("active", node.getAttribute("onclick") === "switchTab('"+t+"')");
     });
 
     const labels = {
@@ -981,9 +1224,35 @@ async function runPipeline(){
 
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("module", activeModule);
     fd.append("mode", activeModule==="C" ? groupCSubMode : activeModule);
     fd.append("zone", document.getElementById("zone").value);
     const mapping = buildMappingPayload(card);
+
+    // Group A: forest name comes from a text input, not a <select>,
+    // so it isn't part of buildMappingPayload — send it separately.
+    const forestInput = card.querySelector('input[type="text"][data-key="forest"]');
+    if(forestInput && forestInput.value.trim()){
+        fd.append("forest", forestInput.value.trim());
+    }
+
+    // Group C: optional sample-grid overrides. If the user leaves these
+    // blank, nothing is sent and the backend keeps its own defaults
+    // (w=50, h=50, rows=10, cols=10).
+    if(activeModule === "C"){
+        const gridFields = {
+            "c-grid-w": "w",
+            "c-grid-h": "h",
+            "c-grid-rows": "rows",
+            "c-grid-cols": "cols"
+        };
+        Object.entries(gridFields).forEach(([elId, formKey])=>{
+            const el = document.getElementById(elId);
+            if(el && el.value !== "" && !isNaN(Number(el.value))){
+                fd.append(formKey, el.value);
+            }
+        });
+    }
 
 fd.append("mapping", JSON.stringify({
     X: mapping.X || "X",
@@ -1021,10 +1290,165 @@ fd.append("mapping", JSON.stringify({
         document.getElementById("status-headline").textContent = "Error";
         document.getElementById("status-sub").textContent = "Pipeline failed";
         document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
-        alert("Backend error or mapping mismatch");
+        alert(e.message || "Backend error or mapping mismatch");
     }
-    
+
 }
+
+/* =================================================================
+   UI ENHANCEMENT LAYER
+   Pure visual/interaction polish — does not alter any pipeline,
+   mapping, file-handling, or backend-communication logic above.
+================================================================= */
+
+/* ---- Smooth resizable layout (column + row splitters) ---- */
+(function enableResizers(){
+    const container = document.getElementById('main-layout-container');
+    const workspace = document.getElementById('center-workspace-container');
+    const leftHandle = document.getElementById('left-col-handle');
+    const rightHandle = document.getElementById('right-col-handle');
+    const rowHandle = document.getElementById('center-row-handle');
+
+    let leftWidth = 280;
+    let rightWidth = 420;
+
+    function applyColumns(){
+        container.style.gridTemplateColumns = `${leftWidth}px 10px 1fr 10px ${rightWidth}px`;
+    }
+
+    function startDrag(handle, onMove){
+        handle.addEventListener('mousedown', (e)=>{
+            e.preventDefault();
+            handle.classList.add('dragging');
+            document.body.style.cursor = getComputedStyle(handle).cursor;
+
+            const move = (ev)=> onMove(ev);
+            const up = ()=>{
+                handle.classList.remove('dragging');
+                document.body.style.cursor = '';
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+            };
+
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+    }
+
+    if(leftHandle){
+        let startX, startWidth;
+        leftHandle.addEventListener('mousedown', e=>{ startX = e.clientX; startWidth = leftWidth; });
+        startDrag(leftHandle, (ev)=>{
+            const delta = ev.clientX - startX;
+            leftWidth = Math.min(Math.max(startWidth + delta, 220), 460);
+            applyColumns();
+        });
+    }
+
+    if(rightHandle){
+        let startX, startWidth;
+        rightHandle.addEventListener('mousedown', e=>{ startX = e.clientX; startWidth = rightWidth; });
+        startDrag(rightHandle, (ev)=>{
+            const delta = ev.clientX - startX;
+            rightWidth = Math.min(Math.max(startWidth - delta, 320), 640);
+            applyColumns();
+        });
+    }
+
+    if(rowHandle){
+        let startY, startTopHeight, totalHeight;
+        rowHandle.addEventListener('mousedown', e=>{
+            const rect = workspace.getBoundingClientRect();
+            totalHeight = rect.height;
+            const topRect = workspace.children[0].getBoundingClientRect();
+            startTopHeight = topRect.height;
+            startY = e.clientY;
+        });
+        startDrag(rowHandle, (ev)=>{
+            const delta = ev.clientY - startY;
+            let newTop = Math.min(Math.max(startTopHeight + delta, 160), totalHeight - 90);
+            let newBottom = totalHeight - newTop - 6;
+            workspace.style.gridTemplateRows = `${newTop}px 6px ${newBottom}px`;
+        });
+    }
+})();
+
+/* ---- Drag-over highlight for upload zones ---- */
+document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
+    const input = zone.querySelector('input[type="file"]');
+    if(!input) return;
+
+    ['dragenter','dragover'].forEach(evt=>{
+        zone.addEventListener(evt, e=>{
+            e.preventDefault();
+            zone.classList.add('drag-over');
+        });
+    });
+    ['dragleave','drop'].forEach(evt=>{
+        zone.addEventListener(evt, e=>{
+            e.preventDefault();
+            zone.classList.remove('drag-over');
+        });
+    });
+    zone.addEventListener('drop', e=>{
+        if(e.dataTransfer?.files?.length){
+            input.files = e.dataTransfer.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+});
+
+/* ---- Animated status + progress feedback ---- */
+(function enableStatusAnimations(){
+    const headline = document.getElementById('status-headline');
+    const radialBox = document.querySelector('.radial-progress-box');
+    const radialBar = document.getElementById('radial-bar');
+    const canvasWrapper = document.querySelector('.canvas-wrapper');
+    const downloadBtn = document.getElementById('download-btn');
+    const emptyNotice = document.getElementById('empty-notice');
+
+    function refreshState(){
+        const text = headline.textContent.trim();
+
+        headline.classList.remove('is-processing', 'is-error');
+        radialBox.classList.remove('is-processing');
+        radialBar.classList.remove('is-error');
+        canvasWrapper.classList.remove('is-active');
+
+        if(text === 'Processing...'){
+            headline.classList.add('is-processing');
+            radialBox.classList.add('is-processing');
+        } else if(text === 'Error'){
+            headline.classList.add('is-error');
+            radialBar.classList.add('is-error');
+        } else if(text === 'Complete'){
+            canvasWrapper.classList.add('is-active');
+        }
+    }
+
+    const headlineObserver = new MutationObserver(refreshState);
+    headlineObserver.observe(headline, { childList: true, characterData: true, subtree: true });
+
+    /* Smooth crossfade between empty-state and rendered output */
+    const imgObserver = new MutationObserver(()=>{
+        const img = document.getElementById('output-img');
+        if(img.style.display === 'block'){
+            emptyNotice.style.opacity = '0';
+            setTimeout(()=>{ emptyNotice.style.display = 'none'; }, 350);
+        }
+    });
+    imgObserver.observe(document.getElementById('output-img'), { attributes: true, attributeFilter: ['style'] });
+
+    /* Toggle visible class for download button entrance animation */
+    const downloadObserver = new MutationObserver(()=>{
+        if(downloadBtn.style.display === 'inline-block'){
+            downloadBtn.classList.add('is-visible');
+        } else {
+            downloadBtn.classList.remove('is-visible');
+        }
+    });
+    downloadObserver.observe(downloadBtn, { attributes: true, attributeFilter: ['style'] });
+})();
 </script>
 </body>
 </html>
