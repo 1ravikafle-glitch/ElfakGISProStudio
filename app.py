@@ -56,8 +56,18 @@ def normalize_order(df):
 
 
 # ================= GROUP A =================
-def group_a(df, forest, crs, out, mapping=None):
-    df = normalize_order(df)
+def safe_col(df, mapping, key, fallback):
+    if mapping and key in mapping:
+        col = mapping[key]
+        if col in df.columns:
+            return col
+
+    # fallback case-insensitive match
+    for c in df.columns:
+        if c.lower() == fallback.lower():
+            return c
+
+    return None
 
     x_col = safe_col(df, mapping, "X", "X")
     y_col = safe_col(df, mapping, "Y", "Y")
