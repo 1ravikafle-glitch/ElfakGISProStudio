@@ -143,11 +143,16 @@ def group_b(df, crs, out, mapping=None):
     return poly_gdf, line_gdf, pts_gdf
 
 
-# ================= GROUP C (FIXED LOGIC) =================
-def group_c(file, crs, w, h, rows, cols, out):
+# ================= GROUP C (UPDATED MULTI-MODE) =================
+def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
+
+    import pandas as pd
+    from shapely.ops import unary_union
 
     polygons = []
+    df = None
 
+    # ================= LOAD INPUT =================
     if file.filename.lower().endswith(".zip"):
         folder = os.path.join(UPLOAD, str(uuid.uuid4()))
         os.makedirs(folder, exist_ok=True)
@@ -168,24 +173,48 @@ def group_c(file, crs, w, h, rows, cols, out):
         if gdf is None:
             raise ValueError("No shapefile found in ZIP")
 
-        geom = gdf.unary_union
+        # detect structure
+        has_segment = ("Forest" in gdf.columns and "Compartment" in gdf.columns)
 
-        if geom.geom_type == "Polygon":
-            polygons = [geom]
-        elif geom.geom_type == "MultiPolygon":
-            polygons = list(geom.geoms)
+        if mode == "B" and has_segment:
+            for (f, c), g in gdf.groupby(["Forest", "Compartment"]):
+                polygons.append(g.unary_union)
         else:
-            polygons = list(geom.geoms)
+            polygons = [gdf.unary_union]
 
     else:
         df = read_input(file)
         df = normalize_order(df).sort_values("Order")
 
-        coords = list(zip(df["X"], df["Y"]))
-        coords.append(coords[0])
+        # ================= SINGLE MODE =================
+        if mode == "A":
 
-        polygons = [Polygon(coords)]
+            x_col = mapping.get("X", "X") if mapping else "X"
+            y_col = mapping.get("Y", "Y") if mapping else "Y"
 
+            coords = list(zip(df[x_col], df[y_col]))
+            coords.append(coords[0])
+
+            polygons = [Polygon(coords)]
+
+        # ================= SEGMENTED MODE =================
+        else:
+
+            x_col = mapping.get("X", "X") if mapping else "X"
+            y_col = mapping.get("Y", "Y") if mapping else "Y"
+            f_col = mapping.get("Forest", "Forest") if mapping else "Forest"
+            c_col = mapping.get("Compartment", "Compartment") if mapping else "Compartment"
+
+            if "Forest" in df.columns and "Compartment" in df.columns:
+                for (f, c), g in df.groupby([f_col, c_col]):
+                    g = g.sort_values("Order")
+                    coords = list(zip(g[x_col], g[y_col]))
+                    coords.append(coords[0])
+                    polygons.append(Polygon(coords))
+            else:
+                raise ValueError("Segmented mode requires Forest & Compartment columns")
+
+    # ================= UNIFIED PROCESS =================
     poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
     union = poly_gdf.unary_union
 
@@ -216,6 +245,7 @@ def group_c(file, crs, w, h, rows, cols, out):
 
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
+    # ================= OUTPUT =================
     poly_gdf.to_file(os.path.join(out, "boundary_polygons.shp"))
     line_gdf.to_file(os.path.join(out, "boundary_lines.shp"))
     pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
@@ -311,7 +341,7 @@ def upload():
         poly, line, pts = group_b(df, crs, out, mapping)
 
     elif mode == "C":
-        poly, line, pts = group_c(file, crs, w, h, rows, cols, out)
+        poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
 
     else:
         df = read_input(file)
