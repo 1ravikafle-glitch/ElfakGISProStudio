@@ -15,7 +15,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, rende
 from shapely.geometry import Polygon, Point, LineString
 from io import BytesIO
 
-app = Flask(_name_)
+app = Flask(__name__)
 UPLOAD = "uploads"
 OUTPUT = "outputs"
 
@@ -284,6 +284,5 @@ def download(run_id):
 def home():
     return render_template("index.html")
 
-
-if name == "main":
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
