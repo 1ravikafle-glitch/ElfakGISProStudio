@@ -7,22 +7,21 @@ import re
 import pandas as pd
 import geopandas as gpd
 import matplotlib
-import io
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, render_template
 from shapely.geometry import Polygon, Point, LineString
-from io import BytesIO
 
 app = Flask(__name__)
+
 UPLOAD = "uploads"
 OUTPUT = "outputs"
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 
-# ================= CORS CONTROLLER =================
+# ================= CORS =================
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -30,282 +29,308 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     return response
 
-# ================= NORMALIZER =================
-def norm(col):
-    return re.sub(r"[^a-z0-9]", "", str(col).lower())
-
-# ================= KEY MAPS =================
-X_KEYS = {"x", "xcoord", "xcoordinate", "east", "easting", "longitude", "lon", "lng"}
-Y_KEYS = {"y", "ycoord", "ycoordinate", "north", "northing", "latitude", "lat"}
-ORDER_KEYS = {"sn", "sno", "s.n", "serial", "id", "index", "order", "seq", "rowid", "fid"}
-
-# ================= COLUMN RESOLVER =================
-def resolve_xyz(df, mapping=None):
-    df.columns = [str(c).strip() for c in df.columns]
-    x = y = order = None
-
-    if mapping:
-        x = mapping.get("X")
-        y = mapping.get("Y")
-        order = mapping.get("Order")
-
-    if x not in df.columns:
-        x = None
-
-    if y not in df.columns:
-        y = None
-
-    if order and order not in df.columns:
-        order = None
-
-    for col in df.columns:
-        c = norm(col)
-        if x is None and c in X_KEYS: x = col
-        if y is None and c in Y_KEYS: y = col
-        if order is None and c in ORDER_KEYS: order = col
-
-    if x is None:
-        for c in df.columns:
-            if "x" in c.lower(): x = c; break
-    if y is None:
-        for c in df.columns:
-            if "y" in c.lower(): y = c; break
-
-    if order is None:
-        df["Order"] = range(1, len(df) + 1)
-        order = "Order"
-
-    if x is None or y is None:
-        raise ValueError(f"Missing Coordinate Mapping X/Y. Headers: {df.columns.tolist()}")
-
-    return x, y, order
-
-# ================= SAFE POLYGON BUILDER =================
-def safe_polygon(coords):
-    poly = Polygon(coords)
-    if not poly.is_valid:
-        poly = poly.buffer(0)
-    return poly
-
-# ================= UNIVERSAL VISUALIZER PREVIEW =================
-def generate_preview_plot(poly_gdf, line_gdf, pts_gdf, out_dir):
-    try:
-        fig, ax = plt.subplots(figsize=(6, 6), dpi=100)
-        fig.patch.set_facecolor('#0f0a12')
-        ax.set_facecolor('#0f0a12')
-        
-        # Plot structural elements
-        if poly_gdf is not None and not poly_gdf.empty:
-            poly_gdf.plot(ax=ax, facecolor='#10b981', alpha=0.25, edgecolor='#10b981', linewidth=1.5)
-        if line_gdf is not None and not line_gdf.empty:
-            line_gdf.plot(ax=ax, color='#65a30d', linewidth=2, linestyle='--')
-        if pts_gdf is not None and not pts_gdf.empty:
-            pts_gdf.plot(ax=ax, color='#ffffff', edgecolor='#10b981', markersize=40, zorder=5)
-            
-        ax.axis('off')
-        plt.tight_layout(pad=0)
-        
-        preview_path = os.path.join(out_dir, "output.png")
-        plt.savefig(preview_path, facecolor=fig.get_facecolor(), edgecolor='none', bbox_inches='tight')
-        plt.close(fig)
-    except Exception as e:
-        print(f"Visualization engine fallback error: {str(e)}")
-
-# ================= GROUP C RUNTIME (SUPPORTS TABULAR & ZIP LAYER INTERPOLATION) =================
-def process_group_c(file_path, crs, out, mapping):
-    
-    # Check if a specific target layer within a Shapefile archive was requested
-    target_shp = mapping.get("target_shp") if mapping else None
-
-    if file_path.lower().endswith(".zip") and target_shp:
-        # 1. DIRECT VECTOR SHAPEFILE PROCESSING ENGINE
-        tmp_extract = os.path.join(out, "extracted_shp")
-        os.makedirs(tmp_extract, exist_ok=True)
-        
-        with zipfile.ZipFile(file_path, "r") as z:
-            z.extractall(tmp_extract)
-        
-        shp_absolute_path = os.path.join(tmp_extract, target_shp)
-        if not os.path.exists(shp_absolute_path):
-            raise FileNotFoundError(f"Requested file layer target not found inside bundle: {target_shp}")
-            
-        # Parse vector layers directly from spatial files
-        src_gdf = gpd.read_file(shp_absolute_path)
-        if src_gdf.crs is None:
-            src_gdf.set_crs(crs, inplace=True)
-        else:
-            src_gdf = src_gdf.to_crs(crs)
-            
-        # Convert all incoming structural elements into geometric segments
-        poly_geoms = [geom for geom in src_gdf.geometry if geom.geom_type in ["Polygon", "MultiPolygon"]]
-        
-        if not poly_geoms:
-            # Dropdown selection fallback if points or line objects were provided
-            coords = []
-            for geom in src_gdf.geometry:
-                if geom.geom_type == "Point":
-                    coords.append((geom.x, geom.y))
-                elif geom.geom_type == "LineString":
-                    coords.extend(list(geom.coords))
-            if len(coords) >= 3:
-                poly_geoms = [safe_polygon(coords)]
-            else:
-                raise ValueError("The vector file selected does not contain sufficient coordinates to form a closed polygon.")
-
-        # Build clean output datasets
-        if not poly_geoms:
-            raise ValueError(
-                "No valid polygon geometry found."
-        )
-
-        poly = poly_geoms[0]
-        poly_gdf = gpd.GeoDataFrame(
-            [{"Area_ha": poly.area / 10000,
-              "Perimeter": poly.length,
-              "geometry": poly}],
-            geometry="geometry",
-            crs=crs
-        )
-        
-        exterior_coords = list(poly.exterior.coords) if hasattr(poly, 'exterior') and poly.exterior else []
-        line_gdf = gpd.GeoDataFrame(
-            [{"geometry": LineString(exterior_coords)}],
-            geometry="geometry",
-            crs=crs
-        )
-        
-        pts_list = [{"geometry": Point(pt), "Order": i+1} for i, pt in enumerate(exterior_coords[:-1])]
-        pts_gdf = gpd.GeoDataFrame(
-            pts_list,
-            geometry="geometry",
-            crs=crs
-        )
-        if pts_list else gpd.GeoDataFrame(columns=['geometry'], crs=crs)
-        
-        # Export data frames
-        df_excel_input = pd.DataFrame([{"X": pt[0], "Y": pt[1], "Order": i+1} for i, pt in enumerate(exterior_coords[:-1])])
-
+# ================= UTIL =================
+def read_input(file):
+    name = file.filename.lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(file, encoding="utf-8-sig")
+    elif name.endswith((".xlsx", ".xls")):
+        return pd.read_excel(file)
     else:
-        # 2. TABULAR INPUT PIPELINE (CSV/EXCEL / ZIP-FLAT)
-        if file_path.lower().endswith(".zip"):
-            tmp_extract = os.path.join(out, "extracted_flat")
-            os.makedirs(tmp_extract, exist_ok=True)
-            with zipfile.ZipFile(file_path, "r") as z:
-                z.extractall(tmp_extract)
-            
-            df = None
-            for root, _, files in os.walk(tmp_extract):
-                for f in files:
-                    p = os.path.join(root, f)
-                    if f.endswith(".csv"):
-                        df = pd.read_csv(p, encoding="utf-8-sig")
-                        break
-                    if f.endswith((".xlsx", ".xls")):
-                        df = pd.read_excel(p)
-                        break
-                if df is not None: break
-            if df is None:
-                raise ValueError("ZIP archive folder structure has no recognizable tabular file logs (CSV/XLSX).")
-        elif file_path.lower().endswith(".csv"):
-            try:
-                df = pd.read_csv(file_path, encoding="utf-8-sig")
-            except:
-                df = pd.read_csv(file_path, encoding="latin1")
-        else:
-            df = pd.read_excel(file_path)
+        raise ValueError("Only CSV/Excel supported")
 
-        x, y, order = resolve_xyz(df, mapping)
-        df = df.sort_values(order)
-        coords = list(zip(df[x], df[y]))
 
-        if len(coords) < 3:
-            raise ValueError("Insufficient coordinates inside matrix logs (Need minimum 3 items).")
+def get_crs(zone):
+    return f"EPSG:326{zone}"
 
-        if coords[0] != coords[-1]:
+
+def normalize_order(df):
+    for c in df.columns:
+        if c.lower() in ["sn", "s.n", "order"]:
+            df = df.rename(columns={c: "Order"})
+    return df
+
+
+# ================= GROUP A =================
+def group_a(df, forest, crs, out, mapping=None):
+    df = normalize_order(df).sort_values("Order")
+
+    x_col = mapping.get("X", "X") if mapping else "X"
+    y_col = mapping.get("Y", "Y") if mapping else "Y"
+
+    coords = list(zip(df[x_col], df[y_col]))
+    coords.append(coords[0])
+
+    poly = Polygon(coords)
+    line = LineString(coords)
+
+    poly_gdf = gpd.GeoDataFrame([{
+        "Forest": forest,
+        "Area": poly.area / 10000,
+        "Perim": poly.length,
+        "geometry": poly
+    }], crs=crs)
+
+    line_gdf = gpd.GeoDataFrame([{
+        "Forest": forest,
+        "geometry": line
+    }], crs=crs)
+
+    pts_gdf = gpd.GeoDataFrame(
+        df,
+        geometry=gpd.points_from_xy(df[x_col], df[y_col]),
+        crs=crs
+    )
+
+    poly_gdf.to_file(os.path.join(out, "polygon.shp"))
+    line_gdf.to_file(os.path.join(out, "line.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
+
+
+# ================= GROUP B =================
+def group_b(df, crs, out, mapping=None):
+    df = normalize_order(df)
+
+    x_col = mapping.get("X", "X") if mapping else "X"
+    y_col = mapping.get("Y", "Y") if mapping else "Y"
+    order_col = mapping.get("Order", "Order") if mapping else "Order"
+
+    polys, lines, pts = [], [], []
+
+    for f, g in df.groupby("Forest"):
+        for c, cg in g.groupby("Compartment"):
+
+            cg = cg.sort_values(order_col)
+
+            coords = list(zip(cg[x_col], cg[y_col]))
             coords.append(coords[0])
 
-        poly = safe_polygon(coords)
-        poly_gdf = gpd.GeoDataFrame([{"Area_ha": poly.area / 10000, "Perimeter": poly.length, "geometry": poly}], crs=crs)
-        line_gdf = gpd.GeoDataFrame([{"geometry": LineString(coords)}], crs=crs)
-        pts_gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[x], df[y]), crs=crs)
-        df_excel_input = df
+            poly = Polygon(coords)
+            line = LineString(coords)
 
-    # Export Shapefiles safely
-    poly_gdf.to_file(
-        os.path.join(out, "polygon.shp"),
-        driver="ESRI Shapefile"
-    )
-    if line_gdf is not None and not line_gdf.empty and line_gdf.geometry.iloc[0] is not None:
-        line_gdf.to_file(
-            os.path.join(out, "line.shp"),
-            driver="ESRI Shapefile"
-    )
-    if not pts_gdf.empty:
-        pts_gdf.to_file(
-            os.path.join(out, "points.shp"),
-            driver="ESRI Shapefile"
-    )
+            polys.append({
+                "Forest": f,
+                "Compartment": c,
+                "Area": poly.area / 10000,
+                "Perim": poly.length,
+                "geometry": poly
+            })
 
-    # Export cross-platform Excel summaries
-    excel_path = os.path.join(out, "output.xlsx")
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        df_excel_input.to_excel(writer, sheet_name="input", index=False)
-        poly_gdf.drop(columns="geometry", errors="ignore").to_excel(writer, sheet_name="polygon", index=False)
-        if line_gdf is not None and not line_gdf.empty:
-            line_gdf.drop(columns="geometry", errors="ignore").to_excel(writer, sheet_name="line", index=False)
-        if not pts_gdf.empty:
-            pts_gdf.drop(columns="geometry", errors="ignore").to_excel(writer, sheet_name="points", index=False)
+            lines.append({
+                "Forest": f,
+                "Compartment": c,
+                "geometry": line
+            })
 
-    # Plot preview image
-    generate_preview_plot(poly_gdf, line_gdf, pts_gdf, out)
+            for _, r in cg.iterrows():
+                pts.append({
+                    "Forest": f,
+                    "Compartment": c,
+                    "Order": r[order_col],
+                    "geometry": Point(r[x_col], r[y_col])
+                })
 
-# ================= CORE GATEWAY CONTROLLER =================
-@app.route("/upload", methods=["POST"])
-def upload():
-    try:
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded in form boundary context"}), 400
-            
-        file = request.files["file"]
-        mode = request.form.get("mode", "A")
-        zone = request.form.get("zone", "44")
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-        mapping_raw = request.form.get("mapping", "{}")
-        mapping = json.loads(mapping_raw) if mapping_raw else {}
+    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "points.shp"))
 
-        run_id = str(uuid.uuid4())
-        run_output_dir = os.path.join(OUTPUT, run_id)
-        os.makedirs(run_output_dir, exist_ok=True)
+    return poly_gdf, line_gdf, pts_gdf
 
-        # Stash original payload source
-        saved_input_name = f"input_source_{run_id}_{file.filename}"
-        saved_input_path = os.path.join(UPLOAD, saved_input_name)
-        file.save(saved_input_path)
 
-        crs = f"EPSG:326{zone}"
+# ================= GROUP C (FIXED LOGIC) =================
+def group_c(file, crs, w, h, rows, cols, out):
 
-        # Route processing to Group C
-        if mode in ["A", "B", "C", "D"]:
-            process_group_c(saved_input_path, crs, run_output_dir, mapping)
+    polygons = []
+
+    if file.filename.lower().endswith(".zip"):
+        folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+        os.makedirs(folder, exist_ok=True)
+
+        zip_path = os.path.join(folder, "input.zip")
+        file.save(zip_path)
+
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(folder)
+
+        gdf = None
+        for root, _, files in os.walk(folder):
+            for f in files:
+                if f.endswith(".shp"):
+                    gdf = gpd.read_file(os.path.join(root, f))
+                    break
+
+        if gdf is None:
+            raise ValueError("No shapefile found in ZIP")
+
+        geom = gdf.unary_union
+
+        if geom.geom_type == "Polygon":
+            polygons = [geom]
+        elif geom.geom_type == "MultiPolygon":
+            polygons = list(geom.geoms)
         else:
-            return jsonify({"error": f"Mode configuration signature context invalid: {mode}"}), 400
+            polygons = list(geom.geoms)
 
-        return jsonify({
-            "run_id": run_id,
-            "download": f"/download/{run_id}"
+    else:
+        df = read_input(file)
+        df = normalize_order(df).sort_values("Order")
+
+        coords = list(zip(df["X"], df["Y"]))
+        coords.append(coords[0])
+
+        polygons = [Polygon(coords)]
+
+    poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
+    union = poly_gdf.unary_union
+
+    line_gdf = gpd.GeoDataFrame(
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
+        crs=crs
+    )
+
+    minx, miny, _, _ = union.bounds
+
+    pts = []
+    sn = 1
+
+    for r in range(rows):
+        for c in range(cols):
+            x = minx + c * w
+            y = miny + r * h
+            center = Point(x + w / 2, y + h / 2)
+
+            if union.contains(center):
+                pts.append({
+                    "SN": sn,
+                    "X": center.x,
+                    "Y": center.y,
+                    "geometry": center
+                })
+                sn += 1
+
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    poly_gdf.to_file(os.path.join(out, "boundary_polygons.shp"))
+    line_gdf.to_file(os.path.join(out, "boundary_lines.shp"))
+    pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
+
+    pd.DataFrame(pts)[["SN", "X", "Y"]].to_excel(
+        os.path.join(out, "sampleplot.xlsx"),
+        index=False
+    )
+
+    return poly_gdf, line_gdf, pts_gdf
+
+
+# ================= GROUP D =================
+def group_d(df, crs, out):
+    df = normalize_order(df).sort_values("Order")
+
+    polys, lines, pts = [], [], []
+
+    for f, g in df.groupby("Forest"):
+
+        coords = list(zip(g["X"], g["Y"]))
+        coords.append(coords[0])
+
+        poly = Polygon(coords)
+        line = LineString(coords)
+
+        polys.append({
+            "Forest": f,
+            "Area": poly.area / 10000,
+            "Perim": poly.length,
+            "geometry": poly
         })
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        lines.append({
+            "Forest": f,
+            "geometry": line
+        })
 
-# ================= STATIC RESOURCE ROUTING =================
-@app.route("/outputs/<run_id>/<filename>")
-def serve_output_assets(run_id, filename):
-    return send_from_directory(os.path.join(OUTPUT, run_id), filename)
+        for _, r in g.iterrows():
+            pts.append({
+                "Forest": f,
+                "Order": r["Order"],
+                "geometry": Point(r["X"], r["Y"])
+            })
 
-# ================= DOWNLOAD CONTROLLER =================
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
+
+
+# ================= PREVIEW =================
+def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
+    fig, ax = plt.subplots()
+
+    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
+    line_gdf.plot(ax=ax, color=lc, linewidth=2)
+    pts_gdf.plot(ax=ax, color=ptc, markersize=8)
+
+    plt.axis("off")
+    plt.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+
+# ================= UPLOAD ROUTE =================
+@app.route("/upload", methods=["POST"])
+def upload():
+    file = request.files["file"]
+    mode = request.form["mode"]
+    zone = request.form["zone"]
+
+    mapping = json.loads(request.form.get("mapping", "{}"))
+
+    w = float(request.form.get("w", 50))
+    h = float(request.form.get("h", 50))
+    rows = int(request.form.get("rows", 10))
+    cols = int(request.form.get("cols", 10))
+    forest = request.form.get("forest", "FOREST")
+
+    run_id = str(uuid.uuid4())
+    out = os.path.join(OUTPUT, run_id)
+    os.makedirs(out, exist_ok=True)
+
+    crs = get_crs(zone)
+
+    if mode == "A":
+        df = read_input(file)
+        poly, line, pts = group_a(df, forest, crs, out, mapping)
+
+    elif mode == "B":
+        df = read_input(file)
+        poly, line, pts = group_b(df, crs, out, mapping)
+
+    elif mode == "C":
+        poly, line, pts = group_c(file, crs, w, h, rows, cols, out)
+
+    else:
+        df = read_input(file)
+        poly, line, pts = group_d(df, crs, out)
+
+    preview_path = os.path.join(out, "output.png")
+    preview(poly, line, pts, preview_path, "yellow", "black", "red")
+
+    return jsonify({
+        "run_id": run_id,
+        "download": f"/download/{run_id}"
+    })
+
+
+# ================= DOWNLOAD =================
+def zip_folder(folder):
+    return shutil.make_archive(folder, "zip", folder)
+
+
 @app.route("/download/<run_id>")
 def download(run_id):
     folder = os.path.join(OUTPUT, run_id)
@@ -313,26 +338,16 @@ def download(run_id):
     if not os.path.exists(folder):
         return jsonify({"error": "Run not found"}), 404
 
-    archive_store_path = os.path.join(
-        OUTPUT,
-        f"export_{run_id}"
-    )
+    zip_path = zip_folder(folder)
 
-    zip_path = shutil.make_archive(
-        archive_store_path,
-        "zip",
-        root_dir=folder
-    )
-
-    return send_file(
-        zip_path,
-        as_attachment=True
-    )
+    return send_file(zip_path, as_attachment=True)
 
 
+# ================= HOME =================
 @app.route("/")
 def home():
     return render_template("index.html")
 
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(debug=True)
