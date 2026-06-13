@@ -1016,6 +1016,71 @@ let activeModule = "A";
 let groupCSubMode = "A";
 const BACKEND_URL = window.location.origin;
 
+/* ────────────────────────────────────────────────────────────────────────────
+   COLUMN ALIAS RESOLVER
+   Mirrors the backend _norm() + alias tables so the frontend dropdowns
+   pre-select the right columns automatically, even for unusual header names.
+   Recognised variants (case-insensitive, spaces/punctuation stripped):
+     X        : x, xcoord, xcoordinate, xcord, xcords, xcoords,
+                east, easting, eastings, lon, long, longitude, lng,
+                pointx, coordx, utme, utmx
+     Y        : y, ycoord, ycoordinate, ycord, ycords, ycoords,
+                north, northing, northings, lat, latitude,
+                pointy, coordy, utmn, utmy
+     Order    : order, id, sn, sno, serial, serialno, serialnumber,
+                seq, sequence, index, rowid, fid, no, num, number,
+                plotid, plotno, pointid, pointno, pid
+     Forest   : forest, forestname, forestid, forestno, fname,
+                forestblock, block
+     Compartment: compartment, comp, compartmentno, compartmentid,
+                compno, compid, section, sectionno
+──────────────────────────────────────────────────────────────────────────── */
+
+const COL_ALIASES = {
+    X: new Set([
+        "x","xcoord","xcoordinate","xcord","xcords","xcoords",
+        "east","easting","eastings","lon","long","longitude","lng",
+        "pointx","coordx","utme","utmx"
+    ]),
+    Y: new Set([
+        "y","ycoord","ycoordinate","ycord","ycords","ycoords",
+        "north","northing","northings","lat","latitude",
+        "pointy","coordy","utmn","utmy"
+    ]),
+    Order: new Set([
+        "order","id","sn","sno","serial","serialno","serialnumber",
+        "seq","sequence","index","rowid","fid","no","num","number",
+        "plotid","plotno","pointid","pointno","pid"
+    ]),
+    Forest: new Set([
+        "forest","forestname","forestid","forestno","fname",
+        "forestblock","block"
+    ]),
+    Compartment: new Set([
+        "compartment","comp","compartmentno","compartmentid",
+        "compno","compid","section","sectionno"
+    ])
+};
+
+/** Strip everything except letters and digits, lowercase. */
+function norm(s){
+    return (s || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Given an array of raw column names, return a {X, Y, Order, Forest, Compartment} map. */
+function detect(cols){
+    const map = {X:null, Y:null, Order:null, Forest:null, Compartment:null};
+    cols.forEach(c => {
+        const n = norm(c);
+        Object.entries(COL_ALIASES).forEach(([key, aliases]) => {
+            if(!map[key] && aliases.has(n)) map[key] = c;
+        });
+    });
+    return map;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+
 /* ---------------- SAFE RESET ---------------- */
 function resetStatus(){
     document.getElementById("status-headline").textContent = "Core Standby";
@@ -1071,36 +1136,7 @@ function setGroupCSubMode(subMode){
     }
 }
 
-/* ---------------- COLUMN DETECTION (FIXED) ---------------- */
-function norm(c){
-    return (c || "")
-        .toString()
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "");
-}
-
-function detect(cols){
-    let map = {X:null,Y:null,Order:null,Forest:null,Compartment:null};
-
-    cols.forEach(c=>{
-        const n = norm(c);
-
-        if(!map.X && /^(x|east|easting|lon|lng|longitude)$/.test(n)) map.X = c;
-        if(!map.Y && /^(y|north|northing|lat|latitude)$/.test(n)) map.Y = c;
-
-        if(!map.Order && ["id","index","order","seq","serial","sno","rowid","fid"].includes(n)) {
-            map.Order = c;
-        }
-
-        if(!map.Forest && n.includes("forest")) map.Forest = c;
-        if(!map.Compartment && n.includes("comp")) map.Compartment = c;
-    });
-
-    return map;
-}
-
-/* ---------------- FILL DROPDOWNS (FIXED SAFE) ---------------- */
+/* ---------------- FILL DROPDOWNS ---------------- */
 function fill(card, cols){
     const map = detect(cols);
 
@@ -1115,18 +1151,19 @@ function fill(card, cols){
         });
 
         const key = sel.dataset.key;
-        sel.value = map[key] || cols[0];
+        if(map[key]) sel.value = map[key];
+        else if(cols.length > 0) sel.value = cols[0];
     });
 }
 
-/* ---------------- FILE HANDLER (FIXED) ---------------- */
+/* ---------------- FILE HANDLER ---------------- */
 document.querySelectorAll(".file").forEach(inp=>{
     inp.onchange = async function(){
 
         const file = this.files[0];
         if(!file) return;
 
-        const card = this.closest(".group-content-card"); // ✅ FIX: define early
+        const card = this.closest(".group-content-card");
 
         if(card.id === "card-C"){
             setGroupCSubMode(groupCSubMode);
@@ -1167,6 +1204,7 @@ document.querySelectorAll(".file").forEach(inp=>{
             }
         }
 
+        /* CSV column detection */
         let cols = ["X","Y","Order","Forest","Compartment"];
 
         if(file.name.toLowerCase().endsWith(".csv")){
@@ -1179,14 +1217,14 @@ document.querySelectorAll(".file").forEach(inp=>{
             else if(firstLine.includes("\t")) delimiter = "\t";
 
             let detected = firstLine.split(delimiter).map(x => x.trim()).filter(Boolean);
-
             if(detected.length > 0) cols = detected;
-
-            fill(card, cols);
         }
+
+        fill(card, cols);
     };
 });
-/* ---------------- PAYLOAD (FIXED SAFETY) ---------------- */
+
+/* ---------------- PAYLOAD BUILDER ---------------- */
 function buildMappingPayload(card){
     const m = {};
 
@@ -1229,16 +1267,11 @@ async function runPipeline(){
     fd.append("zone", document.getElementById("zone").value);
     const mapping = buildMappingPayload(card);
 
-    // Group A: forest name comes from a text input, not a <select>,
-    // so it isn't part of buildMappingPayload — send it separately.
     const forestInput = card.querySelector('input[type="text"][data-key="forest"]');
     if(forestInput && forestInput.value.trim()){
         fd.append("forest", forestInput.value.trim());
     }
 
-    // Group C: optional sample-grid overrides. If the user leaves these
-    // blank, nothing is sent and the backend keeps its own defaults
-    // (w=50, h=50, rows=10, cols=10).
     if(activeModule === "C"){
         const gridFields = {
             "c-grid-w": "w",
@@ -1254,14 +1287,14 @@ async function runPipeline(){
         });
     }
 
-fd.append("mapping", JSON.stringify({
-    X: mapping.X || "X",
-    Y: mapping.Y || "Y",
-    Order: mapping.Order || null,
-    Forest: mapping.Forest || null,
-    Compartment: mapping.Compartment || null,
-    target_shp: mapping.target_shp || null
-}));
+    fd.append("mapping", JSON.stringify({
+        X: mapping.X || "X",
+        Y: mapping.Y || "Y",
+        Order: mapping.Order || null,
+        Forest: mapping.Forest || null,
+        Compartment: mapping.Compartment || null,
+        target_shp: mapping.target_shp || null
+    }));
 
     try{
         const res = await fetch(`${BACKEND_URL}/upload`, {method:"POST", body:fd});
@@ -1292,16 +1325,13 @@ fd.append("mapping", JSON.stringify({
         document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
         alert(e.message || "Backend error or mapping mismatch");
     }
-
 }
 
 /* =================================================================
    UI ENHANCEMENT LAYER
-   Pure visual/interaction polish — does not alter any pipeline,
-   mapping, file-handling, or backend-communication logic above.
 ================================================================= */
 
-/* ---- Smooth resizable layout (column + row splitters) ---- */
+/* ---- Smooth resizable layout ---- */
 (function enableResizers(){
     const container = document.getElementById('main-layout-container');
     const workspace = document.getElementById('center-workspace-container');
@@ -1373,7 +1403,7 @@ fd.append("mapping", JSON.stringify({
     }
 })();
 
-/* ---- Drag-over highlight for upload zones ---- */
+/* ---- Drag-over highlight ---- */
 document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
     const input = zone.querySelector('input[type="file"]');
     if(!input) return;
@@ -1398,7 +1428,7 @@ document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
     });
 });
 
-/* ---- Animated status + progress feedback ---- */
+/* ---- Animated status + progress ---- */
 (function enableStatusAnimations(){
     const headline = document.getElementById('status-headline');
     const radialBox = document.querySelector('.radial-progress-box');
@@ -1429,7 +1459,6 @@ document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
     const headlineObserver = new MutationObserver(refreshState);
     headlineObserver.observe(headline, { childList: true, characterData: true, subtree: true });
 
-    /* Smooth crossfade between empty-state and rendered output */
     const imgObserver = new MutationObserver(()=>{
         const img = document.getElementById('output-img');
         if(img.style.display === 'block'){
@@ -1439,7 +1468,6 @@ document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
     });
     imgObserver.observe(document.getElementById('output-img'), { attributes: true, attributeFilter: ['style'] });
 
-    /* Toggle visible class for download button entrance animation */
     const downloadObserver = new MutationObserver(()=>{
         if(downloadBtn.style.display === 'inline-block'){
             downloadBtn.classList.add('is-visible');
