@@ -7,7 +7,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght=500;600;700&family=IBM+Plex+Mono:wght=400;500;600&family=Inter:wght=400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
 <style>
 :root {
@@ -335,14 +335,13 @@ body::before {
 .group-content-card {
     display: none;
     flex-direction: column;
-    gap: 14px;
 }
 .group-content-card.active-card {
     display: flex;
 }
-
 .hidden {
     display: none !important;
+    pointer-events: none;
 }
 
 .cyber-dropzone {
@@ -397,14 +396,13 @@ body::before {
     flex-direction: column;
     gap: 8px;
 }
-
 select, input[type="number"], input[type="text"] {
     width: 100%;
-    background: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.85);
     border: 1px solid var(--border-soft);
     border-radius: 8px;
     padding: 0 12px;
-    color: var(--white-snow);
+    color: #1c2b22; /* FIXED readability */
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 500;
@@ -416,7 +414,7 @@ select, input[type="number"], input[type="text"] {
 select, input[type="number"] {
     font-family: var(--font-mono);
 }
-select:focus, input[type="number"]:focus {
+select:focus, input[type="number"]:focus, input[type="text"]:focus {
     border-color: var(--survey-blue);
     background: rgba(255, 255, 255, 0.9);
     box-shadow: 0 0 10px rgba(101, 163, 13, 0.18);
@@ -495,7 +493,7 @@ input[type="text"]:focus {
 .fill-arc {
     fill: none; stroke: var(--mint); stroke-width: 4;
     stroke-dasharray: 150.7; stroke-dashoffset: 150.7;
-    transition: stroke-dashoffset 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .visualizer-desk {
@@ -775,29 +773,37 @@ input[type="text"]:focus {
 </div>
 
 <script>
-let activeModule = "A"; 
-let groupCSubMode = "A"; 
+let activeModule = "A";
+let groupCSubMode = "A";
 const BACKEND_URL = window.location.origin;
+
+/* ---------------- SAFE RESET ---------------- */
+function resetStatus(){
+    document.getElementById("status-headline").textContent = "Core Standby";
+    document.getElementById("status-sub").textContent = "Topology Balanced";
+    document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
+}
 
 /* ---------------- TAB SWITCH ---------------- */
 function switchTab(t){
     activeModule = t;
 
-    document.querySelectorAll(".group-content-card")
-        .forEach(c => c.classList.remove("active-card"));
-    document.getElementById("card-"+t).classList.add("active-card");
+    document.querySelectorAll(".group-content-card").forEach(c=>{
+        c.classList.remove("active-card");
+    });
 
-    document.querySelectorAll(".tree-node")
-        .forEach((n,i)=> n.classList.toggle("active", ["A","B","C","D"][i]===t));
+    const activeCard = document.getElementById("card-"+t);
+    if(activeCard) activeCard.classList.add("active-card");
 
-    document.querySelectorAll(".matrix-tab")
-        .forEach(tab => tab.classList.toggle("active-tab", tab.id === "tab-" + t));
+    document.querySelectorAll(".matrix-tab").forEach(tab=>{
+        tab.classList.toggle("active-tab", tab.id === "tab-" + t);
+    });
 
     const labels = {
-        "A":"A · Boundary Whole",
-        "B":"B · Segment Forest",
-        "C":"C · Sample Plot Workspace",
-        "D":"D · Complex Version A"
+        A:"A · Boundary Whole",
+        B:"B · Segment Forest",
+        C:"C · Sample Plot Workspace",
+        D:"D · Complex Version A"
     };
 
     document.getElementById("header-module").textContent = labels[t];
@@ -807,45 +813,51 @@ function switchTab(t){
 function setGroupCSubMode(subMode){
     groupCSubMode = subMode;
 
-    document.getElementById('c-toggle-A')
-        .classList.toggle('active-toggle', subMode === 'A');
-    document.getElementById('c-toggle-B')
-        .classList.toggle('active-toggle', subMode === 'B');
+    document.getElementById('c-toggle-A').classList.toggle('active-toggle', subMode==='A');
+    document.getElementById('c-toggle-B').classList.toggle('active-toggle', subMode==='B');
 
     const fileInp = document.getElementById('file-c');
     const isZip = fileInp?.files?.[0]?.name?.toLowerCase().endsWith(".zip");
 
     const forestWrapper = document.getElementById('c-forest-wrapper');
 
-    if(subMode === "B" && !isZip){
+    if(subMode==="B" && !isZip){
         forestWrapper.classList.remove("hidden");
     } else {
         forestWrapper.classList.add("hidden");
     }
 }
 
-/* ---------------- COLUMN DETECTOR ---------------- */
+/* ---------------- COLUMN DETECTION (FIXED) ---------------- */
 function norm(c){
-    return c.toLowerCase().replace(/[^a-z0-9]/g,"");
+    return (c || "")
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
 }
 
 function detect(cols){
     let map = {X:null,Y:null,Order:null,Forest:null,Compartment:null};
 
-    for(let c of cols){
-        let n = norm(c);
+    cols.forEach(c=>{
+        const n = norm(c);
 
-        if(!map.X && ["x","east","easting","lon","longitude","lng"].includes(n)) map.X = c;
-        if(!map.Y && ["y","north","northing","lat","latitude"].includes(n)) map.Y = c;
-        if(!map.Order && ["sn","sno","id","index","order","seq","rowid","fid"].includes(n)) map.Order = c;
-        if(!map.Forest && (n.includes("forest") || n.includes("compartment"))) map.Forest = c;
+        if(!map.X && /^(x|east|easting|lon|lng|longitude)$/.test(n)) map.X = c;
+        if(!map.Y && /^(y|north|northing|lat|latitude)$/.test(n)) map.Y = c;
+
+        if(!map.Order && ["id","index","order","seq","serial","sno","rowid","fid"].includes(n)) {
+            map.Order = c;
+        }
+
+        if(!map.Forest && n.includes("forest")) map.Forest = c;
         if(!map.Compartment && n.includes("comp")) map.Compartment = c;
-    }
+    });
 
     return map;
 }
 
-/* ---------------- FILL DROPDOWNS (FIXED) ---------------- */
+/* ---------------- FILL DROPDOWNS (FIXED SAFE) ---------------- */
 function fill(card, cols){
     const map = detect(cols);
 
@@ -860,26 +872,29 @@ function fill(card, cols){
         });
 
         const key = sel.dataset.key;
-        if(map[key]){
-            sel.value = map[key];
-        } else {
-            sel.selectedIndex = 0; // fallback FIX (prevents empty mapping crash)
-        }
+        sel.value = map[key] || cols[0];
     });
 }
 
-/* ---------------- FILE HANDLER ---------------- */
+/* ---------------- FILE HANDLER (FIXED) ---------------- */
 document.querySelectorAll(".file").forEach(inp=>{
     inp.onchange = async function(){
 
         const file = this.files[0];
         if(!file) return;
 
-        const card = this.closest(".group-content-card");
+        const card = this.closest(".group-content-card"); // ✅ FIX: define early
+
+        if(card.id === "card-C"){
+            setGroupCSubMode(groupCSubMode);
+        }
+
         const dzText = card.querySelector(".dz-text");
         if(dzText) dzText.textContent = "📄 " + file.name;
 
-        /* GROUP C ZIP HANDLING */
+        resetStatus();
+
+        /* GROUP C ZIP */
         if(card.id === "card-C"){
             const coordFields = document.getElementById("c-coordinate-fields-container");
             const zipNotice = document.getElementById("c-zip-notice");
@@ -889,37 +904,18 @@ document.querySelectorAll(".file").forEach(inp=>{
                 coordFields.classList.add("hidden");
                 zipNotice.classList.remove("hidden");
 
-                shpSelector.innerHTML = "<option>Scanning ZIP...</option>";
+                const zip = await JSZip.loadAsync(await file.arrayBuffer());
+                const shpFiles = [];
 
-                try{
-                    const zipData = await file.arrayBuffer();
-                    const zip = await JSZip.loadAsync(zipData);
-
-                    const shpFiles = [];
-
-                    zip.forEach((path, entry)=>{
-                        if(path.toLowerCase().endsWith(".shp")){
-                            shpFiles.push(path);
-                        }
-                    });
-
-                    shpSelector.innerHTML = "";
-
-                    if(shpFiles.length === 0){
-                        shpSelector.innerHTML = "<option>No SHP found</option>";
-                    } else {
-                        shpFiles.forEach(f=>{
-                            const opt = document.createElement("option");
-                            opt.value = f;
-                            opt.textContent = f;
-                            shpSelector.appendChild(opt);
-                        });
+                Object.keys(zip.files).forEach(path=>{
+                    if(path.toLowerCase().endsWith(".shp")){
+                        shpFiles.push(path);
                     }
+                });
 
-                } catch(e){
-                    console.error(e);
-                    shpSelector.innerHTML = "<option>ZIP read error</option>";
-                }
+                shpSelector.innerHTML = shpFiles.length
+                    ? shpFiles.map(f=>`<option>${f}</option>`).join("")
+                    : "<option>No SHP found</option>";
 
                 return;
             } else {
@@ -928,47 +924,39 @@ document.querySelectorAll(".file").forEach(inp=>{
             }
         }
 
-        /* CSV HEADER PARSE */
         let cols = ["X","Y","Order","Forest","Compartment"];
 
         if(file.name.toLowerCase().endsWith(".csv")){
             const txt = await file.text();
-            const firstLine = txt.split("\n")[0];
-            if(firstLine.includes(",")){
-                cols = firstLine.split(",").map(x=>x.trim());
-            }
-        }
+            const clean = txt.replace(/^\uFEFF/, "").replace(/\r/g, "");
+            const firstLine = clean.split("\n").find(l => l.trim().length > 0) || "";
 
-        fill(card, cols);
+            let delimiter = ",";
+            if(firstLine.includes(";")) delimiter = ";";
+            else if(firstLine.includes("\t")) delimiter = "\t";
+
+            let detected = firstLine.split(delimiter).map(x => x.trim()).filter(Boolean);
+
+            if(detected.length > 0) cols = detected;
+
+            fill(card, cols);
+        }
     };
 });
-
-/* ---------------- PAYLOAD BUILDER (FIXED CRITICAL BUG) ---------------- */
+/* ---------------- PAYLOAD (FIXED SAFETY) ---------------- */
 function buildMappingPayload(card){
     const m = {};
 
-    const selects = card.querySelectorAll("select[data-key]");
-
-    selects.forEach(sel=>{
+    card.querySelectorAll("select[data-key]").forEach(sel=>{
         if(sel.closest(".hidden")) return;
-
-        if(sel.value){
-            m[sel.dataset.key] = sel.value;
-        }
+        if(sel.value) m[sel.dataset.key] = sel.value;
     });
 
-    /* HARD SAFETY CHECK (FIX FOR YOUR ERROR) */
-    if(!m.X || !m.Y){
-        console.warn("Missing X/Y mapping fixed fallback applied");
-        m.X = m.X || "X";
-        m.Y = m.Y || "Y";
-    }
+    if(!m.X) m.X = "X";
+    if(!m.Y) m.Y = "Y";
 
-    if(card.id === "card-C"){
-        const zipHidden = document.getElementById("c-zip-notice")
-            .classList.contains("hidden");
-
-        if(!zipHidden){
+    if(card.id==="card-C"){
+        if(!document.getElementById("c-zip-notice").classList.contains("hidden")){
             m.target_shp = document.getElementById("c-shp-selector").value;
         }
     }
@@ -980,39 +968,41 @@ function buildMappingPayload(card){
 async function runPipeline(){
 
     const card = document.getElementById("card-"+activeModule);
-    const fileInput = card.querySelector("input[type=file]");
-    const file = fileInput?.files?.[0];
+    const file = card.querySelector("input[type=file]")?.files?.[0];
 
     if(!file){
         alert("Upload file first");
         return;
     }
 
-    const headline = document.getElementById("status-headline");
-    const sub = document.getElementById("status-sub");
-    const radial = document.getElementById("radial-bar");
-
-    headline.textContent = "Processing...";
-    sub.textContent = "Running GIS Engine";
-    radial.style.strokeDashoffset = "75";
+    document.getElementById("status-headline").textContent = "Processing...";
+    document.getElementById("status-sub").textContent = "Running GIS Engine";
+    document.getElementById("radial-bar").style.strokeDashoffset = "80";
 
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("mode", activeModule === "C" ? groupCSubMode : activeModule);
+    fd.append("mode", activeModule==="C" ? groupCSubMode : activeModule);
     fd.append("zone", document.getElementById("zone").value);
-    fd.append("mapping", JSON.stringify(buildMappingPayload(card)));
+    const mapping = buildMappingPayload(card);
+
+fd.append("mapping", JSON.stringify({
+    X: mapping.X || "X",
+    Y: mapping.Y || "Y",
+    Order: mapping.Order || null,
+    Forest: mapping.Forest || null,
+    Compartment: mapping.Compartment || null,
+    target_shp: mapping.target_shp || null
+}));
 
     try{
         const res = await fetch(`${BACKEND_URL}/upload`, {method:"POST", body:fd});
         const data = await res.json();
 
-        if(data.error){
-            throw new Error(data.error);
-        }
+        if(data.error) throw new Error(data.error);
 
-        headline.textContent = "Complete";
-        sub.textContent = "Output Ready";
-        radial.style.strokeDashoffset = "0";
+        document.getElementById("status-headline").textContent = "Complete";
+        document.getElementById("status-sub").textContent = "Output Ready";
+        document.getElementById("radial-bar").style.strokeDashoffset = "0";
 
         const img = document.getElementById("output-img");
         img.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
@@ -1028,11 +1018,12 @@ async function runPipeline(){
 
     } catch(e){
         console.error(e);
-        headline.textContent = "Error";
-        sub.textContent = "Pipeline failed";
-        radial.style.strokeDashoffset = "150.7";
+        document.getElementById("status-headline").textContent = "Error";
+        document.getElementById("status-sub").textContent = "Pipeline failed";
+        document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
         alert("Backend error or mapping mismatch");
     }
+    
 }
 </script>
 </body>
