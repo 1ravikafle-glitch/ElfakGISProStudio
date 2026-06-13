@@ -7,12 +7,13 @@ import re
 import pandas as pd
 import geopandas as gpd
 import matplotlib
+import io
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, render_template
 from shapely.geometry import Polygon, Point, LineString
-from import io import BytesIO
+from io import BytesIO
 
 app = Flask(name)
 
