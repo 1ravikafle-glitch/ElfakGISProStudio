@@ -20,6 +20,10 @@ OUTPUT = "outputs"
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
+def safe_col(df, mapping, key, fallback):
+    if mapping and key in mapping and mapping[key] in df.columns:
+        return mapping[key]
+    return fallback if fallback in df.columns else None
 
 # ================= CORS =================
 @app.after_request
@@ -53,12 +57,23 @@ def normalize_order(df):
 
 # ================= GROUP A =================
 def group_a(df, forest, crs, out, mapping=None):
-    df = normalize_order(df).sort_values("Order")
+    df = normalize_order(df)
 
-    x_col = mapping.get("X", "X") if mapping else "X"
-    y_col = mapping.get("Y", "Y") if mapping else "Y"
+    x_col = safe_col(df, mapping, "X", "X")
+    y_col = safe_col(df, mapping, "Y", "Y")
+    order_col = safe_col(df, mapping, "Order", "Order")
+
+    if not x_col or not y_col:
+        raise ValueError("Missing X/Y columns")
+
+    if order_col:
+        df = df.sort_values(order_col)
 
     coords = list(zip(df[x_col], df[y_col]))
+
+    if len(coords) < 3:
+        raise ValueError("Not enough points to build polygon")
+
     coords.append(coords[0])
 
     poly = Polygon(coords)
@@ -71,10 +86,7 @@ def group_a(df, forest, crs, out, mapping=None):
         "geometry": poly
     }], crs=crs)
 
-    line_gdf = gpd.GeoDataFrame([{
-        "Forest": forest,
-        "geometry": line
-    }], crs=crs)
+    line_gdf = gpd.GeoDataFrame([{"Forest": forest, "geometry": line}], crs=crs)
 
     pts_gdf = gpd.GeoDataFrame(
         df,
@@ -93,18 +105,34 @@ def group_a(df, forest, crs, out, mapping=None):
 def group_b(df, crs, out, mapping=None):
     df = normalize_order(df)
 
-    x_col = mapping.get("X", "X") if mapping else "X"
-    y_col = mapping.get("Y", "Y") if mapping else "Y"
-    order_col = mapping.get("Order", "Order") if mapping else "Order"
+    x_col = safe_col(df, mapping, "X", "X")
+    y_col = safe_col(df, mapping, "Y", "Y")
+    order_col = safe_col(df, mapping, "Order", "Order")
+
+    if not x_col or not y_col:
+        raise ValueError("Missing X/Y columns")
+
+    if "Forest" not in df.columns:
+        raise ValueError("Missing Forest column")
 
     polys, lines, pts = [], [], []
 
     for f, g in df.groupby("Forest"):
-        for c, cg in g.groupby("Compartment"):
 
-            cg = cg.sort_values(order_col)
+        if order_col:
+            g = g.sort_values(order_col)
+
+        if "Compartment" in g.columns:
+            groups = g.groupby("Compartment")
+        else:
+            groups = [(None, g)]
+
+        for c, cg in groups:
 
             coords = list(zip(cg[x_col], cg[y_col]))
+            if len(coords) < 3:
+                continue
+
             coords.append(coords[0])
 
             poly = Polygon(coords)
@@ -128,32 +156,24 @@ def group_b(df, crs, out, mapping=None):
                 pts.append({
                     "Forest": f,
                     "Compartment": c,
-                    "Order": r[order_col],
+                    "Order": r.get(order_col, None),
                     "geometry": Point(r[x_col], r[y_col])
                 })
 
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, "polygons.shp"))
-    line_gdf.to_file(os.path.join(out, "lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
-
+    return (
+        gpd.GeoDataFrame(polys, crs=crs),
+        gpd.GeoDataFrame(lines, crs=crs),
+        gpd.GeoDataFrame(pts, crs=crs)
+    )
 
 # ================= GROUP C (UPDATED MULTI-MODE) =================
 def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
 
-    import pandas as pd
-    from shapely.ops import unary_union
-
     polygons = []
-    df = None
 
-    # ================= LOAD INPUT =================
+    # ================= ZIP INPUT =================
     if file.filename.lower().endswith(".zip"):
+
         folder = os.path.join(UPLOAD, str(uuid.uuid4()))
         os.makedirs(folder, exist_ok=True)
 
@@ -163,65 +183,77 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
         with zipfile.ZipFile(zip_path, "r") as z:
             z.extractall(folder)
 
-        gdf = None
+        shp_path = None
         for root, _, files in os.walk(folder):
             for f in files:
                 if f.endswith(".shp"):
-                    gdf = gpd.read_file(os.path.join(root, f))
+                    shp_path = os.path.join(root, f)
                     break
 
-        if gdf is None:
+        if not shp_path:
             raise ValueError("No shapefile found in ZIP")
 
-        # detect structure
-        has_segment = ("Forest" in gdf.columns and "Compartment" in gdf.columns)
+        gdf = gpd.read_file(shp_path)
 
-        if mode == "B" and has_segment:
-            for (f, c), g in gdf.groupby(["Forest", "Compartment"]):
-                polygons.append(g.unary_union)
+        if gdf.empty:
+            raise ValueError("Empty shapefile")
+
+        union_geom = gdf.unary_union
+
+        if union_geom.geom_type == "Polygon":
+            polygons = [union_geom]
+        elif union_geom.geom_type == "MultiPolygon":
+            polygons = list(union_geom.geoms)
         else:
-            polygons = [gdf.unary_union]
+            raise ValueError("Unsupported geometry type")
 
+    # ================= CSV/EXCEL INPUT =================
     else:
         df = read_input(file)
-        df = normalize_order(df).sort_values("Order")
+        df = normalize_order(df)
 
-        # ================= SINGLE MODE =================
+        x_col = safe_col(df, mapping, "X", "X")
+        y_col = safe_col(df, mapping, "Y", "Y")
+        order_col = safe_col(df, mapping, "Order", "Order")
+
+        if not x_col or not y_col:
+            raise ValueError("Missing X/Y columns")
+
         if mode == "A":
 
-            x_col = mapping.get("X", "X") if mapping else "X"
-            y_col = mapping.get("Y", "Y") if mapping else "Y"
-
             coords = list(zip(df[x_col], df[y_col]))
-            coords.append(coords[0])
+            if len(coords) < 3:
+                raise ValueError("Not enough points")
 
+            coords.append(coords[0])
             polygons = [Polygon(coords)]
 
-        # ================= SEGMENTED MODE =================
         else:
 
-            x_col = mapping.get("X", "X") if mapping else "X"
-            y_col = mapping.get("Y", "Y") if mapping else "Y"
-            f_col = mapping.get("Forest", "Forest") if mapping else "Forest"
-            c_col = mapping.get("Compartment", "Compartment") if mapping else "Compartment"
+            if "Forest" not in df.columns or "Compartment" not in df.columns:
+                raise ValueError("Segmented mode requires Forest & Compartment")
 
-            if "Forest" in df.columns and "Compartment" in df.columns:
-                for (f, c), g in df.groupby([f_col, c_col]):
-                    g = g.sort_values("Order")
-                    coords = list(zip(g[x_col], g[y_col]))
-                    coords.append(coords[0])
-                    polygons.append(Polygon(coords))
-            else:
-                raise ValueError("Segmented mode requires Forest & Compartment columns")
+            for (f, c), g in df.groupby(["Forest", "Compartment"]):
 
-    # ================= UNIFIED PROCESS =================
+                if order_col:
+                    g = g.sort_values(order_col)
+
+                coords = list(zip(g[x_col], g[y_col]))
+                if len(coords) < 3:
+                    continue
+
+                coords.append(coords[0])
+                polygons.append(Polygon(coords))
+
+    # ================= SAFE GEODATAFRAMES =================
     poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
-    union = poly_gdf.unary_union
 
     line_gdf = gpd.GeoDataFrame(
-        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons if p is not None],
         crs=crs
     )
+
+    union = poly_gdf.unary_union
 
     minx, miny, _, _ = union.bounds
 
@@ -245,7 +277,6 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
 
     pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-    # ================= OUTPUT =================
     poly_gdf.to_file(os.path.join(out, "boundary_polygons.shp"))
     line_gdf.to_file(os.path.join(out, "boundary_lines.shp"))
     pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
@@ -302,14 +333,18 @@ def group_d(df, crs, out):
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
     fig, ax = plt.subplots()
 
-    poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
-    line_gdf.plot(ax=ax, color=lc, linewidth=2)
-    pts_gdf.plot(ax=ax, color=ptc, markersize=8)
+    if not poly_gdf.empty:
+        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
+
+    if not line_gdf.empty:
+        line_gdf.plot(ax=ax, color=lc, linewidth=2)
+
+    if not pts_gdf.empty:
+        pts_gdf.plot(ax=ax, color=ptc, markersize=8)
 
     plt.axis("off")
     plt.savefig(path, dpi=220, bbox_inches="tight")
     plt.close()
-
 
 # ================= UPLOAD ROUTE =================
 @app.route("/upload", methods=["POST"])
