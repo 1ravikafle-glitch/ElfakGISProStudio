@@ -3,7 +3,6 @@ import uuid
 import zipfile
 import shutil
 import json
-import re
 import pandas as pd
 import geopandas as gpd
 import matplotlib
@@ -20,10 +19,7 @@ OUTPUT = "outputs"
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
-def safe_col(df, mapping, key, fallback):
-    if mapping and key in mapping and mapping[key] in df.columns:
-        return mapping[key]
-    return fallback if fallback in df.columns else None
+
 
 # ================= CORS =================
 @app.after_request
@@ -32,6 +28,7 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     return response
+
 
 # ================= UTIL =================
 def read_input(file):
@@ -55,19 +52,25 @@ def normalize_order(df):
     return df
 
 
-# ================= GROUP A =================
 def safe_col(df, mapping, key, fallback):
-    if mapping and key in mapping:
-        col = mapping[key]
-        if col in df.columns:
-            return col
+    """Resolve a column name using the user mapping first, then an
+    exact fallback, then a case-insensitive fallback match."""
+    if mapping and mapping.get(key) and mapping[key] in df.columns:
+        return mapping[key]
 
-    # fallback case-insensitive match
+    if fallback in df.columns:
+        return fallback
+
     for c in df.columns:
         if c.lower() == fallback.lower():
             return c
 
     return None
+
+
+# ================= GROUP A =================
+def group_a(df, forest, crs, out, mapping=None):
+    df = normalize_order(df)
 
     x_col = safe_col(df, mapping, "X", "X")
     y_col = safe_col(df, mapping, "Y", "Y")
@@ -118,22 +121,24 @@ def group_b(df, crs, out, mapping=None):
     x_col = safe_col(df, mapping, "X", "X")
     y_col = safe_col(df, mapping, "Y", "Y")
     order_col = safe_col(df, mapping, "Order", "Order")
+    forest_col = safe_col(df, mapping, "Forest", "Forest")
+    comp_col = safe_col(df, mapping, "Compartment", "Compartment")
 
     if not x_col or not y_col:
         raise ValueError("Missing X/Y columns")
 
-    if "Forest" not in df.columns:
+    if not forest_col:
         raise ValueError("Missing Forest column")
 
     polys, lines, pts = [], [], []
 
-    for f, g in df.groupby("Forest"):
+    for f, g in df.groupby(forest_col):
 
         if order_col:
             g = g.sort_values(order_col)
 
-        if "Compartment" in g.columns:
-            groups = g.groupby("Compartment")
+        if comp_col:
+            groups = g.groupby(comp_col)
         else:
             groups = [(None, g)]
 
@@ -166,17 +171,25 @@ def group_b(df, crs, out, mapping=None):
                 pts.append({
                     "Forest": f,
                     "Compartment": c,
-                    "Order": r.get(order_col, None),
+                    "Order": r.get(order_col, None) if order_col else None,
                     "geometry": Point(r[x_col], r[y_col])
                 })
 
-    return (
-        gpd.GeoDataFrame(polys, crs=crs),
-        gpd.GeoDataFrame(lines, crs=crs),
-        gpd.GeoDataFrame(pts, crs=crs)
-    )
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
 
-# ================= GROUP C (UPDATED MULTI-MODE) =================
+    if not poly_gdf.empty:
+        poly_gdf.to_file(os.path.join(out, "polygon.shp"))
+    if not line_gdf.empty:
+        line_gdf.to_file(os.path.join(out, "line.shp"))
+    if not pts_gdf.empty:
+        pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
+
+
+# ================= GROUP C (MULTI-MODE) =================
 def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
 
     polygons = []
@@ -193,20 +206,34 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
         with zipfile.ZipFile(zip_path, "r") as z:
             z.extractall(folder)
 
-        shp_path = None
+        shp_candidates = []
         for root, _, files in os.walk(folder):
             for f in files:
                 if f.endswith(".shp"):
-                    shp_path = os.path.join(root, f)
-                    break
+                    shp_candidates.append(os.path.join(root, f))
 
-        if not shp_path:
+        if not shp_candidates:
             raise ValueError("No shapefile found in ZIP")
+
+        shp_path = shp_candidates[0]
+        target_shp = (mapping or {}).get("target_shp")
+
+        if target_shp:
+            target_name = os.path.basename(target_shp)
+            for cand in shp_candidates:
+                if os.path.basename(cand) == target_name:
+                    shp_path = cand
+                    break
 
         gdf = gpd.read_file(shp_path)
 
         if gdf.empty:
             raise ValueError("Empty shapefile")
+
+        if gdf.crs is None:
+            gdf = gdf.set_crs(crs)
+        else:
+            gdf = gdf.to_crs(crs)
 
         union_geom = gdf.unary_union
 
@@ -215,7 +242,7 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
         elif union_geom.geom_type == "MultiPolygon":
             polygons = list(union_geom.geoms)
         else:
-            raise ValueError("Unsupported geometry type")
+            raise ValueError("Unsupported geometry type in shapefile")
 
     # ================= CSV/EXCEL INPUT =================
     else:
@@ -240,10 +267,15 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
 
         else:
 
-            if "Forest" not in df.columns or "Compartment" not in df.columns:
-                raise ValueError("Segmented mode requires Forest & Compartment")
+            forest_col = safe_col(df, mapping, "Forest", "Forest")
+            comp_col = safe_col(df, mapping, "Compartment", "Compartment")
 
-            for (f, c), g in df.groupby(["Forest", "Compartment"]):
+            if not forest_col:
+                raise ValueError("Segmented mode requires a Forest column")
+
+            group_keys = [forest_col, comp_col] if comp_col else [forest_col]
+
+            for key, g in df.groupby(group_keys):
 
                 if order_col:
                     g = g.sort_values(order_col)
@@ -255,16 +287,18 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
                 coords.append(coords[0])
                 polygons.append(Polygon(coords))
 
+    if not polygons:
+        raise ValueError("No valid polygons could be built from the input")
+
     # ================= SAFE GEODATAFRAMES =================
     poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
 
     line_gdf = gpd.GeoDataFrame(
-        [{"geometry": LineString(p.exterior.coords)} for p in polygons if p is not None],
+        [{"geometry": LineString(p.exterior.coords)} for p in polygons],
         crs=crs
     )
 
     union = poly_gdf.unary_union
-
     minx, miny, _, _ = union.bounds
 
     pts = []
@@ -289,25 +323,43 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
 
     poly_gdf.to_file(os.path.join(out, "boundary_polygons.shp"))
     line_gdf.to_file(os.path.join(out, "boundary_lines.shp"))
-    pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
 
-    pd.DataFrame(pts)[["SN", "X", "Y"]].to_excel(
-        os.path.join(out, "sampleplot.xlsx"),
-        index=False
-    )
+    if not pts_gdf.empty:
+        pts_gdf.to_file(os.path.join(out, "sampleplot.shp"))
+        pd.DataFrame(pts)[["SN", "X", "Y"]].to_excel(
+            os.path.join(out, "sampleplot.xlsx"),
+            index=False
+        )
 
     return poly_gdf, line_gdf, pts_gdf
 
 
 # ================= GROUP D =================
-def group_d(df, crs, out):
-    df = normalize_order(df).sort_values("Order")
+def group_d(df, crs, out, mapping=None):
+    df = normalize_order(df)
+
+    x_col = safe_col(df, mapping, "X", "X")
+    y_col = safe_col(df, mapping, "Y", "Y")
+    order_col = safe_col(df, mapping, "Order", "Order")
+    forest_col = safe_col(df, mapping, "Forest", "Forest")
+
+    if not x_col or not y_col:
+        raise ValueError("Missing X/Y columns")
+
+    if not forest_col:
+        raise ValueError("Missing Forest column")
 
     polys, lines, pts = [], [], []
 
-    for f, g in df.groupby("Forest"):
+    for f, g in df.groupby(forest_col):
 
-        coords = list(zip(g["X"], g["Y"]))
+        if order_col:
+            g = g.sort_values(order_col)
+
+        coords = list(zip(g[x_col], g[y_col]))
+        if len(coords) < 3:
+            continue
+
         coords.append(coords[0])
 
         poly = Polygon(coords)
@@ -328,77 +380,112 @@ def group_d(df, crs, out):
         for _, r in g.iterrows():
             pts.append({
                 "Forest": f,
-                "Order": r["Order"],
-                "geometry": Point(r["X"], r["Y"])
+                "Order": r.get(order_col, None) if order_col else None,
+                "geometry": Point(r[x_col], r[y_col])
             })
 
-    return (
-        gpd.GeoDataFrame(polys, crs=crs),
-        gpd.GeoDataFrame(lines, crs=crs),
-        gpd.GeoDataFrame(pts, crs=crs)
-    )
+    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
+    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
+    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    if not poly_gdf.empty:
+        poly_gdf.to_file(os.path.join(out, "polygon.shp"))
+    if not line_gdf.empty:
+        line_gdf.to_file(os.path.join(out, "line.shp"))
+    if not pts_gdf.empty:
+        pts_gdf.to_file(os.path.join(out, "points.shp"))
+
+    return poly_gdf, line_gdf, pts_gdf
 
 
 # ================= PREVIEW =================
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc):
     fig, ax = plt.subplots()
 
-    if not poly_gdf.empty:
+    if poly_gdf is not None and not poly_gdf.empty:
         poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc)
 
-    if not line_gdf.empty:
+    if line_gdf is not None and not line_gdf.empty:
         line_gdf.plot(ax=ax, color=lc, linewidth=2)
 
-    if not pts_gdf.empty:
+    if pts_gdf is not None and not pts_gdf.empty:
         pts_gdf.plot(ax=ax, color=ptc, markersize=8)
 
     plt.axis("off")
-    plt.savefig(path, dpi=220, bbox_inches="tight")
-    plt.close()
+    fig.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
 
 # ================= UPLOAD ROUTE =================
 @app.route("/upload", methods=["POST"])
 def upload():
-    file = request.files["file"]
-    mode = request.form["mode"]
-    zone = request.form["zone"]
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
 
-    mapping = json.loads(request.form.get("mapping", "{}"))
+        file = request.files["file"]
+        mode = request.form.get("mode", "A")
+        # 'module' identifies which workspace tab (A/B/C/D) sent the request.
+        # 'mode' is reused by Group C as its sub-mode (A = Simple Poly,
+        # B = Segmented), so it alone can't disambiguate Group A vs Group C.
+        module = request.form.get("module", mode)
+        zone = request.form.get("zone", "44")
 
-    w = float(request.form.get("w", 50))
-    h = float(request.form.get("h", 50))
-    rows = int(request.form.get("rows", 10))
-    cols = int(request.form.get("cols", 10))
-    forest = request.form.get("forest", "FOREST")
+        try:
+            mapping = json.loads(request.form.get("mapping", "{}"))
+        except (TypeError, ValueError):
+            mapping = {}
 
-    run_id = str(uuid.uuid4())
-    out = os.path.join(OUTPUT, run_id)
-    os.makedirs(out, exist_ok=True)
+        w = float(request.form.get("w", 50))
+        h = float(request.form.get("h", 50))
+        rows = int(request.form.get("rows", 10))
+        cols = int(request.form.get("cols", 10))
+        forest = request.form.get("forest") or mapping.get("forest") or "FOREST"
 
-    crs = get_crs(zone)
+        run_id = str(uuid.uuid4())
+        out = os.path.join(OUTPUT, run_id)
+        os.makedirs(out, exist_ok=True)
 
-    if mode == "A":
-        df = read_input(file)
-        poly, line, pts = group_a(df, forest, crs, out, mapping)
+        crs = get_crs(zone)
 
-    elif mode == "B":
-        df = read_input(file)
-        poly, line, pts = group_b(df, crs, out, mapping)
+        if module == "B":
+            df = read_input(file)
+            poly, line, pts = group_b(df, crs, out, mapping)
 
-    elif mode == "C":
-        poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
+        elif module == "C":
+            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
 
-    else:
-        df = read_input(file)
-        poly, line, pts = group_d(df, crs, out)
+        elif module == "D":
+            df = read_input(file)
+            poly, line, pts = group_d(df, crs, out, mapping)
 
-    preview_path = os.path.join(out, "output.png")
-    preview(poly, line, pts, preview_path, "yellow", "black", "red")
+        else:  # module == "A" (default)
+            df = read_input(file)
+            poly, line, pts = group_a(df, forest, crs, out, mapping)
 
-    return jsonify({
-        "run_id": run_id,
-        "download": f"/download/{run_id}"
-    })
+        preview_path = os.path.join(out, "output.png")
+        preview(poly, line, pts, preview_path, "yellow", "black", "red")
+
+        return jsonify({
+            "run_id": run_id,
+            "download": f"/download/{run_id}"
+        })
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {e}"}), 500
+
+
+# ================= STATIC OUTPUT FILES (preview images etc.) =================
+@app.route("/outputs/<run_id>/<path:filename>")
+def serve_output(run_id, filename):
+    folder = os.path.join(OUTPUT, run_id)
+
+    if not os.path.exists(os.path.join(folder, filename)):
+        return jsonify({"error": "File not found"}), 404
+
+    return send_from_directory(folder, filename)
 
 
 # ================= DOWNLOAD =================
