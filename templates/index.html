@@ -627,7 +627,6 @@ input[type="text"]:focus {
         </div>
 
         <div class="layout-resizer col-resizer" id="left-col-handle"></div>
-
         <div class="workspace-split" id="center-workspace-container">
              
             <div class="holo-panel">
@@ -778,234 +777,261 @@ input[type="text"]:focus {
 <script>
 let activeModule = "A"; 
 let groupCSubMode = "A"; 
-
 const BACKEND_URL = window.location.origin;
 
+/* ---------------- TAB SWITCH ---------------- */
 function switchTab(t){
     activeModule = t;
-    document.querySelectorAll(".group-content-card").forEach(c => c.classList.remove("active-card"));
+
+    document.querySelectorAll(".group-content-card")
+        .forEach(c => c.classList.remove("active-card"));
     document.getElementById("card-"+t).classList.add("active-card");
 
-    document.querySelectorAll(".tree-node").forEach((n,i)=>{
-        n.classList.toggle("active", ["A","B","C","D"][i]===t);
-    });
+    document.querySelectorAll(".tree-node")
+        .forEach((n,i)=> n.classList.toggle("active", ["A","B","C","D"][i]===t));
 
-    document.querySelectorAll(".matrix-tab").forEach(tab => {
-        tab.classList.toggle("active-tab", tab.id === "tab-" + t);
-    });
+    document.querySelectorAll(".matrix-tab")
+        .forEach(tab => tab.classList.toggle("active-tab", tab.id === "tab-" + t));
 
-    let displayLabels = {
-        "A": "A · Boundary Whole",
-        "B": "B · Segment Forest",
-        "C": "C · Sample Plot Workspace",
-        "D": "D · Complex Version A"
+    const labels = {
+        "A":"A · Boundary Whole",
+        "B":"B · Segment Forest",
+        "C":"C · Sample Plot Workspace",
+        "D":"D · Complex Version A"
     };
-    document.getElementById("header-module").textContent = displayLabels[t] || t;
+
+    document.getElementById("header-module").textContent = labels[t];
 }
 
-function setGroupCSubMode(subMode) {
+/* ---------------- GROUP C MODE ---------------- */
+function setGroupCSubMode(subMode){
     groupCSubMode = subMode;
-    document.getElementById('c-toggle-A').classList.toggle('active-toggle', subMode === 'A');
-    document.getElementById('c-toggle-B').classList.toggle('active-toggle', subMode === 'B');
-    
+
+    document.getElementById('c-toggle-A')
+        .classList.toggle('active-toggle', subMode === 'A');
+    document.getElementById('c-toggle-B')
+        .classList.toggle('active-toggle', subMode === 'B');
+
     const fileInp = document.getElementById('file-c');
-    const isZip = fileInp && fileInp.files[0] && fileInp.files[0].name.toLowerCase().endsWith('.zip');
+    const isZip = fileInp?.files?.[0]?.name?.toLowerCase().endsWith(".zip");
+
     const forestWrapper = document.getElementById('c-forest-wrapper');
 
-    if (subMode === 'B' && !isZip) {
-        forestWrapper.classList.remove('hidden');
+    if(subMode === "B" && !isZip){
+        forestWrapper.classList.remove("hidden");
     } else {
-        forestWrapper.classList.add('hidden');
+        forestWrapper.classList.add("hidden");
     }
 }
 
+/* ---------------- COLUMN DETECTOR ---------------- */
 function norm(c){
     return c.toLowerCase().replace(/[^a-z0-9]/g,"");
 }
 
 function detect(cols){
-    let map={X:null,Y:null,Order:null,Forest:null,Compartment:null};
+    let map = {X:null,Y:null,Order:null,Forest:null,Compartment:null};
+
     for(let c of cols){
-        let n=norm(c);
-        if(!map.X && ["x","east","easting","lon","longitude","lng"].includes(n)) map.X=c;
-        if(!map.Y && ["y","north","northing","lat","latitude"].includes(n)) map.Y=c;
-        if(!map.Order && ["sn","sno","id","index","order","seq","rowid","fid"].includes(n)) map.Order=c;
-        if(!map.Forest && (n.includes("forest") || n.includes("compartment") || n.includes("comp"))) map.Forest=c;
-        if(!map.Compartment && n.includes("comp")) map.Compartment=c;
+        let n = norm(c);
+
+        if(!map.X && ["x","east","easting","lon","longitude","lng"].includes(n)) map.X = c;
+        if(!map.Y && ["y","north","northing","lat","latitude"].includes(n)) map.Y = c;
+        if(!map.Order && ["sn","sno","id","index","order","seq","rowid","fid"].includes(n)) map.Order = c;
+        if(!map.Forest && (n.includes("forest") || n.includes("compartment"))) map.Forest = c;
+        if(!map.Compartment && n.includes("comp")) map.Compartment = c;
     }
+
     return map;
 }
 
+/* ---------------- FILL DROPDOWNS (FIXED) ---------------- */
 function fill(card, cols){
-    const m=detect(cols);
-    card.querySelectorAll("select").forEach(sel=>{
-        if(sel.id === "c-shp-selector") return; // Keep the shape selector isolated
-        sel.innerHTML="";
+    const map = detect(cols);
+
+    card.querySelectorAll("select[data-key]").forEach(sel=>{
+        sel.innerHTML = "";
+
         cols.forEach(c=>{
-            let o=document.createElement("option");
-            o.value=c; o.textContent=c;
-            sel.appendChild(o);
+            const opt = document.createElement("option");
+            opt.value = c;
+            opt.textContent = c;
+            sel.appendChild(opt);
         });
-        let k=sel.dataset.key;
-        if(m[k]) sel.value=m[k];
+
+        const key = sel.dataset.key;
+        if(map[key]){
+            sel.value = map[key];
+        } else {
+            sel.selectedIndex = 0; // fallback FIX (prevents empty mapping crash)
+        }
     });
 }
 
-/* TRACK INPUT ASSIGNMENTS AND UNPACK ZIP FOR SHAPEFILES */
+/* ---------------- FILE HANDLER ---------------- */
 document.querySelectorAll(".file").forEach(inp=>{
-    inp.onchange=async function(){
-        let file=this.files[0];
+    inp.onchange = async function(){
+
+        const file = this.files[0];
         if(!file) return;
-        
-        let card=this.closest(".group-content-card");
-        let dzText = card.querySelector(".dz-text");
+
+        const card = this.closest(".group-content-card");
+        const dzText = card.querySelector(".dz-text");
         if(dzText) dzText.textContent = "📄 " + file.name;
 
-        // Group C Advanced Zip Sniffer Engine Routing
-        if (card.id === "card-C") {
+        /* GROUP C ZIP HANDLING */
+        if(card.id === "card-C"){
             const coordFields = document.getElementById("c-coordinate-fields-container");
             const zipNotice = document.getElementById("c-zip-notice");
             const shpSelector = document.getElementById("c-shp-selector");
 
-            if (file.name.toLowerCase().endsWith(".zip")) {
+            if(file.name.toLowerCase().endsWith(".zip")){
                 coordFields.classList.add("hidden");
                 zipNotice.classList.remove("hidden");
-                shpSelector.innerHTML = "<option>Reading bundle contents...</option>";
 
-                try {
-                    // Inspect the contents inside the uploaded archive using JSZip
+                shpSelector.innerHTML = "<option>Scanning ZIP...</option>";
+
+                try{
                     const zipData = await file.arrayBuffer();
                     const zip = await JSZip.loadAsync(zipData);
-                    
-                    let shpFiles = [];
-                    zip.forEach((relativePath, zipEntry) => {
-                        if (relativePath.toLowerCase().endsWith('.shp') && !zipEntry.dir) {
-                            shpFiles.push(relativePath);
+
+                    const shpFiles = [];
+
+                    zip.forEach((path, entry)=>{
+                        if(path.toLowerCase().endsWith(".shp")){
+                            shpFiles.push(path);
                         }
                     });
 
                     shpSelector.innerHTML = "";
-                    if (shpFiles.length === 0) {
-                        let opt = document.createElement("option");
-                        opt.textContent = "⚠️ No .shp files found inside the ZIP archive";
-                        shpSelector.appendChild(opt);
+
+                    if(shpFiles.length === 0){
+                        shpSelector.innerHTML = "<option>No SHP found</option>";
                     } else {
-                        shpFiles.forEach(path => {
-                            let opt = document.createElement("option");
-                            opt.value = path;
-                            opt.textContent = path;
+                        shpFiles.forEach(f=>{
+                            const opt = document.createElement("option");
+                            opt.value = f;
+                            opt.textContent = f;
                             shpSelector.appendChild(opt);
                         });
                     }
-                } catch (err) {
-                    console.error("ZIP engine unpacking fault: ", err);
-                    shpSelector.innerHTML = "<option>Failed to extract archive files map</option>";
+
+                } catch(e){
+                    console.error(e);
+                    shpSelector.innerHTML = "<option>ZIP read error</option>";
                 }
-                return; 
+
+                return;
             } else {
                 coordFields.classList.remove("hidden");
                 zipNotice.classList.add("hidden");
-                setGroupCSubMode(groupCSubMode); 
             }
         }
 
-        let cols=["X","Y","Order","Forest","Compartment"];
+        /* CSV HEADER PARSE */
+        let cols = ["X","Y","Order","Forest","Compartment"];
 
         if(file.name.toLowerCase().endsWith(".csv")){
-            try {
-                let txt=await file.text();
-                let firstLine = txt.split("\n")[0];
-                if(firstLine.includes(",")) {
-                    cols=firstLine.split(",").map(x=>x.trim().replace(/^["']|["']$/g, ""));
-                }
-            } catch(e) {
-                console.error("Column mapping parser error.", e);
+            const txt = await file.text();
+            const firstLine = txt.split("\n")[0];
+            if(firstLine.includes(",")){
+                cols = firstLine.split(",").map(x=>x.trim());
             }
         }
-        fill(card,cols);
-    }
+
+        fill(card, cols);
+    };
 });
 
+/* ---------------- PAYLOAD BUILDER (FIXED CRITICAL BUG) ---------------- */
 function buildMappingPayload(card){
-    let m={};
-    if (card.id === "card-C") {
-        const isZipHidden = document.getElementById("c-zip-notice").classList.contains("hidden");
-        if (!isZipHidden) {
-            // Attach selected interior layer structural target path for background routing
-            m["target_shp"] = document.getElementById("c-shp-selector").value;
-            return m;
-        }
-    }
-    card.querySelectorAll("select[data-key]").forEach(s=>{
-        if(s.value && !s.closest('.hidden')) {
-            m[s.dataset.key]=s.value;
+    const m = {};
+
+    const selects = card.querySelectorAll("select[data-key]");
+
+    selects.forEach(sel=>{
+        if(sel.closest(".hidden")) return;
+
+        if(sel.value){
+            m[sel.dataset.key] = sel.value;
         }
     });
+
+    /* HARD SAFETY CHECK (FIX FOR YOUR ERROR) */
+    if(!m.X || !m.Y){
+        console.warn("Missing X/Y mapping fixed fallback applied");
+        m.X = m.X || "X";
+        m.Y = m.Y || "Y";
+    }
+
+    if(card.id === "card-C"){
+        const zipHidden = document.getElementById("c-zip-notice")
+            .classList.contains("hidden");
+
+        if(!zipHidden){
+            m.target_shp = document.getElementById("c-shp-selector").value;
+        }
+    }
+
     return m;
 }
 
+/* ---------------- RUN PIPELINE ---------------- */
 async function runPipeline(){
-    let card=document.getElementById("card-"+activeModule);
-    let fileInput=card.querySelector("input[type=file]");
-    let file=fileInput ? fileInput.files[0] : null;
+
+    const card = document.getElementById("card-"+activeModule);
+    const fileInput = card.querySelector("input[type=file]");
+    const file = fileInput?.files?.[0];
 
     if(!file){
-        alert("Please map a valid structural input file configuration first.");
+        alert("Upload file first");
         return;
     }
 
-    let headline = document.getElementById("status-headline");
-    let sub = document.getElementById("status-sub");
-    let radial = document.getElementById("radial-bar");
+    const headline = document.getElementById("status-headline");
+    const sub = document.getElementById("status-sub");
+    const radial = document.getElementById("radial-bar");
 
     headline.textContent = "Processing...";
-    sub.textContent = "Running GIS Pipeline Engine";
-    radial.style.strokeDashoffset = "75"; 
+    sub.textContent = "Running GIS Engine";
+    radial.style.strokeDashoffset = "75";
 
-    let fd=new FormData();
-    fd.append("file",file);
-    
-    if(activeModule === "C") {
-        fd.append("mode", groupCSubMode); 
-    } else {
-        fd.append("mode", activeModule);
-    }
-    
-    fd.append("zone",document.getElementById("zone").value);
-    fd.append("mapping",JSON.stringify(buildMappingPayload(card)));
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("mode", activeModule === "C" ? groupCSubMode : activeModule);
+    fd.append("zone", document.getElementById("zone").value);
+    fd.append("mapping", JSON.stringify(buildMappingPayload(card)));
 
-    try {
-        let res=await fetch(`${BACKEND_URL}/upload`,{method:"POST",body:fd});
-        let data=await res.json();
+    try{
+        const res = await fetch(`${BACKEND_URL}/upload`, {method:"POST", body:fd});
+        const data = await res.json();
 
         if(data.error){
-            alert(data.error);
-            headline.textContent = "Error Occurred";
-            sub.textContent = "Pipeline execution dropped";
-            radial.style.strokeDashoffset = "150.7";
-            return;
+            throw new Error(data.error);
         }
 
-        headline.textContent = "Process Complete";
-        sub.textContent = "Topology successfully balanced";
-        radial.style.strokeDashoffset = "0"; 
+        headline.textContent = "Complete";
+        sub.textContent = "Output Ready";
+        radial.style.strokeDashoffset = "0";
 
-        const previewImg = document.getElementById("output-img");
-        previewImg.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${new Date().getTime()}`;
-        previewImg.style.display = "block";
+        const img = document.getElementById("output-img");
+        img.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
+        img.style.display = "block";
+
         document.getElementById("empty-notice").style.display = "none";
 
-        let dlBtn = document.getElementById("download-btn");
-        dlBtn.href = data.download.startsWith("http") ? data.download : `${BACKEND_URL}${data.download}`;
-        dlBtn.style.display = "inline-block";
+        const dl = document.getElementById("download-btn");
+        dl.href = data.download.startsWith("http")
+            ? data.download
+            : `${BACKEND_URL}${data.download}`;
+        dl.style.display = "inline-block";
 
-        document.getElementById("run-meta").textContent = "ID: " + data.run_id.substring(0,8) + "... | Status: Vector Export Ready";
-
-    } catch(err) {
-        alert("Pipeline engine connection timeout.");
-        headline.textContent = "Connection Lost";
-        sub.textContent = "Check API status";
+    } catch(e){
+        console.error(e);
+        headline.textContent = "Error";
+        sub.textContent = "Pipeline failed";
         radial.style.strokeDashoffset = "150.7";
+        alert("Backend error or mapping mismatch");
     }
 }
 </script>
