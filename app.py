@@ -49,6 +49,15 @@ def resolve_xyz(df, mapping=None):
         y = mapping.get("Y")
         order = mapping.get("Order")
 
+    if x not in df.columns:
+        x = None
+
+    if y not in df.columns:
+        y = None
+
+    if order and order not in df.columns:
+        order = None
+
     for col in df.columns:
         c = norm(col)
         if x is None and c in X_KEYS: x = col
@@ -144,14 +153,34 @@ def process_group_c(file_path, crs, out, mapping):
                 raise ValueError("The vector file selected does not contain sufficient coordinates to form a closed polygon.")
 
         # Build clean output datasets
-        poly = poly_geoms[0] if poly_geoms else safe_polygon([])
-        poly_gdf = gpd.GeoDataFrame([{"Area_ha": poly.area / 10000, "Perimeter": poly.length, "geometry": poly}], crs=crs)
+        if not poly_geoms:
+            raise ValueError(
+                "No valid polygon geometry found."
+        )
+
+        poly = poly_geoms[0]
+        poly_gdf = gpd.GeoDataFrame(
+            [{"Area_ha": poly.area / 10000,
+              "Perimeter": poly.length,
+              "geometry": poly}],
+            geometry="geometry",
+            crs=crs
+        )
         
         exterior_coords = list(poly.exterior.coords) if hasattr(poly, 'exterior') and poly.exterior else []
-        line_gdf = gpd.GeoDataFrame([{"geometry": LineString(exterior_coords) if len(exterior_coords) > 1 else None}], crs=crs)
+        line_gdf = gpd.GeoDataFrame(
+            [{"geometry": LineString(exterior_coords)}],
+            geometry="geometry",
+            crs=crs
+        )
         
         pts_list = [{"geometry": Point(pt), "Order": i+1} for i, pt in enumerate(exterior_coords[:-1])]
-        pts_gdf = gpd.GeoDataFrame(pts_list, crs=crs) if pts_list else gpd.GeoDataFrame(columns=['geometry'], crs=crs)
+        pts_gdf = gpd.GeoDataFrame(
+            pts_list,
+            geometry="geometry",
+            crs=crs
+        )
+        if pts_list else gpd.GeoDataFrame(columns=['geometry'], crs=crs)
         
         # Export data frames
         df_excel_input = pd.DataFrame([{"X": pt[0], "Y": pt[1], "Order": i+1} for i, pt in enumerate(exterior_coords[:-1])])
@@ -202,11 +231,20 @@ def process_group_c(file_path, crs, out, mapping):
         df_excel_input = df
 
     # Export Shapefiles safely
-    poly_gdf.to_file(os.path.join(out, "polygon.shp"))
+    poly_gdf.to_file(
+        os.path.join(out, "polygon.shp"),
+        driver="ESRI Shapefile"
+    )
     if line_gdf is not None and not line_gdf.empty and line_gdf.geometry.iloc[0] is not None:
-        line_gdf.to_file(os.path.join(out, "line.shp"))
+        line_gdf.to_file(
+            os.path.join(out, "line.shp"),
+            driver="ESRI Shapefile"
+    )
     if not pts_gdf.empty:
-        pts_gdf.to_file(os.path.join(out, "points.shp"))
+        pts_gdf.to_file(
+            os.path.join(out, "points.shp"),
+            driver="ESRI Shapefile"
+    )
 
     # Export cross-platform Excel summaries
     excel_path = os.path.join(out, "output.xlsx")
@@ -271,15 +309,27 @@ def serve_output_assets(run_id, filename):
 @app.route("/download/<run_id>")
 def download(run_id):
     folder = os.path.join(OUTPUT, run_id)
-    archive_store_path = os.path.join(OUTPUT, f"export_{run_id}")
-    
+
+    if not os.path.exists(folder):
+        return jsonify({"error": "Run not found"}), 404
+
+    archive_store_path = os.path.join(
+        OUTPUT,
+        f"export_{run_id}"
+    )
+
     zip_path = shutil.make_archive(
         archive_store_path,
         "zip",
         root_dir=folder
     )
-    return send_file(zip_path, as_attachment=True)
-    # ================= HOME =================
+
+    return send_file(
+        zip_path,
+        as_attachment=True
+    )
+
+
 @app.route("/")
 def home():
     return render_template("index.html")
