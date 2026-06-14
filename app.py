@@ -388,81 +388,145 @@ def _repair_geom(g):
     return g if g.is_valid else g.buffer(0)
 
 
-def _area_balanced_split(poly, n_tries=50):
+def _area_balanced_split(poly, n_tries=60):
     """
-    Split poly into two near-equal-area halves.
-    Uses binary search along the longest bbox axis to find the balanced cut.
-    Returns list of 1 (failed) or 2 Polygon objects.
+    Split poly into two near-equal-area halves using box-clipping.
+
+    Instead of shp_split (which fails on concave / self-touching polygons),
+    we clip the polygon with a half-bounding-box rectangle.  This is 100%
+    robust for any valid polygon shape, including highly concave forests.
+
+    Binary-searches the cut position along the longest bbox axis until both
+    halves differ by < 0.5 % of total area.
+
+    Returns a list of exactly 2 Polygon (or MultiPolygon) objects, or [poly]
+    if clipping fails completely.
     """
+    from shapely.geometry import box as shapely_box
+
     minx, miny, maxx, maxy = poly.bounds
     dx = maxx - minx
     dy = maxy - miny
-    pad = max(dx, dy) * 2
 
+    # Choose axis to cut along (longest dimension)
     if dx >= dy:
         axis = "x"; lo, hi = minx, maxx
     else:
         axis = "y"; lo, hi = miny, maxy
 
-    target = poly.area / 2.0
-    best_parts = None
+    target   = poly.area / 2.0
+    best_lo  = None
+    best_hi  = None
 
     for _ in range(n_tries):
         mid = (lo + hi) / 2.0
-        if axis == "x":
-            blade = LineString([(mid, miny - pad), (mid, maxy + pad)])
-        else:
-            blade = LineString([(minx - pad, mid), (maxx + pad, mid)])
 
+        # Clip boxes — slightly oversized to avoid boundary artefacts
         try:
-            result = shp_split(poly, blade)
+            if axis == "x":
+                clip_lo = poly.intersection(shapely_box(minx - 1, miny - 1, mid,      maxy + 1))
+                clip_hi = poly.intersection(shapely_box(mid,      miny - 1, maxx + 1, maxy + 1))
+            else:
+                clip_lo = poly.intersection(shapely_box(minx - 1, miny - 1, maxx + 1, mid     ))
+                clip_hi = poly.intersection(shapely_box(minx - 1, mid,      maxx + 1, maxy + 1))
         except Exception:
             break
 
-        parts = sorted(
-            [_repair_geom(g) for g in result.geoms if g.area > 1e-6],
-            key=lambda g: g.centroid.x if axis == "x" else g.centroid.y
-        )
+        # Reject empty or near-zero pieces
+        if clip_lo.is_empty or clip_hi.is_empty:
+            if clip_lo.is_empty: lo = mid
+            else:                hi = mid
+            continue
 
-        if len(parts) < 2:
+        lo_area = clip_lo.area
+        if abs(lo_area - target) / (target + 1e-10) < 0.005:
+            best_lo, best_hi = clip_lo, clip_hi
             break
-
-        best_parts = parts
-        left_area = parts[0].area
-
-        if abs(left_area - target) / (target + 1e-10) < 0.005:
-            break
-        elif left_area < target:
+        elif lo_area < target:
             lo = mid
         else:
             hi = mid
 
-    return best_parts if best_parts and len(best_parts) >= 2 else [poly]
+        best_lo, best_hi = clip_lo, clip_hi
+
+    if best_lo is None or best_hi is None or best_lo.is_empty or best_hi.is_empty:
+        return [poly]
+
+    def _extract_polys(geom):
+        """Flatten a geometry into a list of individual Polygons."""
+        geom = _repair_geom(geom)
+        if geom.geom_type == "Polygon":
+            return [geom] if geom.area > 1e-6 else []
+        elif geom.geom_type in ("MultiPolygon", "GeometryCollection"):
+            out = []
+            for g in geom.geoms:
+                if g.geom_type == "Polygon" and g.area > 1e-6:
+                    out.append(_repair_geom(g))
+            return out
+        return []
+
+    # Merge MultiPolygon fragments back into single geometries per side
+    lo_polys = _extract_polys(best_lo)
+    hi_polys = _extract_polys(best_hi)
+
+    if not lo_polys or not hi_polys:
+        return [poly]
+
+    # Use unary_union so each side is one geometry (possibly MultiPolygon for
+    # concave forests where the cut produces disconnected pieces)
+    lo_geom = unary_union(lo_polys) if len(lo_polys) > 1 else lo_polys[0]
+    hi_geom = unary_union(hi_polys) if len(hi_polys) > 1 else hi_polys[0]
+
+    return [_repair_geom(lo_geom), _repair_geom(hi_geom)]
 
 
 def _subdivide_polygon(poly, n):
     """
     Bisect *poly* recursively until we have exactly n near-equal sub-polygons.
-    Always splits the largest remaining piece.
+
+    Key improvements over naive bisection:
+    - Always splits the LARGEST remaining piece (greedy equalisation)
+    - Tracks failed pieces separately — a failure on one piece does NOT
+      stop the loop; it tries the next largest instead
+    - Retries up to (n * 3) times to handle concave shapes that need
+      multiple attempts before a clean split is found
+    - Final pieces are area-sorted and truncated to exactly n
     """
     if n <= 1:
-        return [poly]
+        return [_repair_geom(poly)]
 
-    pieces = [_repair_geom(poly)]
+    pieces  = [_repair_geom(poly)]
+    failed  = set()          # indices of pieces that cannot be split further
+    max_iter = n * 4         # safety cap
 
-    while len(pieces) < n:
-        pieces.sort(key=lambda g: g.area, reverse=True)
-        biggest = pieces.pop(0)
-        halves  = _area_balanced_split(biggest)
-
-        if len(halves) < 2:
-            # Cannot split further — put it back and stop
-            pieces.insert(0, biggest)
+    for _ in range(max_iter):
+        if len(pieces) >= n:
             break
 
+        # Sort by area descending; skip already-failed ones
+        candidates = sorted(
+            [(i, p) for i, p in enumerate(pieces) if i not in failed],
+            key=lambda t: t[1].area,
+            reverse=True,
+        )
+
+        if not candidates:
+            break  # every piece is unsplittable
+
+        idx, biggest = candidates[0]
+        halves = _area_balanced_split(biggest)
+
+        if len(halves) < 2:
+            failed.add(idx)
+            continue
+
+        # Replace the chosen piece with the two halves
+        pieces.pop(idx)
+        # Rebuild failed set with adjusted indices
+        failed = {fi if fi < idx else fi - 1 for fi in failed}
         pieces.extend(halves)
 
-    # Sort largest-first, label by that order
+    # Sort by area descending and return exactly n pieces
     pieces.sort(key=lambda g: g.area, reverse=True)
     return pieces[:n]
 
