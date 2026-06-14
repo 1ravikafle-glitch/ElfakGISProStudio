@@ -623,9 +623,9 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
                 ha="center", va="bottom",
                 fontsize=5,
                 fontweight="bold",
-                color="white",
+                color="black",
                 path_effects=[
-                    pe.Stroke(linewidth=1.8, foreground="black"),
+                    pe.Stroke(linewidth=1.8, foreground="white"),
                     pe.Normal()
                 ],
                 zorder=6,
@@ -644,16 +644,16 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
                 ha="center", va="center",
                 fontsize=5.5,
                 fontweight="bold",
-                color="white",
+                color="black",
                 path_effects=[
-                    pe.Stroke(linewidth=2, foreground="#1a1a1a"),
+                    pe.Stroke(linewidth=2, foreground="white"),
                     pe.Normal()
                 ],
                 zorder=7,
             )
 
     plt.axis("off")
-    fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="#0f0a12")
+    fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
