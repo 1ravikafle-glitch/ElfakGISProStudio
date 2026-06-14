@@ -598,22 +598,113 @@ def _df_to_polygon(df, x_col, y_col, order_col):
     return _repair_geom(Polygon(coords))
 
 
-def group_e(df, crs, out, mapping=None, e_mode="A", n_compartments=4):
+def _load_polygons_from_zip(file, target_shp, crs):
+    """
+    Extract a ZIP archive, find the selected .shp, read it as a GeoDataFrame
+    reprojected to *crs*.  Returns a list of (feature_name, polygon) tuples
+    where feature_name comes from any Name/Forest/Label attribute or the FID.
+    """
+    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+    os.makedirs(folder, exist_ok=True)
+    zip_path = os.path.join(folder, "input.zip")
+    file.save(zip_path)
+
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(folder)
+
+    # Collect all .shp paths
+    shp_candidates = []
+    for root, _, files in os.walk(folder):
+        for f in files:
+            if f.endswith(".shp"):
+                shp_candidates.append(os.path.join(root, f))
+
+    if not shp_candidates:
+        raise ValueError("No shapefile (.shp) found inside the ZIP archive.")
+
+    # Pick target shp
+    shp_path = shp_candidates[0]
+    if target_shp:
+        target_name = os.path.basename(target_shp)
+        for cand in shp_candidates:
+            if os.path.basename(cand) == target_name:
+                shp_path = cand
+                break
+
+    gdf = gpd.read_file(shp_path)
+    if gdf.empty:
+        raise ValueError("The selected shapefile contains no features.")
+
+    if gdf.crs is None:
+        gdf = gdf.set_crs(crs)
+    else:
+        gdf = gdf.to_crs(crs)
+
+    # Try to find a name column (Forest / Name / Label / first text column)
+    name_col = None
+    for candidate in ["Forest", "forest", "Name", "name", "NAME",
+                       "Label", "label", "LABEL", "ID", "id"]:
+        if candidate in gdf.columns:
+            name_col = candidate
+            break
+    if name_col is None:
+        for col in gdf.columns:
+            if col == "geometry":
+                continue
+            if gdf[col].dtype == object:
+                name_col = col
+                break
+
+    results = []
+    for i, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+
+        feat_name = str(row[name_col]) if name_col else f"Feature_{i+1}"
+
+        # Flatten to individual Polygon objects
+        if geom.geom_type == "Polygon":
+            polys = [_repair_geom(geom)]
+        elif geom.geom_type == "MultiPolygon":
+            polys = [_repair_geom(g) for g in geom.geoms]
+        else:
+            polys = [_repair_geom(g) for g in geom.geoms
+                     if g.geom_type == "Polygon"] if hasattr(geom, "geoms") else []
+
+        # For MultiPolygon features merge into one polygon for subdivision
+        if len(polys) > 1:
+            merged = unary_union(polys)
+            polys = [_repair_geom(merged)]
+
+        for p in polys:
+            if p.area > 1e-6:
+                results.append((feat_name, p))
+
+    if not results:
+        raise ValueError("No polygon geometries found in the selected shapefile.")
+
+    return results, shp_candidates
+
+
+def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
+            is_zip=False):
     """
     Group E — Polygon Subdivider.
-    Divides forest boundary polygon(s) into n_compartments near-equal-area pieces.
+
+    Accepts either:
+      • CSV/Excel DataFrame  (is_zip=False) — build polygon from XY boundary points
+      • ZIP file             (is_zip=True)  — read polygon directly from shapefile
+
+    e_mode="A"  →  Single-forest / single-polygon
+        ZIP:   subdivides each selected polygon feature independently;
+               if multiple features exist, each gets its own output folder.
+        CSV:   all rows → one boundary polygon → subdivided.
+
+    e_mode="B"  →  Multi-forest (CSV only)
+        Each Forest group subdivided independently into its own folder.
+        (For ZIP input e_mode is forced to "A" — each feature is already one polygon.)
     """
-    df = normalize_order(df)
-
-    x_col      = safe_col(df, mapping, "X",      "X")
-    y_col      = safe_col(df, mapping, "Y",      "Y")
-    order_col  = safe_col(df, mapping, "Order",  "Order")
-    forest_col = safe_col(df, mapping, "Forest", "Forest")
-
-    if not x_col: raise ValueError("Could not find an X / Easting / Longitude column.")
-    if not y_col: raise ValueError("Could not find a Y / Northing / Latitude column.")
-    if e_mode == "B" and not forest_col:
-        raise ValueError("Multi-Forest mode requires a Forest column. Please map it or switch to Single Forest mode.")
     if n_compartments < 2:
         raise ValueError("Number of compartments must be at least 2.")
     if n_compartments > 200:
@@ -621,30 +712,64 @@ def group_e(df, crs, out, mapping=None, e_mode="A", n_compartments=4):
 
     all_poly_gdfs, all_line_gdfs, all_pts_gdfs = [], [], []
 
-    if e_mode == "A":
-        # Single forest — all rows form one boundary polygon
-        forest_name = (mapping or {}).get("forest") or "FOREST"
-        poly   = _df_to_polygon(df, x_col, y_col, order_col)
-        pieces = _subdivide_polygon(poly, n_compartments)
-        pg, lg, ptg = _save_compartments(pieces, forest_name, crs, out)
-        all_poly_gdfs.append(pg)
-        all_line_gdfs.append(lg)
-        all_pts_gdfs.append(ptg)
+    # ── ZIP / Shapefile input ─────────────────────────────────────────────────
+    if is_zip:
+        target_shp = (mapping or {}).get("target_shp")
+        features, _ = _load_polygons_from_zip(file_or_df, target_shp, crs)
 
-    else:
-        # Multi-forest — each forest subdivided independently into its own folder
-        for f, fg in df.groupby(forest_col):
-            try:
-                poly = _df_to_polygon(fg, x_col, y_col, order_col)
-            except ValueError:
-                continue
-
-            pieces     = _subdivide_polygon(poly, n_compartments)
-            forest_dir = os.path.join(out, _safe_dirname(str(f)))
-            pg, lg, ptg = _save_compartments(pieces, str(f), crs, forest_dir)
+        if len(features) == 1:
+            # Single polygon — save directly in run output folder
+            feat_name, poly = features[0]
+            pieces = _subdivide_polygon(poly, n_compartments)
+            pg, lg, ptg = _save_compartments(pieces, feat_name, crs, out)
             all_poly_gdfs.append(pg)
             all_line_gdfs.append(lg)
             all_pts_gdfs.append(ptg)
+        else:
+            # Multiple features — one subfolder per feature
+            for feat_name, poly in features:
+                pieces     = _subdivide_polygon(poly, n_compartments)
+                feat_dir   = os.path.join(out, _safe_dirname(feat_name))
+                pg, lg, ptg = _save_compartments(pieces, feat_name, crs, feat_dir)
+                all_poly_gdfs.append(pg)
+                all_line_gdfs.append(lg)
+                all_pts_gdfs.append(ptg)
+
+    # ── CSV / Excel input ─────────────────────────────────────────────────────
+    else:
+        df = file_or_df
+        df = normalize_order(df)
+
+        x_col      = safe_col(df, mapping, "X",      "X")
+        y_col      = safe_col(df, mapping, "Y",      "Y")
+        order_col  = safe_col(df, mapping, "Order",  "Order")
+        forest_col = safe_col(df, mapping, "Forest", "Forest")
+
+        if not x_col: raise ValueError("Could not find an X / Easting / Longitude column.")
+        if not y_col: raise ValueError("Could not find a Y / Northing / Latitude column.")
+        if e_mode == "B" and not forest_col:
+            raise ValueError("Multi-Forest mode requires a Forest column.")
+
+        if e_mode == "A":
+            forest_name = (mapping or {}).get("forest") or "FOREST"
+            poly   = _df_to_polygon(df, x_col, y_col, order_col)
+            pieces = _subdivide_polygon(poly, n_compartments)
+            pg, lg, ptg = _save_compartments(pieces, forest_name, crs, out)
+            all_poly_gdfs.append(pg)
+            all_line_gdfs.append(lg)
+            all_pts_gdfs.append(ptg)
+        else:
+            for f, fg in df.groupby(forest_col):
+                try:
+                    poly = _df_to_polygon(fg, x_col, y_col, order_col)
+                except ValueError:
+                    continue
+                pieces     = _subdivide_polygon(poly, n_compartments)
+                forest_dir = os.path.join(out, _safe_dirname(str(f)))
+                pg, lg, ptg = _save_compartments(pieces, str(f), crs, forest_dir)
+                all_poly_gdfs.append(pg)
+                all_line_gdfs.append(lg)
+                all_pts_gdfs.append(ptg)
 
     if not all_poly_gdfs:
         raise ValueError("No valid polygons could be built from the data.")
@@ -768,12 +893,24 @@ def upload():
             poly, line, pts = group_d(df, crs, out, mapping, mode=d_mode)
 
         elif module == "E":
-            df = read_input(file)
-            e_mode        = request.form.get("e_mode", "A")
+            e_mode         = request.form.get("e_mode", "A")
             n_compartments = int(request.form.get("n_compartments", 4))
+            is_zip         = file.filename.lower().endswith(".zip")
+
             if mapping and "forest" not in mapping:
                 mapping["forest"] = forest
-            poly, line, pts = group_e(df, crs, out, mapping, e_mode=e_mode, n_compartments=n_compartments)
+
+            if is_zip:
+                poly, line, pts = group_e(
+                    file, crs, out, mapping,
+                    e_mode=e_mode, n_compartments=n_compartments, is_zip=True
+                )
+            else:
+                df = read_input(file)
+                poly, line, pts = group_e(
+                    df, crs, out, mapping,
+                    e_mode=e_mode, n_compartments=n_compartments, is_zip=False
+                )
 
         else:  # module == "A"
             df = read_input(file)
