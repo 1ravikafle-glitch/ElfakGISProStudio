@@ -992,50 +992,70 @@ input[type="text"]:focus {
                             </div>
                         </div>
 
-                        <!-- GROUP E — Polygon Subdivider -->
+                        <!-- GROUP E — Polygon Subdivider (CSV/Excel OR ZIP/SHP) -->
                         <div class="group-content-card" id="card-E">
-                            <div class="cyber-dropzone"><span class="dz-text">✂️ Select Forest Boundary File</span><input type="file" class="file"></div>
+                            <div class="cyber-dropzone">
+                                <span class="dz-text">✂️ Select Boundary File (CSV/XLS or ZIP)</span>
+                                <input type="file" class="file" id="file-e">
+                            </div>
 
-                            <!-- Mode toggle: Single Forest vs Multi-Forest -->
-                            <div class="field-group">
-                                <label>Forest Input Mode</label>
-                                <div class="toggle-switch-container">
-                                    <div class="toggle-option active-toggle" id="e-toggle-A" onclick="setGroupESubMode('A')">Single Forest</div>
-                                    <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
+                            <!-- ZIP notice — shown when a .zip is uploaded -->
+                            <div id="e-zip-notice" class="field-group hidden">
+                                <div class="vector-badge">
+                                    <div style="font-weight:600;margin-bottom:2px;">📦 Archive Bundle Detected</div>
+                                    <div style="font-size:10px;opacity:0.8;margin-bottom:8px;">Select the polygon layer to subdivide:</div>
+                                    <div class="field-group" style="width:100%;">
+                                        <label style="color:#064e3b;">Target Polygon Layer (.shp)</label>
+                                        <select id="e-shp-selector" style="background:#ffffff;border-color:rgba(16,185,129,0.4);color:#064e3b;"></select>
+                                    </div>
+                                    <div style="font-size:10px;opacity:0.75;margin-top:6px;">Each polygon feature in the layer will be subdivided independently into <span id="e-zip-n-display">4</span> compartments.</div>
                                 </div>
                             </div>
 
-                            <!-- Output structure hint -->
-                            <div class="vector-badge" id="e-mode-hint">
-                                <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
-                                <div style="font-size:10px;opacity:0.8;" id="e-hint-sub">compartments.shp · compartment_summary.xlsx</div>
+                            <!-- CSV/Excel fields — hidden when ZIP is uploaded -->
+                            <div id="e-csv-fields">
+                                <!-- Mode toggle: Single Forest vs Multi-Forest -->
+                                <div class="field-group">
+                                    <label>Forest Input Mode</label>
+                                    <div class="toggle-switch-container">
+                                        <div class="toggle-option active-toggle" id="e-toggle-A" onclick="setGroupESubMode('A')">Single Forest</div>
+                                        <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
+                                    </div>
+                                </div>
+
+                                <!-- Output structure hint -->
+                                <div class="vector-badge" id="e-mode-hint">
+                                    <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
+                                    <div style="font-size:10px;opacity:0.8;" id="e-hint-sub">compartments.shp · compartment_summary.xlsx</div>
+                                </div>
+
+                                <div class="input-row">
+                                    <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
+                                    <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
+                                </div>
+                                <div class="input-row">
+                                    <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+                                    <!-- Forest col shown only in Multi-Forest mode -->
+                                    <div class="field-group" id="e-forest-wrapper" style="display:none;">
+                                        <label>Forest Identifier</label>
+                                        <select data-key="Forest"></select>
+                                    </div>
+                                    <!-- Forest name input for Single mode -->
+                                    <div class="field-group" id="e-forestname-wrapper">
+                                        <label>Forest Name</label>
+                                        <input type="text" data-key="forest" value="FOREST" placeholder="Forest name">
+                                    </div>
+                                </div>
                             </div>
 
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                <!-- Forest col shown only in Multi-Forest mode -->
-                                <div class="field-group" id="e-forest-wrapper" style="display:none;">
-                                    <label>Forest Identifier</label>
-                                    <select data-key="Forest"></select>
-                                </div>
-                                <!-- Forest name input for Single mode -->
-                                <div class="field-group" id="e-forestname-wrapper">
-                                    <label>Forest Name</label>
-                                    <input type="text" data-key="forest" value="FOREST" placeholder="Forest name">
-                                </div>
-                            </div>
-
-                            <!-- Number of compartments -->
+                            <!-- Number of compartments — always visible -->
                             <div class="field-group">
                                 <label>Number of Compartments to Create</label>
-                                <input type="number" id="e-n-compartments" min="2" max="200" step="1" value="4" placeholder="4">
+                                <input type="number" id="e-n-compartments" min="2" max="200" step="1" value="4"
+                                       placeholder="4" oninput="document.getElementById('e-zip-n-display').textContent=this.value||4">
                             </div>
 
-                            <!-- Area info badge -->
+                            <!-- Algorithm info -->
                             <div class="vector-badge" style="background:rgba(101,163,13,0.08);border-color:rgba(101,163,13,0.3);">
                                 <div style="font-weight:600;color:#3f6212;">🌳 Bisection Algorithm</div>
                                 <div style="font-size:10px;opacity:0.85;color:#3f6212;">Iteratively splits along the longest axis at area-balanced positions. Each compartment will be near-equal in area. Output includes Area_ha, Perim_m, and Pct_Area per compartment.</div>
@@ -1284,6 +1304,29 @@ document.querySelectorAll(".file").forEach(inp => {
             }
         }
 
+        /* GROUP E ZIP */
+        if(card.id === "card-E"){
+            const csvFields  = document.getElementById("e-csv-fields");
+            const zipNotice  = document.getElementById("e-zip-notice");
+            const shpSelector = document.getElementById("e-shp-selector");
+            if(file.name.toLowerCase().endsWith(".zip")){
+                csvFields.classList.add("hidden");
+                zipNotice.classList.remove("hidden");
+                const zip = await JSZip.loadAsync(await file.arrayBuffer());
+                const shpFiles = [];
+                Object.keys(zip.files).forEach(path => {
+                    if(path.toLowerCase().endsWith(".shp")) shpFiles.push(path);
+                });
+                shpSelector.innerHTML = shpFiles.length
+                    ? shpFiles.map(f=>`<option>${f}</option>`).join("")
+                    : "<option>No SHP found</option>";
+                return;
+            } else {
+                csvFields.classList.remove("hidden");
+                zipNotice.classList.add("hidden");
+            }
+        }
+
         /* CSV column detection */
         let cols = ["X","Y","Order","Forest","Compartment"];
         if(file.name.toLowerCase().endsWith(".csv")){
@@ -1320,6 +1363,11 @@ function buildMappingPayload(card){
     if(card.id==="card-C"){
         if(!document.getElementById("c-zip-notice").classList.contains("hidden")){
             m.target_shp = document.getElementById("c-shp-selector").value;
+        }
+    }
+    if(card.id==="card-E"){
+        if(!document.getElementById("e-zip-notice").classList.contains("hidden")){
+            m.target_shp = document.getElementById("e-shp-selector").value;
         }
     }
     return m;
