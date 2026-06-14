@@ -855,6 +855,7 @@ input[type="text"]:focus {
 
                     <div class="config-stack">
 
+                        <!-- GROUP A -->
                         <div class="group-content-card active-card" id="card-A">
                             <div class="cyber-dropzone">
                                 <span class="dz-text">✨ Select Excel Data</span>
@@ -873,6 +874,7 @@ input[type="text"]:focus {
                             </div>
                         </div>
 
+                        <!-- GROUP B -->
                         <div class="group-content-card" id="card-B">
                             <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel Data</span><input type="file" class="file"></div>
                             <div class="input-row">
@@ -886,6 +888,7 @@ input[type="text"]:focus {
                             <div class="field-group"><label>Compartment Identifier</label><select data-key="Compartment"></select></div>
                         </div>
 
+                        <!-- GROUP C -->
                         <div class="group-content-card" id="card-C">
                             <div class="cyber-dropzone">
                                 <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
@@ -905,7 +908,6 @@ input[type="text"]:focus {
                                     <div class="vector-badge">
                                         <div style="font-weight: 600; margin-bottom: 2px;">📦 Archive Bundle Map Detected</div>
                                         <div style="font-size: 10px; opacity: 0.8; margin-bottom: 8px;">Skipping XY matching. Select target layer from the package:</div>
-
                                         <div class="field-group" style="width: 100%;">
                                             <label style="color: #064e3b;">Target Vector Layer (.shp)</label>
                                             <select id="c-shp-selector" style="background: #ffffff; border-color: rgba(16, 185, 129, 0.4); color: #064e3b;"></select>
@@ -953,8 +955,25 @@ input[type="text"]:focus {
                             </div>
                         </div>
 
+                        <!-- GROUP D — Whole Forest or Segmented (Forest → Compartment subfolders) -->
                         <div class="group-content-card" id="card-D">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Engine File</span><input type="file" class="file"></div>
+                            <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Forest File</span><input type="file" class="file"></div>
+
+                            <!-- Mode toggle — mirrors Group C -->
+                            <div class="field-group">
+                                <label>Mode Selection</label>
+                                <div class="toggle-switch-container">
+                                    <div class="toggle-option active-toggle" id="d-toggle-A" onclick="setGroupDSubMode('A')">Whole Forest</div>
+                                    <div class="toggle-option" id="d-toggle-B" onclick="setGroupDSubMode('B')">Segmented</div>
+                                </div>
+                            </div>
+
+                            <!-- Output hint badge — updates with mode -->
+                            <div class="vector-badge" id="d-mode-hint">
+                                <div style="font-weight:600;" id="d-hint-title">📂 One folder per Forest</div>
+                                <div style="font-size:10px;opacity:0.8;" id="d-hint-sub">Forest_A/ → Polygon.shp · Line.shp · Point.shp</div>
+                            </div>
+
                             <div class="input-row">
                                 <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
                                 <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
@@ -962,6 +981,12 @@ input[type="text"]:focus {
                             <div class="input-row">
                                 <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
                                 <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
+                            </div>
+
+                            <!-- Compartment — shown only in Segmented mode -->
+                            <div class="field-group" id="d-comp-wrapper" style="display:none;">
+                                <label>Compartment Identifier</label>
+                                <select data-key="Compartment"></select>
                             </div>
                         </div>
 
@@ -1014,28 +1039,10 @@ input[type="text"]:focus {
 <script>
 let activeModule = "A";
 let groupCSubMode = "A";
+let groupDSubMode = "A";
 const BACKEND_URL = window.location.origin;
 
-/* ────────────────────────────────────────────────────────────────────────────
-   COLUMN ALIAS RESOLVER
-   Mirrors the backend _norm() + alias tables so the frontend dropdowns
-   pre-select the right columns automatically, even for unusual header names.
-   Recognised variants (case-insensitive, spaces/punctuation stripped):
-     X        : x, xcoord, xcoordinate, xcord, xcords, xcoords,
-                east, easting, eastings, lon, long, longitude, lng,
-                pointx, coordx, utme, utmx
-     Y        : y, ycoord, ycoordinate, ycord, ycords, ycoords,
-                north, northing, northings, lat, latitude,
-                pointy, coordy, utmn, utmy
-     Order    : order, id, sn, sno, serial, serialno, serialnumber,
-                seq, sequence, index, rowid, fid, no, num, number,
-                plotid, plotno, pointid, pointno, pid
-     Forest   : forest, forestname, forestid, forestno, fname,
-                forestblock, block
-     Compartment: compartment, comp, compartmentno, compartmentid,
-                compno, compid, section, sectionno
-──────────────────────────────────────────────────────────────────────────── */
-
+/* ── COLUMN ALIAS RESOLVER ─────────────────────────────────────────────── */
 const COL_ALIASES = {
     X: new Set([
         "x","xcoord","xcoordinate","xcord","xcords","xcoords",
@@ -1062,12 +1069,10 @@ const COL_ALIASES = {
     ])
 };
 
-/** Strip everything except letters and digits, lowercase. */
 function norm(s){
     return (s || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** Given an array of raw column names, return a {X, Y, Order, Forest, Compartment} map. */
 function detect(cols){
     const map = {X:null, Y:null, Order:null, Forest:null, Compartment:null};
     cols.forEach(c => {
@@ -1079,56 +1084,42 @@ function detect(cols){
     return map;
 }
 
-/* ────────────────────────────────────────────────────────────────────────── */
-
-/* ---------------- SAFE RESET ---------------- */
+/* ── STATUS RESET ──────────────────────────────────────────────────────── */
 function resetStatus(){
     document.getElementById("status-headline").textContent = "Core Standby";
     document.getElementById("status-sub").textContent = "Topology Balanced";
     document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
 }
 
-/* ---------------- TAB SWITCH ---------------- */
+/* ── TAB SWITCH ────────────────────────────────────────────────────────── */
 function switchTab(t){
     activeModule = t;
-
-    document.querySelectorAll(".group-content-card").forEach(c=>{
-        c.classList.remove("active-card");
-    });
-
+    document.querySelectorAll(".group-content-card").forEach(c => c.classList.remove("active-card"));
     const activeCard = document.getElementById("card-"+t);
     if(activeCard) activeCard.classList.add("active-card");
-
-    document.querySelectorAll(".matrix-tab").forEach(tab=>{
+    document.querySelectorAll(".matrix-tab").forEach(tab => {
         tab.classList.toggle("active-tab", tab.id === "tab-" + t);
     });
-
-    document.querySelectorAll(".tree-node").forEach(node=>{
+    document.querySelectorAll(".tree-node").forEach(node => {
         node.classList.toggle("active", node.getAttribute("onclick") === "switchTab('"+t+"')");
     });
-
     const labels = {
         A:"A · Boundary Whole",
         B:"B · Segment Forest",
         C:"C · Sample Plot Workspace",
         D:"D · Complex Version A"
     };
-
     document.getElementById("header-module").textContent = labels[t];
 }
 
-/* ---------------- GROUP C MODE ---------------- */
+/* ── GROUP C MODE ──────────────────────────────────────────────────────── */
 function setGroupCSubMode(subMode){
     groupCSubMode = subMode;
-
     document.getElementById('c-toggle-A').classList.toggle('active-toggle', subMode==='A');
     document.getElementById('c-toggle-B').classList.toggle('active-toggle', subMode==='B');
-
     const fileInp = document.getElementById('file-c');
     const isZip = fileInp?.files?.[0]?.name?.toLowerCase().endsWith(".zip");
-
     const forestWrapper = document.getElementById('c-forest-wrapper');
-
     if(subMode==="B" && !isZip){
         forestWrapper.classList.remove("hidden");
     } else {
@@ -1136,42 +1127,60 @@ function setGroupCSubMode(subMode){
     }
 }
 
-/* ---------------- FILL DROPDOWNS ---------------- */
+/* ── FILL DROPDOWNS ────────────────────────────────────────────────────── */
 function fill(card, cols){
     const map = detect(cols);
-
-    card.querySelectorAll("select[data-key]").forEach(sel=>{
+    card.querySelectorAll("select[data-key]").forEach(sel => {
         sel.innerHTML = "";
-
-        cols.forEach(c=>{
+        // Add a blank "— none —" option for optional fields (Order, Compartment)
+        const key = sel.dataset.key;
+        if(key === "Order" || key === "Compartment"){
+            const blank = document.createElement("option");
+            blank.value = "";
+            blank.textContent = "— none —";
+            sel.appendChild(blank);
+        }
+        cols.forEach(c => {
             const opt = document.createElement("option");
             opt.value = c;
             opt.textContent = c;
             sel.appendChild(opt);
         });
-
-        const key = sel.dataset.key;
         if(map[key]) sel.value = map[key];
-        else if(cols.length > 0) sel.value = cols[0];
+        else if(key !== "Order" && key !== "Compartment" && cols.length > 0) sel.value = cols[0];
     });
 }
 
-/* ---------------- FILE HANDLER ---------------- */
-document.querySelectorAll(".file").forEach(inp=>{
-    inp.onchange = async function(){
+/* ── GROUP D MODE ──────────────────────────────────────────────────────── */
+function setGroupDSubMode(subMode){
+    groupDSubMode = subMode;
+    document.getElementById('d-toggle-A').classList.toggle('active-toggle', subMode === 'A');
+    document.getElementById('d-toggle-B').classList.toggle('active-toggle', subMode === 'B');
 
+    const compWrapper = document.getElementById('d-comp-wrapper');
+    const hintTitle   = document.getElementById('d-hint-title');
+    const hintSub     = document.getElementById('d-hint-sub');
+
+    if(subMode === 'B'){
+        compWrapper.style.display = 'block';
+        hintTitle.textContent = '📂 Forest → Compartment subfolders';
+        hintSub.textContent   = 'Forest_A/Comp_1/ → Polygon.shp · Line.shp · Point.shp';
+    } else {
+        compWrapper.style.display = 'none';
+        hintTitle.textContent = '📂 One folder per Forest';
+        hintSub.textContent   = 'Forest_A/ → Polygon.shp · Line.shp · Point.shp';
+    }
+}
+
+
+document.querySelectorAll(".file").forEach(inp => {
+    inp.onchange = async function(){
         const file = this.files[0];
         if(!file) return;
-
         const card = this.closest(".group-content-card");
-
-        if(card.id === "card-C"){
-            setGroupCSubMode(groupCSubMode);
-        }
-
+        if(card.id === "card-C") setGroupCSubMode(groupCSubMode);
         const dzText = card.querySelector(".dz-text");
         if(dzText) dzText.textContent = "📄 " + file.name;
-
         resetStatus();
 
         /* GROUP C ZIP */
@@ -1179,24 +1188,17 @@ document.querySelectorAll(".file").forEach(inp=>{
             const coordFields = document.getElementById("c-coordinate-fields-container");
             const zipNotice = document.getElementById("c-zip-notice");
             const shpSelector = document.getElementById("c-shp-selector");
-
             if(file.name.toLowerCase().endsWith(".zip")){
                 coordFields.classList.add("hidden");
                 zipNotice.classList.remove("hidden");
-
                 const zip = await JSZip.loadAsync(await file.arrayBuffer());
                 const shpFiles = [];
-
-                Object.keys(zip.files).forEach(path=>{
-                    if(path.toLowerCase().endsWith(".shp")){
-                        shpFiles.push(path);
-                    }
+                Object.keys(zip.files).forEach(path => {
+                    if(path.toLowerCase().endsWith(".shp")) shpFiles.push(path);
                 });
-
                 shpSelector.innerHTML = shpFiles.length
                     ? shpFiles.map(f=>`<option>${f}</option>`).join("")
                     : "<option>No SHP found</option>";
-
                 return;
             } else {
                 coordFields.classList.remove("hidden");
@@ -1206,55 +1208,50 @@ document.querySelectorAll(".file").forEach(inp=>{
 
         /* CSV column detection */
         let cols = ["X","Y","Order","Forest","Compartment"];
-
         if(file.name.toLowerCase().endsWith(".csv")){
             const txt = await file.text();
             const clean = txt.replace(/^\uFEFF/, "").replace(/\r/g, "");
             const firstLine = clean.split("\n").find(l => l.trim().length > 0) || "";
-
             let delimiter = ",";
             if(firstLine.includes(";")) delimiter = ";";
             else if(firstLine.includes("\t")) delimiter = "\t";
-
             let detected = firstLine.split(delimiter).map(x => x.trim()).filter(Boolean);
             if(detected.length > 0) cols = detected;
         }
-
         fill(card, cols);
     };
 });
 
-/* ---------------- PAYLOAD BUILDER ---------------- */
+/* ── PAYLOAD BUILDER ───────────────────────────────────────────────────── */
 function buildMappingPayload(card){
     const m = {};
-
-    card.querySelectorAll("select[data-key]").forEach(sel=>{
-        if(sel.closest(".hidden")) return;
-        if(sel.value) m[sel.dataset.key] = sel.value;
+    card.querySelectorAll("select[data-key]").forEach(sel => {
+        // skip if ancestor has .hidden class OR display:none (Group D compartment toggle)
+        let hidden = false;
+        let el = sel.parentElement;
+        while(el && el !== card){
+            if(el.classList.contains("hidden") || el.style.display === "none"){
+                hidden = true; break;
+            }
+            el = el.parentElement;
+        }
+        if(!hidden && sel.value) m[sel.dataset.key] = sel.value;
     });
-
     if(!m.X) m.X = "X";
     if(!m.Y) m.Y = "Y";
-
     if(card.id==="card-C"){
         if(!document.getElementById("c-zip-notice").classList.contains("hidden")){
             m.target_shp = document.getElementById("c-shp-selector").value;
         }
     }
-
     return m;
 }
 
-/* ---------------- RUN PIPELINE ---------------- */
+/* ── RUN PIPELINE ──────────────────────────────────────────────────────── */
 async function runPipeline(){
-
     const card = document.getElementById("card-"+activeModule);
     const file = card.querySelector("input[type=file]")?.files?.[0];
-
-    if(!file){
-        alert("Upload file first");
-        return;
-    }
+    if(!file){ alert("Upload file first"); return; }
 
     document.getElementById("status-headline").textContent = "Processing...";
     document.getElementById("status-sub").textContent = "Running GIS Engine";
@@ -1264,6 +1261,7 @@ async function runPipeline(){
     fd.append("file", file);
     fd.append("module", activeModule);
     fd.append("mode", activeModule==="C" ? groupCSubMode : activeModule);
+    if(activeModule === "D") fd.append("d_mode", groupDSubMode);
     fd.append("zone", document.getElementById("zone").value);
     const mapping = buildMappingPayload(card);
 
@@ -1279,7 +1277,7 @@ async function runPipeline(){
             "c-grid-rows": "rows",
             "c-grid-cols": "cols"
         };
-        Object.entries(gridFields).forEach(([elId, formKey])=>{
+        Object.entries(gridFields).forEach(([elId, formKey]) => {
             const el = document.getElementById(elId);
             if(el && el.value !== "" && !isNaN(Number(el.value))){
                 fd.append(formKey, el.value);
@@ -1288,18 +1286,17 @@ async function runPipeline(){
     }
 
     fd.append("mapping", JSON.stringify({
-        X: mapping.X || "X",
-        Y: mapping.Y || "Y",
-        Order: mapping.Order || null,
-        Forest: mapping.Forest || null,
+        X:           mapping.X           || "X",
+        Y:           mapping.Y           || "Y",
+        Order:       mapping.Order       || null,
+        Forest:      mapping.Forest      || null,
         Compartment: mapping.Compartment || null,
-        target_shp: mapping.target_shp || null
+        target_shp:  mapping.target_shp  || null
     }));
 
     try{
         const res = await fetch(`${BACKEND_URL}/upload`, {method:"POST", body:fd});
         const data = await res.json();
-
         if(data.error) throw new Error(data.error);
 
         document.getElementById("status-headline").textContent = "Complete";
@@ -1309,7 +1306,6 @@ async function runPipeline(){
         const img = document.getElementById("output-img");
         img.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
         img.style.display = "block";
-
         document.getElementById("empty-notice").style.display = "none";
 
         const dl = document.getElementById("download-btn");
@@ -1327,11 +1323,7 @@ async function runPipeline(){
     }
 }
 
-/* =================================================================
-   UI ENHANCEMENT LAYER
-================================================================= */
-
-/* ---- Smooth resizable layout ---- */
+/* ── RESIZABLE LAYOUT ──────────────────────────────────────────────────── */
 (function enableResizers(){
     const container = document.getElementById('main-layout-container');
     const workspace = document.getElementById('center-workspace-container');
@@ -1347,19 +1339,17 @@ async function runPipeline(){
     }
 
     function startDrag(handle, onMove){
-        handle.addEventListener('mousedown', (e)=>{
+        handle.addEventListener('mousedown', (e) => {
             e.preventDefault();
             handle.classList.add('dragging');
             document.body.style.cursor = getComputedStyle(handle).cursor;
-
-            const move = (ev)=> onMove(ev);
-            const up = ()=>{
+            const move = (ev) => onMove(ev);
+            const up = () => {
                 handle.classList.remove('dragging');
                 document.body.style.cursor = '';
                 document.removeEventListener('mousemove', move);
                 document.removeEventListener('mouseup', up);
             };
-
             document.addEventListener('mousemove', move);
             document.addEventListener('mouseup', up);
         });
@@ -1367,60 +1357,48 @@ async function runPipeline(){
 
     if(leftHandle){
         let startX, startWidth;
-        leftHandle.addEventListener('mousedown', e=>{ startX = e.clientX; startWidth = leftWidth; });
-        startDrag(leftHandle, (ev)=>{
-            const delta = ev.clientX - startX;
-            leftWidth = Math.min(Math.max(startWidth + delta, 220), 460);
+        leftHandle.addEventListener('mousedown', e => { startX = e.clientX; startWidth = leftWidth; });
+        startDrag(leftHandle, (ev) => {
+            leftWidth = Math.min(Math.max(startWidth + (ev.clientX - startX), 220), 460);
             applyColumns();
         });
     }
 
     if(rightHandle){
         let startX, startWidth;
-        rightHandle.addEventListener('mousedown', e=>{ startX = e.clientX; startWidth = rightWidth; });
-        startDrag(rightHandle, (ev)=>{
-            const delta = ev.clientX - startX;
-            rightWidth = Math.min(Math.max(startWidth - delta, 320), 640);
+        rightHandle.addEventListener('mousedown', e => { startX = e.clientX; startWidth = rightWidth; });
+        startDrag(rightHandle, (ev) => {
+            rightWidth = Math.min(Math.max(startWidth - (ev.clientX - startX), 320), 640);
             applyColumns();
         });
     }
 
     if(rowHandle){
         let startY, startTopHeight, totalHeight;
-        rowHandle.addEventListener('mousedown', e=>{
+        rowHandle.addEventListener('mousedown', e => {
             const rect = workspace.getBoundingClientRect();
             totalHeight = rect.height;
-            const topRect = workspace.children[0].getBoundingClientRect();
-            startTopHeight = topRect.height;
+            startTopHeight = workspace.children[0].getBoundingClientRect().height;
             startY = e.clientY;
         });
-        startDrag(rowHandle, (ev)=>{
-            const delta = ev.clientY - startY;
-            let newTop = Math.min(Math.max(startTopHeight + delta, 160), totalHeight - 90);
-            let newBottom = totalHeight - newTop - 6;
-            workspace.style.gridTemplateRows = `${newTop}px 6px ${newBottom}px`;
+        startDrag(rowHandle, (ev) => {
+            let newTop = Math.min(Math.max(startTopHeight + (ev.clientY - startY), 160), totalHeight - 90);
+            workspace.style.gridTemplateRows = `${newTop}px 6px ${totalHeight - newTop - 6}px`;
         });
     }
 })();
 
-/* ---- Drag-over highlight ---- */
-document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
+/* ── DRAG-OVER HIGHLIGHT ───────────────────────────────────────────────── */
+document.querySelectorAll('.cyber-dropzone').forEach(zone => {
     const input = zone.querySelector('input[type="file"]');
     if(!input) return;
-
-    ['dragenter','dragover'].forEach(evt=>{
-        zone.addEventListener(evt, e=>{
-            e.preventDefault();
-            zone.classList.add('drag-over');
-        });
+    ['dragenter','dragover'].forEach(evt => {
+        zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('drag-over'); });
     });
-    ['dragleave','drop'].forEach(evt=>{
-        zone.addEventListener(evt, e=>{
-            e.preventDefault();
-            zone.classList.remove('drag-over');
-        });
+    ['dragleave','drop'].forEach(evt => {
+        zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('drag-over'); });
     });
-    zone.addEventListener('drop', e=>{
+    zone.addEventListener('drop', e => {
         if(e.dataTransfer?.files?.length){
             input.files = e.dataTransfer.files;
             input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1428,7 +1406,7 @@ document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
     });
 });
 
-/* ---- Animated status + progress ---- */
+/* ── ANIMATED STATUS + PROGRESS ────────────────────────────────────────── */
 (function enableStatusAnimations(){
     const headline = document.getElementById('status-headline');
     const radialBox = document.querySelector('.radial-progress-box');
@@ -1439,12 +1417,10 @@ document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
 
     function refreshState(){
         const text = headline.textContent.trim();
-
         headline.classList.remove('is-processing', 'is-error');
         radialBox.classList.remove('is-processing');
         radialBar.classList.remove('is-error');
         canvasWrapper.classList.remove('is-active');
-
         if(text === 'Processing...'){
             headline.classList.add('is-processing');
             radialBox.classList.add('is-processing');
@@ -1456,26 +1432,19 @@ document.querySelectorAll('.cyber-dropzone').forEach(zone=>{
         }
     }
 
-    const headlineObserver = new MutationObserver(refreshState);
-    headlineObserver.observe(headline, { childList: true, characterData: true, subtree: true });
+    new MutationObserver(refreshState).observe(headline, { childList: true, characterData: true, subtree: true });
 
-    const imgObserver = new MutationObserver(()=>{
+    new MutationObserver(() => {
         const img = document.getElementById('output-img');
         if(img.style.display === 'block'){
             emptyNotice.style.opacity = '0';
-            setTimeout(()=>{ emptyNotice.style.display = 'none'; }, 350);
+            setTimeout(() => { emptyNotice.style.display = 'none'; }, 350);
         }
-    });
-    imgObserver.observe(document.getElementById('output-img'), { attributes: true, attributeFilter: ['style'] });
+    }).observe(document.getElementById('output-img'), { attributes: true, attributeFilter: ['style'] });
 
-    const downloadObserver = new MutationObserver(()=>{
-        if(downloadBtn.style.display === 'inline-block'){
-            downloadBtn.classList.add('is-visible');
-        } else {
-            downloadBtn.classList.remove('is-visible');
-        }
-    });
-    downloadObserver.observe(downloadBtn, { attributes: true, attributeFilter: ['style'] });
+    new MutationObserver(() => {
+        downloadBtn.classList.toggle('is-visible', downloadBtn.style.display === 'inline-block');
+    }).observe(downloadBtn, { attributes: true, attributeFilter: ['style'] });
 })();
 </script>
 </body>
