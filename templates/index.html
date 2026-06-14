@@ -826,6 +826,7 @@ input[type="text"]:focus {
                 <div class="tree-node" onclick="switchTab('B')">🌲 Group B — Segment Forest</div>
                 <div class="tree-node" onclick="switchTab('C')">🌲 Group C — Sample Plot</div>
                 <div class="tree-node" onclick="switchTab('D')">🌲 Group D — Complex Version A</div>
+                <div class="tree-node" onclick="switchTab('E')">✂️ Group E — Polygon Subdivider</div>
 
                 <div style="margin-top: 35px;">
                     <div class="field-group">
@@ -851,6 +852,7 @@ input[type="text"]:focus {
                         <div class="matrix-tab" id="tab-B" onclick="switchTab('B')">B</div>
                         <div class="matrix-tab" id="tab-C" onclick="switchTab('C')">C</div>
                         <div class="matrix-tab" id="tab-D" onclick="switchTab('D')">D</div>
+                        <div class="matrix-tab" id="tab-E" onclick="switchTab('E')">E</div>
                     </div>
 
                     <div class="config-stack">
@@ -990,6 +992,56 @@ input[type="text"]:focus {
                             </div>
                         </div>
 
+                        <!-- GROUP E — Polygon Subdivider -->
+                        <div class="group-content-card" id="card-E">
+                            <div class="cyber-dropzone"><span class="dz-text">✂️ Select Forest Boundary File</span><input type="file" class="file"></div>
+
+                            <!-- Mode toggle: Single Forest vs Multi-Forest -->
+                            <div class="field-group">
+                                <label>Forest Input Mode</label>
+                                <div class="toggle-switch-container">
+                                    <div class="toggle-option active-toggle" id="e-toggle-A" onclick="setGroupESubMode('A')">Single Forest</div>
+                                    <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
+                                </div>
+                            </div>
+
+                            <!-- Output structure hint -->
+                            <div class="vector-badge" id="e-mode-hint">
+                                <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
+                                <div style="font-size:10px;opacity:0.8;" id="e-hint-sub">compartments.shp · compartment_summary.xlsx</div>
+                            </div>
+
+                            <div class="input-row">
+                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
+                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
+                            </div>
+                            <div class="input-row">
+                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+                                <!-- Forest col shown only in Multi-Forest mode -->
+                                <div class="field-group" id="e-forest-wrapper" style="display:none;">
+                                    <label>Forest Identifier</label>
+                                    <select data-key="Forest"></select>
+                                </div>
+                                <!-- Forest name input for Single mode -->
+                                <div class="field-group" id="e-forestname-wrapper">
+                                    <label>Forest Name</label>
+                                    <input type="text" data-key="forest" value="FOREST" placeholder="Forest name">
+                                </div>
+                            </div>
+
+                            <!-- Number of compartments -->
+                            <div class="field-group">
+                                <label>Number of Compartments to Create</label>
+                                <input type="number" id="e-n-compartments" min="2" max="200" step="1" value="4" placeholder="4">
+                            </div>
+
+                            <!-- Area info badge -->
+                            <div class="vector-badge" style="background:rgba(101,163,13,0.08);border-color:rgba(101,163,13,0.3);">
+                                <div style="font-weight:600;color:#3f6212;">🌳 Bisection Algorithm</div>
+                                <div style="font-size:10px;opacity:0.85;color:#3f6212;">Iteratively splits along the longest axis at area-balanced positions. Each compartment will be near-equal in area. Output includes Area_ha, Perim_m, and Pct_Area per compartment.</div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             </div>
@@ -1040,6 +1092,7 @@ input[type="text"]:focus {
 let activeModule = "A";
 let groupCSubMode = "A";
 let groupDSubMode = "A";
+let groupESubMode = "A";
 const BACKEND_URL = window.location.origin;
 
 /* ── COLUMN ALIAS RESOLVER ─────────────────────────────────────────────── */
@@ -1107,7 +1160,8 @@ function switchTab(t){
         A:"A · Boundary Whole",
         B:"B · Segment Forest",
         C:"C · Sample Plot Workspace",
-        D:"D · Complex Version A"
+        D:"D · Complex Version A",
+        E:"E · Polygon Subdivider"
     };
     document.getElementById("header-module").textContent = labels[t];
 }
@@ -1169,6 +1223,30 @@ function setGroupDSubMode(subMode){
         compWrapper.style.display = 'none';
         hintTitle.textContent = '📂 One folder per Forest';
         hintSub.textContent   = 'Forest_A/ → Polygon.shp · Line.shp · Point.shp';
+    }
+}
+
+/* ── GROUP E MODE ──────────────────────────────────────────────────────── */
+function setGroupESubMode(subMode){
+    groupESubMode = subMode;
+    document.getElementById('e-toggle-A').classList.toggle('active-toggle', subMode === 'A');
+    document.getElementById('e-toggle-B').classList.toggle('active-toggle', subMode === 'B');
+
+    const forestWrapper     = document.getElementById('e-forest-wrapper');
+    const forestNameWrapper = document.getElementById('e-forestname-wrapper');
+    const hintTitle         = document.getElementById('e-hint-title');
+    const hintSub           = document.getElementById('e-hint-sub');
+
+    if(subMode === 'B'){
+        forestWrapper.style.display     = 'block';
+        forestNameWrapper.style.display = 'none';
+        hintTitle.textContent = '✂️ Each Forest → N compartments (own folder)';
+        hintSub.textContent   = 'Forest_A/ → compartments.shp · compartment_summary.xlsx';
+    } else {
+        forestWrapper.style.display     = 'none';
+        forestNameWrapper.style.display = 'block';
+        hintTitle.textContent = '✂️ One forest → N compartments';
+        hintSub.textContent   = 'compartments.shp · compartment_summary.xlsx';
     }
 }
 
@@ -1262,6 +1340,11 @@ async function runPipeline(){
     fd.append("module", activeModule);
     fd.append("mode", activeModule==="C" ? groupCSubMode : activeModule);
     if(activeModule === "D") fd.append("d_mode", groupDSubMode);
+    if(activeModule === "E"){
+        fd.append("e_mode", groupESubMode);
+        const nComp = document.getElementById("e-n-compartments");
+        if(nComp && nComp.value) fd.append("n_compartments", nComp.value);
+    }
     fd.append("zone", document.getElementById("zone").value);
     const mapping = buildMappingPayload(card);
 
