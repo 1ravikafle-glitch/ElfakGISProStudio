@@ -10,3 +10,5 @@ xlrd
 streamlit
 pyproj
 rtree
+rasterio
+scipy
