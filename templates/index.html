@@ -1678,11 +1678,6 @@ async function runPipeline(){
             const csvComp = document.getElementById('f-csv-comp-col');
             if(csvComp?.value) fd.append("comp_col", csvComp.value);
         }
-
-        const zipNotice = document.getElementById('f-zip-notice');
-        if(zipNotice && !zipNotice.classList.contains('hidden')){
-            mapping.target_shp = document.getElementById('f-shp-selector')?.value;
-        }
         fd.append("mapping", JSON.stringify(mapping));
 
         try{
