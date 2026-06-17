@@ -1464,7 +1464,7 @@ def upload():
                 f_mode          = f_mode,
                 comp_col_name   = comp_col_name,
             )
-            clipped_slope, class_arr, clipped_transform, summary_rows, vec_gdf, nodata, boundary_gdf, f_mode_out = result
+            clipped_slope, class_arr, _clipped_tr, summary_rows, vec_gdf, nodata, boundary_gdf, f_mode_out = result
 
             preview_path = os.path.join(out, "output.png")
             preview_slope(clipped_slope, class_arr, summary_rows, preview_path, nodata,
@@ -1521,21 +1521,6 @@ def serve_output(run_id, filename):
     if not os.path.exists(os.path.join(folder, filename)):
         return jsonify({"error": "File not found"}), 404
     return send_from_directory(folder, filename)
-
-
-# ================= KMZ SERVE =================
-@app.route("/outputs/<run_id>/output.kmz")
-def serve_kmz(run_id):
-    folder = os.path.join(OUTPUT, run_id)
-    kmz_path = os.path.join(folder, "output.kmz")
-    if not os.path.exists(kmz_path):
-        return jsonify({"error": "KMZ not found"}), 404
-    return send_file(
-        kmz_path,
-        mimetype="application/vnd.google-earth.kmz",
-        as_attachment=False,
-        download_name="output.kmz"
-    )
 
 
 # ================= DOWNLOAD =================
