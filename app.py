@@ -483,7 +483,18 @@ def _subdivide_polygon(poly, n):
             strip = None
 
         if strip is not None and not strip.is_empty and strip.area > 1e-6:
-            pieces.append(_repair_geom(strip))
+
+            # Split multiparts into individual polygons
+            if strip.geom_type == "Polygon":
+                parts = [strip]
+            elif strip.geom_type == "MultiPolygon":
+                parts = list(strip.geoms)
+            else:
+                parts = []
+        
+            for p in parts:
+                if p.area > 1e-6:
+                    pieces.append(_repair_geom(p))
 
     # If clipping produced fewer pieces (degenerate geometry), return what we have
     if not pieces:
@@ -493,37 +504,104 @@ def _subdivide_polygon(poly, n):
     # Axis-aligned cuts on irregular/concave polygons can leave tiny slivers
     # (fragments < 5 % of the target area).  Iteratively merge each sliver
     # into the neighbour sharing the longest boundary with it.
+    # =====================================================
+    # SMART FRAGMENT MERGE
+    # =====================================================
+
     target_area = poly.area / n
-    min_area    = target_area * 0.05   # 5 % threshold
-
+    
     changed = True
-    while changed and len(pieces) > 1:
+    while changed:
         changed = False
-        # Find the smallest piece below threshold
-        tiny_idx = None
-        for i, p in enumerate(pieces):
-            if p.area < min_area:
-                if tiny_idx is None or pieces[i].area < pieces[tiny_idx].area:
-                    tiny_idx = i
-        if tiny_idx is None:
+    
+        # Find tiny polygons (<15% of target compartment size)
+        tiny = [i for i, p in enumerate(pieces)
+                if p.area < target_area * 0.15]
+    
+        if not tiny:
             break
-        sliver = pieces.pop(tiny_idx)
-        # Find neighbour with longest shared boundary
-        best_j, best_len = 0, -1.0
+    
+        for idx in reversed(tiny):
+    
+            frag = pieces[idx]
+    
+            best_j = None
+            best_shared = 0
+    
+            for j, other in enumerate(pieces):
+                if j == idx:
+                    continue
+    
+                try:
+                    shared = frag.boundary.intersection(
+                        other.boundary
+                    ).length
+                except:
+                    shared = 0
+    
+                if shared > best_shared:
+                    best_shared = shared
+                    best_j = j
+    
+            # If no touching neighbour found,
+            # merge with closest polygon
+            if best_j is None:
+                dmin = 1e100
+                for j, other in enumerate(pieces):
+                    if j == idx:
+                        continue
+    
+                    d = frag.distance(other)
+                    if d < dmin:
+                        dmin = d
+                        best_j = j
+    
+            if best_j is not None:
+                pieces[best_j] = _repair_geom(
+                    unary_union([pieces[best_j], frag])
+                )
+                pieces.pop(idx)
+                changed = True
+    
+    # If more than N pieces remain, merge smallest pieces
+    while len(pieces) > n:
+    
+        smallest = min(range(len(pieces)),
+                       key=lambda i: pieces[i].area)
+    
+        frag = pieces[smallest]
+    
+        best_j = None
+        best_shared = 0
+    
         for j, other in enumerate(pieces):
-            try:
-                shared = sliver.intersection(other).length
-            except Exception:
-                shared = 0.0
-            if shared > best_len:
-                best_len, best_j = shared, j
-        try:
-            pieces[best_j] = _repair_geom(unary_union([pieces[best_j], sliver]))
-        except Exception:
-            pieces.append(sliver)   # restore if merge fails
-        changed = True
-
-    return pieces if pieces else [poly]
+            if j == smallest:
+                continue
+    
+            shared = frag.boundary.intersection(
+                other.boundary
+            ).length
+    
+            if shared > best_shared:
+                best_shared = shared
+                best_j = j
+    
+        if best_j is None:
+            break
+    
+        pieces[best_j] = _repair_geom(
+            unary_union([pieces[best_j], frag])
+        )
+        pieces.pop(smallest)
+    
+    # Sort by area descending
+    pieces = sorted(
+        pieces,
+        key=lambda g: g.area,
+        reverse=True
+    )
+    
+    return pieces
 
 
 def _save_compartments(pieces, forest_name, crs, save_dir):
