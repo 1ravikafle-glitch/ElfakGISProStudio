@@ -392,13 +392,36 @@ def _repair_geom(g):
 
 def _principal_angle(poly):
     """Return the angle (radians) of the polygon's longest principal axis using PCA on boundary points."""
-    coords = np.array(poly.exterior.coords[:-1])
-    coords -= coords.mean(axis=0)
-    cov = np.cov(coords.T)
-    vals, vecs = np.linalg.eigh(cov)
-    # Eigenvector with largest eigenvalue = principal axis
-    principal = vecs[:, np.argmax(vals)]
-    return np.arctan2(principal[1], principal[0])
+    try:
+        if poly.geom_type != "Polygon":
+            return 0.0
+        coords = np.array(poly.exterior.coords[:-1])
+        if len(coords) < 3:
+            return 0.0
+        coords -= coords.mean(axis=0)
+        cov = np.cov(coords.T)
+        vals, vecs = np.linalg.eigh(cov)
+        principal = vecs[:, np.argmax(vals)]
+        return np.arctan2(principal[1], principal[0])
+    except Exception:
+        return 0.0
+
+
+def _largest_polygon(geom):
+    """
+    Given any geometry, return the largest Polygon part.
+    Handles Polygon, MultiPolygon, GeometryCollection safely.
+    """
+    if geom is None or geom.is_empty:
+        return None
+    if geom.geom_type == "Polygon":
+        return geom
+    if geom.geom_type in ("MultiPolygon", "GeometryCollection"):
+        polys = [g for g in geom.geoms if g.geom_type == "Polygon" and not g.is_empty]
+        if not polys:
+            return None
+        return max(polys, key=lambda g: g.area)
+    return None
 
 
 def _rotate_poly(poly, angle):
@@ -478,38 +501,68 @@ def _subdivide_polygon(poly, n):
     def _split_n(p, count):
         """Recursively split p into count equal-area pieces along principal axis."""
         if count <= 1:
-            return [_repair_geom(p)]
-        if p.is_empty or p.area < 1e-10:
-            return [p]
+            return [_repair_geom(p)] if (p and not p.is_empty) else []
+        if p is None or p.is_empty or p.area < 1e-10:
+            return []
 
-        k = count // 2      # left half gets k pieces
-        m = count - k       # right half gets m pieces
+        # Ensure single Polygon — take largest part if Multi/Collection/Point
+        if p.geom_type != "Polygon":
+            p = _largest_polygon(p)
+            if p is None or p.is_empty:
+                return []
+        p = _repair_geom(p)
 
-        # Rotate to principal axis
-        try:
-            angle = _principal_angle(p)
-        except Exception:
-            angle = 0.0
+        k = count // 2
+        m = count - k
+
+        angle = _principal_angle(p)
 
         from shapely.affinity import rotate as aff_rotate
         cx, cy = p.centroid.x, p.centroid.y
-        p_rot = _repair_geom(aff_rotate(p, -np.degrees(angle), origin=(cx, cy)))
 
-        # Cut at fraction k/count along the rotated X axis
+        try:
+            p_rot = _repair_geom(aff_rotate(p, -np.degrees(angle), origin=(cx, cy)))
+        except Exception:
+            p_rot = p
+            angle = 0.0
+
+        if p_rot.geom_type != "Polygon":
+            p_rot = _largest_polygon(p_rot) or p
+
         left_rot, right_rot = _cut_at_fraction(p_rot, k / count)
 
-        # Rotate pieces back
-        left_orig  = _repair_geom(aff_rotate(left_rot,  np.degrees(angle), origin=(cx, cy)))
-        right_orig = _repair_geom(aff_rotate(right_rot, np.degrees(angle), origin=(cx, cy)))
+        # Ensure both halves are Polygons before rotating back
+        if left_rot.geom_type != "Polygon":
+            left_rot = _largest_polygon(left_rot)
+        if right_rot.geom_type != "Polygon":
+            right_rot = _largest_polygon(right_rot)
 
-        # Clip back to original polygon to remove any rotation artefact
+        if left_rot is None or left_rot.is_empty:
+            return _split_n(p, m)
+        if right_rot is None or right_rot.is_empty:
+            return _split_n(p, k)
+
+        try:
+            left_orig  = _repair_geom(aff_rotate(left_rot,  np.degrees(angle), origin=(cx, cy)))
+            right_orig = _repair_geom(aff_rotate(right_rot, np.degrees(angle), origin=(cx, cy)))
+        except Exception:
+            left_orig, right_orig = left_rot, right_rot
+
+        # Clip back to original; right = exact complement (no gap)
         try:
             left_orig  = _repair_geom(left_orig.intersection(p))
-            right_orig = _repair_geom(p.difference(left_orig))  # exact complement
+            right_orig = _repair_geom(p.difference(left_orig))
         except Exception:
             pass
 
+        # After clipping, take largest Polygon part if result is Multi/Collection
+        if left_orig.geom_type != "Polygon":
+            left_orig = _largest_polygon(left_orig) or left_orig
+        if right_orig.geom_type != "Polygon":
+            right_orig = _largest_polygon(right_orig) or right_orig
+
         return _split_n(left_orig, k) + _split_n(right_orig, m)
+
 
     raw_pieces = _split_n(poly, n)
 
