@@ -627,61 +627,7 @@ def _subdivide_polygon(poly, n):
     return final if final else [poly]
 
 
-def _ensure_polygons(pieces, original_poly):
-    """
-    Final safety filter: ensure every piece is a valid Polygon.
-    - Non-Polygon geometries → extract largest Polygon part
-    - Empty or degenerate → merge area into nearest neighbour
-    - If fewer than 1 piece survives → return [original_poly]
-    """
-    clean = []
-    leftovers = []  # area from failed pieces to redistribute
-
-    for p in pieces:
-        if p is None or p.is_empty:
-            continue
-        if p.geom_type == "Polygon" and p.area > 1e-8:
-            clean.append(p)
-        else:
-            # Try to extract a Polygon from Multi/Collection
-            best = _largest_polygon(p)
-            if best is not None and best.area > 1e-8:
-                clean.append(best)
-            else:
-                leftovers.append(p)
-
-    if not clean:
-        return [original_poly]
-
-    # Redistribute any leftover area (from degenerate pieces) into
-    # the neighbour with the longest shared boundary
-    for leftover in leftovers:
-        if leftover.is_empty or leftover.area < 1e-8:
-            continue
-        best_i, best_len = 0, -1.0
-        for i, c in enumerate(clean):
-            try:
-                s = leftover.intersection(c).length
-            except Exception:
-                s = 0.0
-            if s > best_len:
-                best_len, best_i = s, i
-        try:
-            clean[best_i] = _repair_geom(unary_union([clean[best_i], leftover]))
-        except Exception:
-            pass
-
-    # Final type check — every element must be a Polygon
-    final_clean = []
-    for p in clean:
-        if p.geom_type == "Polygon":
-            final_clean.append(p)
-        else:
-            best = _largest_polygon(p)
-            if best is not None and best.geom_type == "Polygon":
-                final_clean.append(best)
-
-    return final_clean if final_clean else [original_poly]
+def _save_compartments(pieces, forest_name, crs, save_dir):
     """
     Write three shapefiles + Excel summary for a set of compartment polygons.
     Files: compartments.shp, compartment_lines.shp, compartment_points.shp,
