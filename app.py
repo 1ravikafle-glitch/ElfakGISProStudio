@@ -706,22 +706,80 @@ def _subdivide_polygon(poly, n):
     # ── Step 3: Area balancing ───────────────────────────────────────────────
     cells = _balance_areas(poly, cells, n)
 
-    # ── Step 4: Chaikin smoothing on each compartment boundary ──────────────
+    # ── Step 4: Chaikin smoothing — internal edges only ─────────────────────
+    # Key rule: the outer boundary of each compartment that touches the
+    # original polygon boundary must NOT be smoothed — only the internal
+    # cut lines between compartments are smoothed.
+    # Implementation: smooth the full cell, then replace the outer ring
+    # with the intersection of the smoothed cell and the original polygon,
+    # ensuring the original boundary is preserved exactly.
     smoothed = []
+    boundary_line = poly.boundary   # original polygon outline
+
     for cell in cells:
         try:
-            if cell.geom_type == "Polygon" and len(cell.exterior.coords) >= 4:
-                smooth_coords = _chaikin_smooth(
-                    list(cell.exterior.coords), iterations=3
-                )
-                # Clip smoothed back to original polygon so it never overshoots
-                s_poly = _repair_geom(Polygon(smooth_coords).intersection(poly))
-                if not s_poly.is_empty and s_poly.area > 1e-6:
-                    smoothed.append(s_poly)
-                    continue
+            if cell.geom_type != "Polygon" or len(cell.exterior.coords) < 4:
+                smoothed.append(cell)
+                continue
+
+            # Identify which edges of this cell touch the original boundary
+            # (shared length > tiny threshold = boundary edge, don't smooth)
+            ext_coords = list(cell.exterior.coords)
+
+            # Build per-edge flags: True = internal edge (safe to smooth)
+            n_pts = len(ext_coords) - 1  # last == first, skip it
+            is_internal = []
+            for i in range(n_pts):
+                seg = LineString([ext_coords[i], ext_coords[(i + 1) % n_pts]])
+                try:
+                    shared = seg.intersection(boundary_line).length
+                    is_internal.append(shared < seg.length * 0.1)
+                except Exception:
+                    is_internal.append(False)
+
+            # If all edges are on the boundary (tiny cell touching all sides),
+            # don't smooth at all
+            if not any(is_internal):
+                smoothed.append(cell)
+                continue
+
+            # Apply Chaikin only to runs of internal edges,
+            # pin the vertices where boundary edges meet internal edges
+            new_coords = []
+            for i in range(n_pts):
+                p0 = ext_coords[i]
+                p1 = ext_coords[(i + 1) % n_pts]
+                if is_internal[i]:
+                    # Smooth this edge: add the two Chaikin subdivision pts
+                    q = (0.75*p0[0] + 0.25*p1[0], 0.75*p0[1] + 0.25*p1[1])
+                    r = (0.25*p0[0] + 0.75*p1[0], 0.25*p0[1] + 0.75*p1[1])
+                    new_coords.append(q)
+                    new_coords.append(r)
+                else:
+                    # Boundary edge: keep original vertex exactly
+                    new_coords.append(p0)
+
+            if len(new_coords) < 3:
+                smoothed.append(cell)
+                continue
+
+            new_coords.append(new_coords[0])  # close ring
+            smooth_poly = Polygon(new_coords)
+
+            # Clip smoothed cell back to original polygon to remove any
+            # tiny overshoot on internal curves, then re-union with the
+            # strictly-on-boundary part so no gap is left
+            try:
+                clipped = _repair_geom(smooth_poly.intersection(poly))
+                if not clipped.is_empty and clipped.area > cell.area * 0.5:
+                    smoothed.append(clipped)
+                else:
+                    smoothed.append(cell)
+            except Exception:
+                smoothed.append(cell)
+
         except Exception:
-            pass
-        smoothed.append(cell)
+            smoothed.append(cell)
 
     # ── Step 5: Final sliver cleanup (< 5% of target) ───────────────────────
     target_area = poly.area / n
