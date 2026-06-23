@@ -558,10 +558,43 @@ def _subdivide_polygon(poly, n):
     if poly.is_empty or poly.area < 1e-10:
         return [poly]
 
-    # ── 1. Recursive bisection — zero gaps by construction ──────────────────
+    # ── 1. Recursive bisection → n raw pieces, zero gaps by construction ────
     pieces = _recursive_split(poly, n)
     if not pieces:
         return [poly]
+
+    # ── 1b. Guarantee full coverage: rebuild using cumulative difference ─────
+    # Even after recursive split, floating-point clipping can leave
+    # micro-slivers between pieces.  Rebuild by assigning each piece
+    # exactly what's left of the original polygon after removing all
+    # previously-assigned pieces.
+    rebuilt  = []
+    remaining = _repair_geom(poly)   # starts as the full polygon
+
+    # Sort pieces spatially (left→right or bottom→top) so rebuild order is stable
+    pieces_sorted = sorted(pieces, key=lambda p: (p.centroid.x, p.centroid.y))
+
+    for i, piece in enumerate(pieces_sorted):
+        if i == len(pieces_sorted) - 1:
+            # Last piece = everything not yet claimed → guaranteed no gap
+            rebuilt.append(_repair_geom(remaining))
+        else:
+            # Clip piece to what's still available
+            try:
+                c = _repair_geom(piece.intersection(remaining))
+            except Exception:
+                c = piece
+            if c.is_empty or c.area < 1e-8:
+                continue
+            rebuilt.append(c)
+            try:
+                remaining = _repair_geom(remaining.difference(c))
+            except Exception:
+                pass
+
+    if not rebuilt:
+        return [poly]
+    pieces = rebuilt
 
     # ── 2. Smooth internal edges only ───────────────────────────────────────
     boundary_line = poly.boundary
@@ -1672,6 +1705,59 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
 
 
 # ================= PREVIEW =================
+# Distinct fill palette for compartments (up to 12, then cycles)
+_COMP_COLORS = [
+    "#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7",
+    "#DCEDC8","#B2EBF2","#FFF9C4","#D7CCC8","#CFD8DC",
+    "#C5CAE9","#F0F4C3",
+]
+
+
+def preview_compartments(poly_gdf, path):
+    """
+    Dedicated Group E preview:
+    - Each compartment filled with a distinct colour
+    - Shared/outer edges all drawn in the same black, linewidth=1.8
+    - Comp_ID + area label centred in each compartment
+    - No separate line layer drawn on top (avoids double/misaligned outline)
+    - White background
+    """
+    fig, ax = plt.subplots(figsize=(10, 10), dpi=180)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    for i, (_, row) in enumerate(poly_gdf.iterrows()):
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        color = _COMP_COLORS[i % len(_COMP_COLORS)]
+        # Draw filled compartment
+        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
+            ax=ax, facecolor=color, edgecolor="#1a1a1a", linewidth=1.8
+        )
+        # Label at centroid
+        cx, cy = geom.centroid.x, geom.centroid.y
+        comp_id = row.get("Comp_ID", f"Comp_{i+1:03d}")
+        area_ha = row.get("Area_ha", "")
+        label   = f"{comp_id}\n{area_ha:.2f} ha" if isinstance(area_ha, float) else comp_id
+        ax.annotate(
+            label,
+            xy=(cx, cy),
+            ha="center", va="center",
+            fontsize=7, fontweight="bold",
+            color="#1a1a1a",
+            path_effects=[
+                pe.Stroke(linewidth=2.5, foreground="white"),
+                pe.Normal()
+            ],
+            zorder=10,
+        )
+
+    ax.set_aspect("equal")
+    ax.axis("off")
+    plt.tight_layout(pad=0.5)
+    fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
             label_col=None, label_pts_gdf=None):
     """
@@ -1971,6 +2057,22 @@ def upload():
                     df, crs, out, mapping,
                     e_mode=e_mode, n_compartments=n_compartments, is_zip=False
                 )
+
+            # Dedicated compartment preview — coloured fills, no separate line layer
+            preview_path = os.path.join(out, "output.png")
+            preview_compartments(poly, preview_path)
+
+            kmz_url = None
+            try:
+                kmz_url = generate_kmz(poly, line, pts, out, run_id)
+            except Exception:
+                pass
+
+            return jsonify({
+                "run_id":   run_id,
+                "download": f"/download/{run_id}",
+                "kmz_url":  kmz_url,
+            })
 
         elif module == "F":
             dem_file_upload = request.files.get("dem_file")
