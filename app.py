@@ -1255,7 +1255,7 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
                     cell.set_facecolor("#ddeeff")
                     cell.set_text_props(fontweight="bold")
 
-    fig.savefig(path, dpi=180, bbox_inches="tight", facecolor="white")
+    fig.savefig(path, dpi=360, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -1272,7 +1272,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
       - Outer boundary derived from union of all compartments drawn in yellow on top
       This ensures the yellow outline sits exactly on the compartment edges with no gaps.
     """
-    fig, ax = plt.subplots(figsize=(8, 8), dpi=180)
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=360)
 
     is_group_e = (poly_gdf is not None and not poly_gdf.empty
                   and "Comp_ID" in poly_gdf.columns)
