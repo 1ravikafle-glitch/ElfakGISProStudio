@@ -703,114 +703,177 @@ def _subdivide_polygon(poly, n):
         if not cells:
             return [poly]
 
-    # ── Step 3: Area balancing ───────────────────────────────────────────────
-    cells = _balance_areas(poly, cells, n)
+    # ── Step 3: Gap-free tiling ──────────────────────────────────────────────
+    # After CVT + area balancing, floating-point clipping leaves micro-gaps
+    # between cells and between cells and the boundary.
+    # Fix: rebuild from scratch using a coverage-difference approach:
+    #   cell[0] = cells[0] ∩ poly
+    #   cell[1] = cells[1] ∩ poly  minus  cell[0]
+    #   cell[2] = cells[2] ∩ poly  minus  cell[0] ∪ cell[1]
+    #   ...
+    #   cell[n-1] = poly  minus  everything already claimed
+    # This guarantees: (a) every cell ⊆ poly, (b) no overlaps, (c) no gaps.
 
-    # ── Step 4: Chaikin smoothing — internal edges only ─────────────────────
-    # Key rule: the outer boundary of each compartment that touches the
-    # original polygon boundary must NOT be smoothed — only the internal
-    # cut lines between compartments are smoothed.
-    # Implementation: smooth the full cell, then replace the outer ring
-    # with the intersection of the smoothed cell and the original polygon,
-    # ensuring the original boundary is preserved exactly.
+    tiled   = []
+    covered = None   # union of all cells placed so far
+
+    for i, cell in enumerate(cells):
+        if i == len(cells) - 1:
+            # Last cell = whatever of poly hasn't been claimed yet
+            try:
+                if covered is not None:
+                    piece = _repair_geom(poly.difference(covered))
+                else:
+                    piece = poly
+            except Exception:
+                piece = poly
+        else:
+            try:
+                piece = _repair_geom(cell.intersection(poly))
+                if covered is not None:
+                    piece = _repair_geom(piece.difference(covered))
+            except Exception:
+                piece = _repair_geom(cell.intersection(poly))
+
+        if piece.is_empty or piece.area < 1e-8:
+            continue
+
+        tiled.append(piece)
+        covered = piece if covered is None else _repair_geom(covered.union(piece))
+
+    if not tiled:
+        return [poly]
+
+    # ── Step 4: Merge slivers (< 5 % of target) into longest-shared neighbour
+    target_area = poly.area / n
+    min_area    = target_area * 0.05
+
+    changed = True
+    while changed and len(tiled) > 1:
+        changed = False
+        tiny_idx = next(
+            (i for i, p in sorted(enumerate(tiled), key=lambda t: t[1].area)
+             if p.area < min_area),
+            None
+        )
+        if tiny_idx is None:
+            break
+        sliver = tiled.pop(tiny_idx)
+        best_j, best_len = 0, -1.0
+        for j, other in enumerate(tiled):
+            try:
+                s = sliver.intersection(other).length
+            except Exception:
+                s = 0.0
+            if s > best_len:
+                best_len, best_j = s, j
+        try:
+            tiled[best_j] = _repair_geom(unary_union([tiled[best_j], sliver]))
+        except Exception:
+            tiled.append(sliver)
+        changed = True
+
+    # ── Step 5: Smooth internal edges only, pin boundary vertices exactly ───
+    # boundary_line = the original polygon outline.
+    # Any edge of a compartment that lies ON boundary_line is kept exactly.
+    # Only the internal cut edges (between compartments) get Chaikin-smoothed.
+    # After smoothing we do NOT re-clip (which would create gaps).
+    # Instead we assign any unclaimed residual to the nearest neighbour so the
+    # total coverage = poly exactly.
+
+    boundary_line = poly.boundary
     smoothed = []
-    boundary_line = poly.boundary   # original polygon outline
 
-    for cell in cells:
+    for cell in tiled:
         try:
             if cell.geom_type != "Polygon" or len(cell.exterior.coords) < 4:
                 smoothed.append(cell)
                 continue
 
-            # Identify which edges of this cell touch the original boundary
-            # (shared length > tiny threshold = boundary edge, don't smooth)
             ext_coords = list(cell.exterior.coords)
+            n_pts = len(ext_coords) - 1  # closed ring: last == first
 
-            # Build per-edge flags: True = internal edge (safe to smooth)
-            n_pts = len(ext_coords) - 1  # last == first, skip it
+            # Classify each edge as boundary (False) or internal (True)
             is_internal = []
             for i in range(n_pts):
                 seg = LineString([ext_coords[i], ext_coords[(i + 1) % n_pts]])
                 try:
-                    shared = seg.intersection(boundary_line).length
-                    is_internal.append(shared < seg.length * 0.1)
+                    shared_len = seg.intersection(boundary_line).length
+                    # internal if less than 5% of the edge overlaps the boundary
+                    is_internal.append(shared_len < seg.length * 0.05)
                 except Exception:
                     is_internal.append(False)
 
-            # If all edges are on the boundary (tiny cell touching all sides),
-            # don't smooth at all
             if not any(is_internal):
+                # All edges on the boundary — no smoothing possible
                 smoothed.append(cell)
                 continue
 
-            # Apply Chaikin only to runs of internal edges,
-            # pin the vertices where boundary edges meet internal edges
+            # Build new coordinate ring:
+            # - boundary edges: emit the start vertex unchanged
+            # - internal edges: emit two Chaikin subdivision vertices
             new_coords = []
             for i in range(n_pts):
                 p0 = ext_coords[i]
                 p1 = ext_coords[(i + 1) % n_pts]
                 if is_internal[i]:
-                    # Smooth this edge: add the two Chaikin subdivision pts
                     q = (0.75*p0[0] + 0.25*p1[0], 0.75*p0[1] + 0.25*p1[1])
                     r = (0.25*p0[0] + 0.75*p1[0], 0.25*p0[1] + 0.75*p1[1])
                     new_coords.append(q)
                     new_coords.append(r)
                 else:
-                    # Boundary edge: keep original vertex exactly
-                    new_coords.append(p0)
+                    new_coords.append(p0)   # pin exactly on boundary
 
             if len(new_coords) < 3:
                 smoothed.append(cell)
                 continue
 
             new_coords.append(new_coords[0])  # close ring
-            smooth_poly = Polygon(new_coords)
+            s_poly = _repair_geom(Polygon(new_coords))
 
-            # Clip smoothed cell back to original polygon to remove any
-            # tiny overshoot on internal curves, then re-union with the
-            # strictly-on-boundary part so no gap is left
-            try:
-                clipped = _repair_geom(smooth_poly.intersection(poly))
-                if not clipped.is_empty and clipped.area > cell.area * 0.5:
-                    smoothed.append(clipped)
-                else:
-                    smoothed.append(cell)
-            except Exception:
+            if s_poly.is_empty or s_poly.area < cell.area * 0.3:
                 smoothed.append(cell)
+            else:
+                smoothed.append(s_poly)
 
         except Exception:
             smoothed.append(cell)
 
-    # ── Step 5: Final sliver cleanup (< 5% of target) ───────────────────────
-    target_area = poly.area / n
-    min_area    = target_area * 0.05
+    # ── Step 6: Final gap-fill ───────────────────────────────────────────────
+    # Smoothing internal edges can push vertices very slightly outside
+    # the original polygon OR leave hair-thin gaps between cells.
+    # Re-clip each cell to poly, then fill any residual gap into the
+    # neighbour with the longest shared boundary.
 
-    changed = True
-    while changed and len(smoothed) > 1:
-        changed = False
-        tiny_idx = None
-        for i, p in enumerate(smoothed):
-            if p.area < min_area:
-                if tiny_idx is None or smoothed[i].area < smoothed[tiny_idx].area:
-                    tiny_idx = i
-        if tiny_idx is None:
-            break
-        sliver = smoothed.pop(tiny_idx)
-        best_j, best_len = 0, -1.0
-        for j, other in enumerate(smoothed):
-            try:
-                shared = sliver.intersection(other).length
-            except Exception:
-                shared = 0.0
-            if shared > best_len:
-                best_len, best_j = shared, j
+    final = []
+    covered2 = None
+    for cell in smoothed:
         try:
-            smoothed[best_j] = _repair_geom(unary_union([smoothed[best_j], sliver]))
+            c = _repair_geom(cell.intersection(poly))
         except Exception:
-            smoothed.append(sliver)
-        changed = True
+            c = cell
+        if not c.is_empty and c.area > 1e-8:
+            final.append(c)
+            covered2 = c if covered2 is None else _repair_geom(covered2.union(c))
 
-    return smoothed if smoothed else [poly]
+    # Fill gap
+    if covered2 is not None:
+        try:
+            gap = _repair_geom(poly.difference(covered2))
+            if not gap.is_empty and gap.area > 1e-8 and final:
+                best_i, best_shared = 0, -1.0
+                for i, c in enumerate(final):
+                    try:
+                        s = gap.intersection(c).length
+                    except Exception:
+                        s = 0.0
+                    if s > best_shared:
+                        best_shared, best_i = s, i
+                final[best_i] = _repair_geom(unary_union([final[best_i], gap]))
+        except Exception:
+            pass
+
+    return final if final else [poly]
 
 
 def _save_compartments(pieces, forest_name, crs, save_dir):
