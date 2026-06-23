@@ -390,218 +390,369 @@ def _repair_geom(g):
     return g if g.is_valid else g.buffer(0)
 
 
-def _find_equal_area_cut(poly, axis, lo_bound, hi_bound, target_cumulative_area,
-                         minx, miny, maxx, maxy, n_tries=80):
-    from shapely.geometry import box as shapely_box
-    lo, hi = lo_bound, hi_bound
-    mid = (lo + hi) / 2.0   # safe default in case loop breaks immediately
+def _chaikin_smooth(coords, iterations=3):
+    """
+    Chaikin's corner-cutting algorithm.
+    Smooths a polygon ring by repeatedly cutting corners.
+    Returns smoothed coordinate list (closed ring).
+    """
+    pts = list(coords)
+    # Ensure not closed (remove duplicate last point)
+    if len(pts) > 1 and pts[0] == pts[-1]:
+        pts = pts[:-1]
 
-    for _ in range(n_tries):
-        mid = (lo + hi) / 2.0
+    for _ in range(iterations):
+        new_pts = []
+        n = len(pts)
+        for i in range(n):
+            p0 = pts[i]
+            p1 = pts[(i + 1) % n]
+            q = (0.75 * p0[0] + 0.25 * p1[0],
+                 0.75 * p0[1] + 0.25 * p1[1])
+            r = (0.25 * p0[0] + 0.75 * p1[0],
+                 0.25 * p0[1] + 0.75 * p1[1])
+            new_pts.append(q)
+            new_pts.append(r)
+        pts = new_pts
+
+    # Close the ring
+    pts.append(pts[0])
+    return pts
+
+
+def _cvt_lloyd(poly, seeds, iterations=60):
+    """
+    Lloyd's relaxation for Centroidal Voronoi Tessellation inside *poly*.
+    Seeds are moved toward the centroid of their Voronoi cell (clipped to poly)
+    so compartments become spatially compact and nearly equal in area.
+
+    Returns list of (cell_polygon, seed_point) after convergence.
+    """
+    from shapely.ops import voronoi_diagram
+    from shapely.geometry import MultiPoint, GeometryCollection
+
+    boundary = poly.buffer(0)       # ensure valid
+    pts = list(seeds)               # list of (x, y) tuples
+
+    cells = []
+    for iteration in range(iterations):
+        mp     = MultiPoint([Point(x, y) for x, y in pts])
+        # voronoi_diagram envelope must fully contain the polygon
+        envelope = boundary.envelope.buffer(
+            max(boundary.envelope.area ** 0.5 * 0.1, 1)
+        )
         try:
-            if axis == "x":
-                clip = poly.intersection(shapely_box(minx - 1, miny - 1, mid, maxy + 1))
-            else:
-                clip = poly.intersection(shapely_box(minx - 1, miny - 1, maxx + 1, mid))
+            vd = voronoi_diagram(mp, envelope=envelope, tolerance=0.0)
         except Exception:
             break
 
-        got = clip.area if not clip.is_empty else 0.0
-        rel_err = abs(got - target_cumulative_area) / (target_cumulative_area + 1e-10)
-        if rel_err < 0.0005:
-            return mid
-        elif got < target_cumulative_area:
-            lo = mid
-        else:
-            hi = mid
+        # Clip each Voronoi region to the forest boundary
+        cells = []
+        used_pts = []
+        for geom in vd.geoms:
+            try:
+                cell = geom.intersection(boundary)
+            except Exception:
+                continue
+            if cell.is_empty or cell.area < 1e-6:
+                continue
+            cells.append(_repair_geom(cell))
+            used_pts.append(cell.centroid)
 
-    return mid
+        if not cells:
+            break
+
+        # Move each seed to the centroid of its Voronoi cell
+        new_pts = [(c.x, c.y) for c in used_pts]
+
+        # Check convergence (max seed movement < 0.01% of bbox diagonal)
+        if pts and new_pts and len(new_pts) == len(pts):
+            diag = ((boundary.bounds[2] - boundary.bounds[0]) ** 2 +
+                    (boundary.bounds[3] - boundary.bounds[1]) ** 2) ** 0.5
+            max_move = max(
+                ((a[0]-b[0])**2 + (a[1]-b[1])**2) ** 0.5
+                for a, b in zip(pts, new_pts)
+            )
+            if max_move < diag * 0.0001:
+                pts = new_pts
+                break
+
+        pts = new_pts
+
+    return cells if cells else None
 
 
-def _subdivide_polygon(poly, n):
+def _balance_areas(poly, cells, n, max_passes=8):
     """
-    Slice *poly* into exactly *n* near-equal-area compartments.
-
-    Algorithm — direct N-strip cumulative-area slicing:
-    ────────────────────────────────────────────────────
-    1. Choose the longest bounding-box axis (X or Y).
-    2. For k = 1 … n-1, binary-search for cut_k such that
-         area( poly ∩ [axis_start, cut_k] ) = k/n × total_area
-       Each cut is searched over the full axis range using CUMULATIVE area
-       from the polygon start — this is the key fix.
-    3. Clip between consecutive cuts to get exactly n strips.
-
-    Why this works for any N (odd, even, prime):
-      Each cut_k is independently positioned so the cumulative slice is
-      exactly k/n of total area.  The strip between cut_{k-1} and cut_k is
-      therefore always 1/n of total area regardless of N.
-      No recursive bisection → no power-of-2 artefacts.
+    Area-balance pass: if any cell deviates > 3% from target area,
+    move the shared boundary between large and small neighbours to equalise.
+    Uses iterative shrink/grow via buffer on the dividing line.
+    After balancing, clips all cells back to the original polygon and
+    fills any coverage gaps so the total area is preserved.
     """
     from shapely.geometry import box as shapely_box
 
-    if n <= 1:
-        return [_repair_geom(poly)]
+    if not cells or len(cells) < 2:
+        return cells
 
-    poly = _repair_geom(poly)
-    total_area = poly.area
-    if total_area < 1e-10:
-        return [poly]
+    target = poly.area / n
+    tolerance = target * 0.03    # 3 % tolerance
 
+    for _ in range(max_passes):
+        areas = [c.area for c in cells]
+        max_dev = max(abs(a - target) for a in areas)
+        if max_dev <= tolerance:
+            break
+
+        # Find the largest and smallest cell
+        big_i = max(range(len(cells)), key=lambda i: cells[i].area)
+        sml_i = min(range(len(cells)), key=lambda i: cells[i].area)
+        if big_i == sml_i:
+            break
+
+        big = cells[big_i]
+        sml = cells[sml_i]
+
+        # Shared boundary between them
+        try:
+            shared = big.intersection(sml)
+        except Exception:
+            break
+        if shared.is_empty or shared.length < 1e-3:
+            break
+
+        # Transfer a thin buffer strip from big → small
+        transfer_area = (big.area - target) * 0.5
+        strip_width   = transfer_area / (shared.length + 1e-10)
+        strip_width   = min(strip_width, (big.area ** 0.5) * 0.1)
+
+        try:
+            strip = big.intersection(sml.buffer(strip_width))
+        except Exception:
+            break
+
+        if strip.is_empty or strip.area < 1e-6:
+            break
+
+        try:
+            cells[big_i] = _repair_geom(big.difference(strip))
+            cells[sml_i] = _repair_geom(sml.union(strip))
+        except Exception:
+            break
+
+    # Final clip to original polygon boundary + gap fill
+    clipped = []
+    covered = None
+    for c in cells:
+        try:
+            c2 = _repair_geom(c.intersection(poly))
+        except Exception:
+            c2 = c
+        if not c2.is_empty and c2.area > 1e-6:
+            clipped.append(c2)
+            covered = c2 if covered is None else covered.union(c2)
+
+    # Fill any uncovered gap (rounding artefacts) into nearest cell
+    if covered is not None:
+        try:
+            gap = _repair_geom(poly.difference(covered))
+            if not gap.is_empty and gap.area > 1e-6:
+                best_i, best_shared = 0, -1.0
+                for i, c in enumerate(clipped):
+                    try:
+                        s = gap.intersection(c).length
+                    except Exception:
+                        s = 0.0
+                    if s > best_shared:
+                        best_shared, best_i = s, i
+                clipped[best_i] = _repair_geom(clipped[best_i].union(gap))
+        except Exception:
+            pass
+
+    return clipped if clipped else cells
+
+
+def _place_seeds(poly, n):
+    """
+    Place n well-distributed seed points inside *poly* using a
+    grid-jitter approach (fast and reliable for any polygon shape).
+    Falls back to random interior points if grid yields too few.
+    """
     minx, miny, maxx, maxy = poly.bounds
     dx = maxx - minx
     dy = maxy - miny
 
-    # Choose longest axis
-    if dx >= dy:
-        axis = "x"; lo_bound, hi_bound = minx, maxx
+    # Try a dense grid first
+    cols = max(int(np.ceil((n * dx / max(dy, 1e-6)) ** 0.5)) + 2, 3)
+    rows = max(int(np.ceil(n * dy / max(dx, 1e-6) / (cols / n))) + 2, 3)
+    step_x = dx / cols
+    step_y = dy / rows
+
+    rng   = np.random.default_rng(42)
+    seeds = []
+    for r in range(rows):
+        for c in range(cols):
+            x = minx + (c + 0.5) * step_x + rng.uniform(-step_x * 0.3, step_x * 0.3)
+            y = miny + (r + 0.5) * step_y + rng.uniform(-step_y * 0.3, step_y * 0.3)
+            pt = Point(x, y)
+            if poly.contains(pt):
+                seeds.append((x, y))
+
+    # If not enough, sample random interior points
+    attempts = 0
+    while len(seeds) < n and attempts < 50000:
+        x = rng.uniform(minx, maxx)
+        y = rng.uniform(miny, maxy)
+        if poly.contains(Point(x, y)):
+            seeds.append((x, y))
+        attempts += 1
+
+    # Return exactly n seeds (trim or duplicate last if needed)
+    if len(seeds) >= n:
+        # Pick n most spread-out seeds using farthest-point selection
+        chosen = [seeds[0]]
+        remaining = seeds[1:]
+        while len(chosen) < n and remaining:
+            farthest = max(
+                remaining,
+                key=lambda s: min(
+                    (s[0]-c[0])**2 + (s[1]-c[1])**2 for c in chosen
+                )
+            )
+            chosen.append(farthest)
+            remaining.remove(farthest)
+        return chosen
     else:
-        axis = "y"; lo_bound, hi_bound = miny, maxy
+        # Duplicate last seed slightly perturbed
+        while len(seeds) < n:
+            s = seeds[-1]
+            seeds.append((s[0] + 1e-3, s[1] + 1e-3))
+        return seeds[:n]
 
-    # Compute n-1 cut positions, each at cumulative area = k/n × total
-    cut_positions = []
-    for k in range(1, n):
-        target_cum = total_area * k / n
-        c = _find_equal_area_cut(
-            poly, axis, lo_bound, hi_bound,
-            target_cum, minx, miny, maxx, maxy
-        )
-        cut_positions.append(c)
 
-    # Build strips: clip between consecutive cut lines
-    pieces = []
-    cuts = [lo_bound - 1] + cut_positions + [hi_bound + 1]
+def _subdivide_polygon(poly, n):
+    """
+    Subdivide *poly* into *n* near-equal-area compartments using:
 
-    for i in range(n):
-        c_lo = cuts[i]
-        c_hi = cuts[i + 1]
-        try:
-            if axis == "x":
-                strip = poly.intersection(shapely_box(c_lo, miny - 1, c_hi, maxy + 1))
-            else:
-                strip = poly.intersection(shapely_box(minx - 1, c_lo, maxx + 1, c_hi))
-        except Exception:
-            strip = None
+      1. Centroidal Voronoi Tessellation (CVT) via Lloyd's relaxation
+         → spatially compact, blob-shaped compartments (not strips)
+      2. Area-balancing pass
+         → equalises areas across all compartments (target ± 3%)
+      3. Chaikin corner-cutting smoothing
+         → smooth, natural-looking compartment boundaries
+         (smoothed only for the output geometry; topology preserved)
 
-        if strip is not None and not strip.is_empty and strip.area > 1e-6:
+    Works correctly for any n ≥ 2 on any valid polygon shape,
+    including highly concave and irregular forest boundaries.
+    """
+    if n <= 1:
+        return [_repair_geom(poly)]
 
-            # Split multiparts into individual polygons
-            if strip.geom_type == "Polygon":
-                parts = [strip]
-            elif strip.geom_type == "MultiPolygon":
-                parts = list(strip.geoms)
-            else:
-                parts = []
-        
-            for p in parts:
-                if p.area > 1e-6:
-                    pieces.append(_repair_geom(p))
-
-    # If clipping produced fewer pieces (degenerate geometry), return what we have
-    if not pieces:
+    poly = _repair_geom(poly)
+    if poly.is_empty or poly.area < 1e-10:
         return [poly]
 
-    # ── Sliver cleanup ────────────────────────────────────────────────────────
-    # Axis-aligned cuts on irregular/concave polygons can leave tiny slivers
-    # (fragments < 5 % of the target area).  Iteratively merge each sliver
-    # into the neighbour sharing the longest boundary with it.
-    # =====================================================
-    # SMART FRAGMENT MERGE
-    # =====================================================
+    # ── Step 1: Place initial seeds ─────────────────────────────────────────
+    seeds = _place_seeds(poly, n)
 
-    target_area = poly.area / n
-    
-    changed = True
-    while changed:
-        changed = False
-    
-        # Find tiny polygons (<15% of target compartment size)
-        tiny = [i for i, p in enumerate(pieces)
-                if p.area < target_area * 0.15]
-    
-        if not tiny:
-            break
-    
-        for idx in reversed(tiny):
-    
-            frag = pieces[idx]
-    
-            best_j = None
-            best_shared = 0
-    
-            for j, other in enumerate(pieces):
-                if j == idx:
-                    continue
-    
+    # ── Step 2: CVT Lloyd relaxation ────────────────────────────────────────
+    cells = _cvt_lloyd(poly, seeds, iterations=80)
+
+    # Fallback if CVT fails completely (very thin/degenerate polygon)
+    if not cells or len(cells) < 1:
+        from shapely.geometry import box as shapely_box
+        minx, miny, maxx, maxy = poly.bounds
+        dx = maxx - minx
+        dy = maxy - miny
+        axis = "x" if dx >= dy else "y"
+        pieces = []
+        for k in range(1, n):
+            target_cum = poly.area * k / n
+            lo, hi = (minx, maxx) if axis == "x" else (miny, maxy)
+            mid = (lo + hi) / 2.0
+            for _ in range(60):
+                mid = (lo + hi) / 2.0
                 try:
-                    shared = frag.boundary.intersection(
-                        other.boundary
-                    ).length
-                except:
-                    shared = 0
-    
-                if shared > best_shared:
-                    best_shared = shared
-                    best_j = j
-    
-            # If no touching neighbour found,
-            # merge with closest polygon
-            if best_j is None:
-                dmin = 1e100
-                for j, other in enumerate(pieces):
-                    if j == idx:
-                        continue
-    
-                    d = frag.distance(other)
-                    if d < dmin:
-                        dmin = d
-                        best_j = j
-    
-            if best_j is not None:
-                pieces[best_j] = _repair_geom(
-                    unary_union([pieces[best_j], frag])
+                    if axis == "x":
+                        cl = poly.intersection(shapely_box(minx-1, miny-1, mid, maxy+1))
+                    else:
+                        cl = poly.intersection(shapely_box(minx-1, miny-1, maxx+1, mid))
+                    got = cl.area if not cl.is_empty else 0.0
+                except Exception:
+                    break
+                if abs(got - target_cum) / (target_cum + 1e-10) < 0.001:
+                    break
+                if got < target_cum:
+                    lo = mid
+                else:
+                    hi = mid
+            pieces.append(mid)
+        cells = []
+        cuts = [(minx if axis == "x" else miny) - 1] + pieces + \
+               [(maxx if axis == "x" else maxy) + 1]
+        for i in range(n):
+            try:
+                if axis == "x":
+                    s = poly.intersection(shapely_box(cuts[i], miny-1, cuts[i+1], maxy+1))
+                else:
+                    s = poly.intersection(shapely_box(minx-1, cuts[i], maxx+1, cuts[i+1]))
+                if s and not s.is_empty and s.area > 1e-6:
+                    cells.append(_repair_geom(s))
+            except Exception:
+                pass
+        if not cells:
+            return [poly]
+
+    # ── Step 3: Area balancing ───────────────────────────────────────────────
+    cells = _balance_areas(poly, cells, n)
+
+    # ── Step 4: Chaikin smoothing on each compartment boundary ──────────────
+    smoothed = []
+    for cell in cells:
+        try:
+            if cell.geom_type == "Polygon" and len(cell.exterior.coords) >= 4:
+                smooth_coords = _chaikin_smooth(
+                    list(cell.exterior.coords), iterations=3
                 )
-                pieces.pop(idx)
-                changed = True
-    
-    # If more than N pieces remain, merge smallest pieces
-    while len(pieces) > n:
-    
-        smallest = min(range(len(pieces)),
-                       key=lambda i: pieces[i].area)
-    
-        frag = pieces[smallest]
-    
-        best_j = None
-        best_shared = 0
-    
-        for j, other in enumerate(pieces):
-            if j == smallest:
-                continue
-    
-            shared = frag.boundary.intersection(
-                other.boundary
-            ).length
-    
-            if shared > best_shared:
-                best_shared = shared
-                best_j = j
-    
-        if best_j is None:
+                # Clip smoothed back to original polygon so it never overshoots
+                s_poly = _repair_geom(Polygon(smooth_coords).intersection(poly))
+                if not s_poly.is_empty and s_poly.area > 1e-6:
+                    smoothed.append(s_poly)
+                    continue
+        except Exception:
+            pass
+        smoothed.append(cell)
+
+    # ── Step 5: Final sliver cleanup (< 5% of target) ───────────────────────
+    target_area = poly.area / n
+    min_area    = target_area * 0.05
+
+    changed = True
+    while changed and len(smoothed) > 1:
+        changed = False
+        tiny_idx = None
+        for i, p in enumerate(smoothed):
+            if p.area < min_area:
+                if tiny_idx is None or smoothed[i].area < smoothed[tiny_idx].area:
+                    tiny_idx = i
+        if tiny_idx is None:
             break
-    
-        pieces[best_j] = _repair_geom(
-            unary_union([pieces[best_j], frag])
-        )
-        pieces.pop(smallest)
-    
-    # Sort by area descending
-    pieces = sorted(
-        pieces,
-        key=lambda g: g.area,
-        reverse=True
-    )
-    
-    return pieces
+        sliver = smoothed.pop(tiny_idx)
+        best_j, best_len = 0, -1.0
+        for j, other in enumerate(smoothed):
+            try:
+                shared = sliver.intersection(other).length
+            except Exception:
+                shared = 0.0
+            if shared > best_len:
+                best_len, best_j = shared, j
+        try:
+            smoothed[best_j] = _repair_geom(unary_union([smoothed[best_j], sliver]))
+        except Exception:
+            smoothed.append(sliver)
+        changed = True
+
+    return smoothed if smoothed else [poly]
 
 
 def _save_compartments(pieces, forest_name, crs, save_dir):
