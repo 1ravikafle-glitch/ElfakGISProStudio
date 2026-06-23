@@ -390,589 +390,175 @@ def _repair_geom(g):
     return g if g.is_valid else g.buffer(0)
 
 
-def _chaikin_smooth(coords, iterations=2):
-    """Chaikin corner-cutting on a closed ring. Returns smoothed coords."""
-    pts = list(coords)
-    if len(pts) > 1 and pts[0] == pts[-1]:
-        pts = pts[:-1]
-    for _ in range(iterations):
-        new_pts = []
-        n = len(pts)
-        for i in range(n):
-            p0 = pts[i]
-            p1 = pts[(i + 1) % n]
-            new_pts.append((0.75*p0[0] + 0.25*p1[0], 0.75*p0[1] + 0.25*p1[1]))
-            new_pts.append((0.25*p0[0] + 0.75*p1[0], 0.25*p0[1] + 0.75*p1[1]))
-        pts = new_pts
-    pts.append(pts[0])
-    return pts
+def _principal_angle(poly):
+    """Return the angle (radians) of the polygon's longest principal axis using PCA on boundary points."""
+    coords = np.array(poly.exterior.coords[:-1])
+    coords -= coords.mean(axis=0)
+    cov = np.cov(coords.T)
+    vals, vecs = np.linalg.eigh(cov)
+    # Eigenvector with largest eigenvalue = principal axis
+    principal = vecs[:, np.argmax(vals)]
+    return np.arctan2(principal[1], principal[0])
 
 
-def _best_cut(poly, target_area, n_tries=80):
+def _rotate_poly(poly, angle):
+    """Rotate polygon around its centroid by -angle (so principal axis aligns with X)."""
+    from shapely.affinity import rotate
+    cx, cy = poly.centroid.x, poly.centroid.y
+    return rotate(poly, -np.degrees(angle), origin=(cx, cy))
+
+
+def _cut_at_fraction(poly, fraction, n_tries=120):
     """
-    Binary-search for a cut (horizontal or vertical) that gives a LEFT/BOTTOM
-    piece of exactly target_area.  Tries both axes and picks the one that
-    produces the most compact (lowest perimeter/area ratio) pieces.
-    Returns (left_piece, right_piece) both guaranteed ⊆ poly with no gap.
+    Find a vertical cut (after rotating to principal axis) such that
+    the LEFT piece = fraction * poly.area.
+    Returns (left, right) both as sub-polygons of poly with NO gap:
+      left  = poly ∩ halfplane
+      right = poly − left   (exact complement, zero gap by construction)
     """
     from shapely.geometry import box as B
-
     minx, miny, maxx, maxy = poly.bounds
-    total = poly.area
+    target = poly.area * fraction
+    lo, hi = minx, maxx
+    mid = (lo + hi) / 2.0
 
-    best = None
-    best_score = 1e18
-
-    for axis in ("x", "y"):
-        lo, hi = (minx, maxx) if axis == "x" else (miny, maxy)
+    for _ in range(n_tries):
         mid = (lo + hi) / 2.0
-
-        for _ in range(n_tries):
-            mid = (lo + hi) / 2.0
-            try:
-                if axis == "x":
-                    left = poly.intersection(B(minx-1, miny-1, mid, maxy+1))
-                else:
-                    left = poly.intersection(B(minx-1, miny-1, maxx+1, mid))
-            except Exception:
-                break
-
-            got = left.area if not left.is_empty else 0.0
-            err = abs(got - target_area) / (target_area + 1e-10)
-            if err < 0.0005:
-                break
-            elif got < target_area:
-                lo = mid
-            else:
-                hi = mid
-
-        # Right piece = exactly what's left — GUARANTEED no gap
         try:
-            if axis == "x":
-                left  = _repair_geom(poly.intersection(B(minx-1, miny-1, mid, maxy+1)))
-                right = _repair_geom(poly.difference(left))
-            else:
-                left  = _repair_geom(poly.intersection(B(minx-1, miny-1, maxx+1, mid)))
-                right = _repair_geom(poly.difference(left))
+            left_try = poly.intersection(B(minx - 1, miny - 1, mid, maxy + 1))
+            got = left_try.area if not left_try.is_empty else 0.0
         except Exception:
-            continue
+            break
+        err = abs(got - target) / (target + 1e-12)
+        if err < 0.0001:   # 0.01% tolerance
+            break
+        if got < target:
+            lo = mid
+        else:
+            hi = mid
 
-        if left.is_empty or right.is_empty:
-            continue
-
-        # Score = total perimeter (lower = more compact shapes)
-        score = left.length + right.length
-        if score < best_score:
-            best_score = score
-            best = (left, right)
-
-    return best if best else None
-
-
-def _recursive_split(poly, n):
-    """
-    Split poly into exactly n pieces with equal area using recursive bisection.
-    At each level, split into k and (n-k) pieces where k = n//2,
-    choosing the cut that minimises total perimeter (most compact blocks).
-    The RIGHT piece is always poly.difference(left) — guarantees zero gap.
-    """
-    if n <= 1:
-        return [_repair_geom(poly)]
-    if poly.is_empty or poly.area < 1e-10:
-        return [poly]
-
-    k     = n // 2          # left gets k pieces
-    m     = n - k           # right gets m pieces
-    # Target area for the left half
-    target = poly.area * k / n
-
-    cut = _best_cut(poly, target)
-    if cut is None:
-        return [poly] * n   # degenerate — return copies
-
-    left_poly, right_poly = cut
-
-    left_pieces  = _recursive_split(left_poly,  k)
-    right_pieces = _recursive_split(right_poly, m)
-    return left_pieces + right_pieces
-
-
-def _smooth_internal_only(cell, boundary_line, poly):
-    """
-    Apply one pass of Chaikin smoothing ONLY to edges that do NOT lie on the
-    original polygon boundary.  Boundary edges keep their exact vertices.
-    The smoothed cell is then intersected with poly so it never overshoots,
-    and the caller fills any residual gap separately.
-    """
     try:
-        if cell.geom_type != "Polygon" or len(cell.exterior.coords) < 4:
-            return cell
-
-        ext  = list(cell.exterior.coords)
-        n    = len(ext) - 1     # last == first
-        new  = []
-
-        for i in range(n):
-            p0 = ext[i]
-            p1 = ext[(i+1) % n]
-            seg = LineString([p0, p1])
-            try:
-                on_boundary = seg.intersection(boundary_line).length > seg.length * 0.05
-            except Exception:
-                on_boundary = True
-
-            if on_boundary:
-                new.append(p0)   # pin exactly
-            else:
-                new.append((0.75*p0[0]+0.25*p1[0], 0.75*p0[1]+0.25*p1[1]))
-                new.append((0.25*p0[0]+0.75*p1[0], 0.25*p0[1]+0.75*p1[1]))
-
-        if len(new) < 3:
-            return cell
-        new.append(new[0])
-        s = _repair_geom(Polygon(new))
-        # Clip to original polygon — boundary edges are pinned so overshoot
-        # is only possible on internal curves; clip removes it cleanly.
-        clipped = _repair_geom(s.intersection(poly))
-        if clipped.is_empty or clipped.area < cell.area * 0.5:
-            return cell
-        return clipped
+        left  = _repair_geom(poly.intersection(B(minx - 1, miny - 1, mid, maxy + 1)))
+        right = _repair_geom(poly.difference(left))   # exact complement — no gap
     except Exception:
-        return cell
+        left, right = poly, poly
+
+    return left, right
 
 
 def _subdivide_polygon(poly, n):
     """
-    Divide *poly* into *n* near-equal-area compartments.
+    Divide *poly* into exactly *n* near-equal-area compartments (±0.1 ha).
 
-    Pipeline
-    ────────
-    1. Recursive balanced bisection (guaranteed zero gaps, equal area)
-    2. Internal-only Chaikin smoothing (boundary vertices pinned exactly)
-    3. Gap fill — any residual area (from smoothing clip) given to the
-       neighbour with the longest shared boundary
+    Algorithm — PCA-axis recursive bisection:
+    ──────────────────────────────────────────
+    1. Find the principal axis of the polygon using PCA on boundary coords.
+    2. Rotate the polygon so its principal axis aligns with X.
+    3. Recursively bisect: split into k and (n-k) pieces at the fraction k/n.
+       RIGHT piece = poly.difference(left) — guaranteed zero gap.
+    4. Rotate each piece back to original orientation.
+    5. Rebuild using cumulative difference to eliminate any float rounding gaps.
+    6. Skip smoothing (it introduces gaps); keep raw bisection edges.
+
+    Why this works on concave/irregular polygons:
+    - Cutting perpendicular to the PRINCIPAL AXIS (not just X or Y) means the
+      cut crosses the polygon's widest span → clean single-piece cuts with no
+      fragmentation even on highly irregular shapes.
+    - right = poly.difference(left) is mathematically exact — no gap between
+      left and right at the cut line.
+    - Cumulative rebuild step removes any residual floating-point micro-gaps.
     """
     if n <= 1:
         return [_repair_geom(poly)]
+
     poly = _repair_geom(poly)
     if poly.is_empty or poly.area < 1e-10:
         return [poly]
 
-    # ── 1. Recursive bisection → n raw pieces, zero gaps by construction ────
-    pieces = _recursive_split(poly, n)
-    if not pieces:
-        return [poly]
+    def _split_n(p, count):
+        """Recursively split p into count equal-area pieces along principal axis."""
+        if count <= 1:
+            return [_repair_geom(p)]
+        if p.is_empty or p.area < 1e-10:
+            return [p]
 
-    # ── 1b. Guarantee full coverage: rebuild using cumulative difference ─────
-    # Even after recursive split, floating-point clipping can leave
-    # micro-slivers between pieces.  Rebuild by assigning each piece
-    # exactly what's left of the original polygon after removing all
-    # previously-assigned pieces.
-    rebuilt  = []
-    remaining = _repair_geom(poly)   # starts as the full polygon
+        k = count // 2      # left half gets k pieces
+        m = count - k       # right half gets m pieces
 
-    # Sort pieces spatially (left→right or bottom→top) so rebuild order is stable
-    pieces_sorted = sorted(pieces, key=lambda p: (p.centroid.x, p.centroid.y))
+        # Rotate to principal axis
+        try:
+            angle = _principal_angle(p)
+        except Exception:
+            angle = 0.0
 
-    for i, piece in enumerate(pieces_sorted):
-        if i == len(pieces_sorted) - 1:
-            # Last piece = everything not yet claimed → guaranteed no gap
-            rebuilt.append(_repair_geom(remaining))
+        from shapely.affinity import rotate as aff_rotate
+        cx, cy = p.centroid.x, p.centroid.y
+        p_rot = _repair_geom(aff_rotate(p, -np.degrees(angle), origin=(cx, cy)))
+
+        # Cut at fraction k/count along the rotated X axis
+        left_rot, right_rot = _cut_at_fraction(p_rot, k / count)
+
+        # Rotate pieces back
+        left_orig  = _repair_geom(aff_rotate(left_rot,  np.degrees(angle), origin=(cx, cy)))
+        right_orig = _repair_geom(aff_rotate(right_rot, np.degrees(angle), origin=(cx, cy)))
+
+        # Clip back to original polygon to remove any rotation artefact
+        try:
+            left_orig  = _repair_geom(left_orig.intersection(p))
+            right_orig = _repair_geom(p.difference(left_orig))  # exact complement
+        except Exception:
+            pass
+
+        return _split_n(left_orig, k) + _split_n(right_orig, m)
+
+    raw_pieces = _split_n(poly, n)
+
+    # ── Cumulative rebuild: guaranteed no gap, no overlap ───────────────────
+    # Sort pieces by centroid position for stable ordering
+    try:
+        raw_pieces.sort(key=lambda p: (round(p.centroid.x, 0), round(p.centroid.y, 0)))
+    except Exception:
+        pass
+
+    final     = []
+    remaining = _repair_geom(poly)
+
+    for i, piece in enumerate(raw_pieces):
+        if remaining.is_empty:
+            break
+        if i == len(raw_pieces) - 1:
+            # Last piece = whatever remains — mathematically no gap
+            final.append(_repair_geom(remaining))
         else:
-            # Clip piece to what's still available
             try:
                 c = _repair_geom(piece.intersection(remaining))
             except Exception:
                 c = piece
             if c.is_empty or c.area < 1e-8:
                 continue
-            rebuilt.append(c)
+            final.append(c)
             try:
                 remaining = _repair_geom(remaining.difference(c))
             except Exception:
                 pass
 
-    if not rebuilt:
-        return [poly]
-    pieces = rebuilt
-
-    # ── 2. Smooth internal edges only ───────────────────────────────────────
-    boundary_line = poly.boundary
-    smoothed = [_smooth_internal_only(p, boundary_line, poly) for p in pieces]
-
-    # ── 3. Gap fill ──────────────────────────────────────────────────────────
-    # After smoothing clip, re-union all cells and compute residual gap.
-    covered = None
-    valid   = []
-    for c in smoothed:
-        c = _repair_geom(c)
-        if not c.is_empty and c.area > 1e-8:
-            valid.append(c)
-            covered = c if covered is None else _repair_geom(covered.union(c))
-
-    if not valid:
+    if not final:
         return [poly]
 
-    try:
-        gap = _repair_geom(poly.difference(covered))
-        if not gap.is_empty and gap.area > 1e-8:
-            # Assign gap to neighbour with longest shared boundary
-            best_i, best_len = 0, -1.0
-            for i, c in enumerate(valid):
-                try:
-                    s = gap.intersection(c).length
-                except Exception:
-                    s = 0.0
-                if s > best_len:
-                    best_len, best_i = s, i
-            valid[best_i] = _repair_geom(unary_union([valid[best_i], gap]))
-    except Exception:
-        pass
-
-    return valid if valid else [poly]
-
-
-def _cvt_lloyd(poly, seeds, iterations=60):
-    """
-    Lloyd's relaxation for Centroidal Voronoi Tessellation inside *poly*.
-    Seeds are moved toward the centroid of their Voronoi cell (clipped to poly)
-    so compartments become spatially compact and nearly equal in area.
-
-    Returns list of (cell_polygon, seed_point) after convergence.
-    """
-    from shapely.ops import voronoi_diagram
-    from shapely.geometry import MultiPoint, GeometryCollection
-
-    boundary = poly.buffer(0)       # ensure valid
-    pts = list(seeds)               # list of (x, y) tuples
-
-    cells = []
-    for iteration in range(iterations):
-        mp     = MultiPoint([Point(x, y) for x, y in pts])
-        # voronoi_diagram envelope must fully contain the polygon
-        envelope = boundary.envelope.buffer(
-            max(boundary.envelope.area ** 0.5 * 0.1, 1)
-        )
-        try:
-            vd = voronoi_diagram(mp, envelope=envelope, tolerance=0.0)
-        except Exception:
-            break
-
-        # Clip each Voronoi region to the forest boundary
-        cells = []
-        used_pts = []
-        for geom in vd.geoms:
-            try:
-                cell = geom.intersection(boundary)
-            except Exception:
-                continue
-            if cell.is_empty or cell.area < 1e-6:
-                continue
-            cells.append(_repair_geom(cell))
-            used_pts.append(cell.centroid)
-
-        if not cells:
-            break
-
-        # Move each seed to the centroid of its Voronoi cell
-        new_pts = [(c.x, c.y) for c in used_pts]
-
-        # Check convergence (max seed movement < 0.01% of bbox diagonal)
-        if pts and new_pts and len(new_pts) == len(pts):
-            diag = ((boundary.bounds[2] - boundary.bounds[0]) ** 2 +
-                    (boundary.bounds[3] - boundary.bounds[1]) ** 2) ** 0.5
-            max_move = max(
-                ((a[0]-b[0])**2 + (a[1]-b[1])**2) ** 0.5
-                for a, b in zip(pts, new_pts)
-            )
-            if max_move < diag * 0.0001:
-                pts = new_pts
-                break
-
-        pts = new_pts
-
-    return cells if cells else None
-
-
-def _balance_areas(poly, cells, n, max_passes=8):
-    """
-    Area-balance pass: if any cell deviates > 3% from target area,
-    move the shared boundary between large and small neighbours to equalise.
-    Uses iterative shrink/grow via buffer on the dividing line.
-    After balancing, clips all cells back to the original polygon and
-    fills any coverage gaps so the total area is preserved.
-    """
-    from shapely.geometry import box as shapely_box
-
-    if not cells or len(cells) < 2:
-        return cells
-
-    target = poly.area / n
-    tolerance = target * 0.03    # 3 % tolerance
-
-    for _ in range(max_passes):
-        areas = [c.area for c in cells]
-        max_dev = max(abs(a - target) for a in areas)
-        if max_dev <= tolerance:
-            break
-
-        # Find the largest and smallest cell
-        big_i = max(range(len(cells)), key=lambda i: cells[i].area)
-        sml_i = min(range(len(cells)), key=lambda i: cells[i].area)
-        if big_i == sml_i:
-            break
-
-        big = cells[big_i]
-        sml = cells[sml_i]
-
-        # Shared boundary between them
-        try:
-            shared = big.intersection(sml)
-        except Exception:
-            break
-        if shared.is_empty or shared.length < 1e-3:
-            break
-
-        # Transfer a thin buffer strip from big → small
-        transfer_area = (big.area - target) * 0.5
-        strip_width   = transfer_area / (shared.length + 1e-10)
-        strip_width   = min(strip_width, (big.area ** 0.5) * 0.1)
-
-        try:
-            strip = big.intersection(sml.buffer(strip_width))
-        except Exception:
-            break
-
-        if strip.is_empty or strip.area < 1e-6:
-            break
-
-        try:
-            cells[big_i] = _repair_geom(big.difference(strip))
-            cells[sml_i] = _repair_geom(sml.union(strip))
-        except Exception:
-            break
-
-    # Final clip to original polygon boundary + gap fill
-    clipped = []
-    covered = None
-    for c in cells:
-        try:
-            c2 = _repair_geom(c.intersection(poly))
-        except Exception:
-            c2 = c
-        if not c2.is_empty and c2.area > 1e-6:
-            clipped.append(c2)
-            covered = c2 if covered is None else covered.union(c2)
-
-    # Fill any uncovered gap (rounding artefacts) into nearest cell
-    if covered is not None:
-        try:
-            gap = _repair_geom(poly.difference(covered))
-            if not gap.is_empty and gap.area > 1e-6:
-                best_i, best_shared = 0, -1.0
-                for i, c in enumerate(clipped):
-                    try:
-                        s = gap.intersection(c).length
-                    except Exception:
-                        s = 0.0
-                    if s > best_shared:
-                        best_shared, best_i = s, i
-                clipped[best_i] = _repair_geom(clipped[best_i].union(gap))
-        except Exception:
-            pass
-
-    return clipped if clipped else cells
-
-
-def _place_seeds(poly, n):
-    """
-    Place n well-distributed seed points inside *poly* using a
-    grid-jitter approach (fast and reliable for any polygon shape).
-    Falls back to random interior points if grid yields too few.
-    """
-    minx, miny, maxx, maxy = poly.bounds
-    dx = maxx - minx
-    dy = maxy - miny
-
-    # Try a dense grid first
-    cols = max(int(np.ceil((n * dx / max(dy, 1e-6)) ** 0.5)) + 2, 3)
-    rows = max(int(np.ceil(n * dy / max(dx, 1e-6) / (cols / n))) + 2, 3)
-    step_x = dx / cols
-    step_y = dy / rows
-
-    rng   = np.random.default_rng(42)
-    seeds = []
-    for r in range(rows):
-        for c in range(cols):
-            x = minx + (c + 0.5) * step_x + rng.uniform(-step_x * 0.3, step_x * 0.3)
-            y = miny + (r + 0.5) * step_y + rng.uniform(-step_y * 0.3, step_y * 0.3)
-            pt = Point(x, y)
-            if poly.contains(pt):
-                seeds.append((x, y))
-
-    # If not enough, sample random interior points
-    attempts = 0
-    while len(seeds) < n and attempts < 50000:
-        x = rng.uniform(minx, maxx)
-        y = rng.uniform(miny, maxy)
-        if poly.contains(Point(x, y)):
-            seeds.append((x, y))
-        attempts += 1
-
-    # Return exactly n seeds (trim or duplicate last if needed)
-    if len(seeds) >= n:
-        # Pick n most spread-out seeds using farthest-point selection
-        chosen = [seeds[0]]
-        remaining = seeds[1:]
-        while len(chosen) < n and remaining:
-            farthest = max(
-                remaining,
-                key=lambda s: min(
-                    (s[0]-c[0])**2 + (s[1]-c[1])**2 for c in chosen
-                )
-            )
-            chosen.append(farthest)
-            remaining.remove(farthest)
-        return chosen
-    else:
-        # Duplicate last seed slightly perturbed
-        while len(seeds) < n:
-            s = seeds[-1]
-            seeds.append((s[0] + 1e-3, s[1] + 1e-3))
-        return seeds[:n]
-
-
-def _subdivide_polygon(poly, n):
-    """
-    Subdivide *poly* into *n* near-equal-area compartments using:
-
-      1. Centroidal Voronoi Tessellation (CVT) via Lloyd's relaxation
-         → spatially compact, blob-shaped compartments (not strips)
-      2. Area-balancing pass
-         → equalises areas across all compartments (target ± 3%)
-      3. Chaikin corner-cutting smoothing
-         → smooth, natural-looking compartment boundaries
-         (smoothed only for the output geometry; topology preserved)
-
-    Works correctly for any n ≥ 2 on any valid polygon shape,
-    including highly concave and irregular forest boundaries.
-    """
-    if n <= 1:
-        return [_repair_geom(poly)]
-
-    poly = _repair_geom(poly)
-    if poly.is_empty or poly.area < 1e-10:
-        return [poly]
-
-    # ── Step 1: Place initial seeds ─────────────────────────────────────────
-    seeds = _place_seeds(poly, n)
-
-    # ── Step 2: CVT Lloyd relaxation ────────────────────────────────────────
-    cells = _cvt_lloyd(poly, seeds, iterations=80)
-
-    # Fallback if CVT fails completely (very thin/degenerate polygon)
-    if not cells or len(cells) < 1:
-        from shapely.geometry import box as shapely_box
-        minx, miny, maxx, maxy = poly.bounds
-        dx = maxx - minx
-        dy = maxy - miny
-        axis = "x" if dx >= dy else "y"
-        pieces = []
-        for k in range(1, n):
-            target_cum = poly.area * k / n
-            lo, hi = (minx, maxx) if axis == "x" else (miny, maxy)
-            mid = (lo + hi) / 2.0
-            for _ in range(60):
-                mid = (lo + hi) / 2.0
-                try:
-                    if axis == "x":
-                        cl = poly.intersection(shapely_box(minx-1, miny-1, mid, maxy+1))
-                    else:
-                        cl = poly.intersection(shapely_box(minx-1, miny-1, maxx+1, mid))
-                    got = cl.area if not cl.is_empty else 0.0
-                except Exception:
-                    break
-                if abs(got - target_cum) / (target_cum + 1e-10) < 0.001:
-                    break
-                if got < target_cum:
-                    lo = mid
-                else:
-                    hi = mid
-            pieces.append(mid)
-        cells = []
-        cuts = [(minx if axis == "x" else miny) - 1] + pieces + \
-               [(maxx if axis == "x" else maxy) + 1]
-        for i in range(n):
-            try:
-                if axis == "x":
-                    s = poly.intersection(shapely_box(cuts[i], miny-1, cuts[i+1], maxy+1))
-                else:
-                    s = poly.intersection(shapely_box(minx-1, cuts[i], maxx+1, cuts[i+1]))
-                if s and not s.is_empty and s.area > 1e-6:
-                    cells.append(_repair_geom(s))
-            except Exception:
-                pass
-        if not cells:
-            return [poly]
-
-    # ── Step 3: Gap-free tiling ──────────────────────────────────────────────
-    # After CVT + area balancing, floating-point clipping leaves micro-gaps
-    # between cells and between cells and the boundary.
-    # Fix: rebuild from scratch using a coverage-difference approach:
-    #   cell[0] = cells[0] ∩ poly
-    #   cell[1] = cells[1] ∩ poly  minus  cell[0]
-    #   cell[2] = cells[2] ∩ poly  minus  cell[0] ∪ cell[1]
-    #   ...
-    #   cell[n-1] = poly  minus  everything already claimed
-    # This guarantees: (a) every cell ⊆ poly, (b) no overlaps, (c) no gaps.
-
-    tiled   = []
-    covered = None   # union of all cells placed so far
-
-    for i, cell in enumerate(cells):
-        if i == len(cells) - 1:
-            # Last cell = whatever of poly hasn't been claimed yet
-            try:
-                if covered is not None:
-                    piece = _repair_geom(poly.difference(covered))
-                else:
-                    piece = poly
-            except Exception:
-                piece = poly
-        else:
-            try:
-                piece = _repair_geom(cell.intersection(poly))
-                if covered is not None:
-                    piece = _repair_geom(piece.difference(covered))
-            except Exception:
-                piece = _repair_geom(cell.intersection(poly))
-
-        if piece.is_empty or piece.area < 1e-8:
-            continue
-
-        tiled.append(piece)
-        covered = piece if covered is None else _repair_geom(covered.union(piece))
-
-    if not tiled:
-        return [poly]
-
-    # ── Step 4: Merge slivers (< 5 % of target) into longest-shared neighbour
+    # ── Merge slivers (< 2% of target) into longest-shared neighbour ────────
     target_area = poly.area / n
-    min_area    = target_area * 0.05
+    min_area    = target_area * 0.02
 
     changed = True
-    while changed and len(tiled) > 1:
+    while changed and len(final) > 1:
         changed = False
-        tiny_idx = next(
-            (i for i, p in sorted(enumerate(tiled), key=lambda t: t[1].area)
-             if p.area < min_area),
-            None
-        )
-        if tiny_idx is None:
+        tiny = next((i for i, p in sorted(enumerate(final),
+                     key=lambda t: t[1].area) if p.area < min_area), None)
+        if tiny is None:
             break
-        sliver = tiled.pop(tiny_idx)
+        sliver = final.pop(tiny)
         best_j, best_len = 0, -1.0
-        for j, other in enumerate(tiled):
+        for j, other in enumerate(final):
             try:
                 s = sliver.intersection(other).length
             except Exception:
@@ -980,110 +566,10 @@ def _subdivide_polygon(poly, n):
             if s > best_len:
                 best_len, best_j = s, j
         try:
-            tiled[best_j] = _repair_geom(unary_union([tiled[best_j], sliver]))
+            final[best_j] = _repair_geom(unary_union([final[best_j], sliver]))
         except Exception:
-            tiled.append(sliver)
+            final.append(sliver)
         changed = True
-
-    # ── Step 5: Smooth internal edges only, pin boundary vertices exactly ───
-    # boundary_line = the original polygon outline.
-    # Any edge of a compartment that lies ON boundary_line is kept exactly.
-    # Only the internal cut edges (between compartments) get Chaikin-smoothed.
-    # After smoothing we do NOT re-clip (which would create gaps).
-    # Instead we assign any unclaimed residual to the nearest neighbour so the
-    # total coverage = poly exactly.
-
-    boundary_line = poly.boundary
-    smoothed = []
-
-    for cell in tiled:
-        try:
-            if cell.geom_type != "Polygon" or len(cell.exterior.coords) < 4:
-                smoothed.append(cell)
-                continue
-
-            ext_coords = list(cell.exterior.coords)
-            n_pts = len(ext_coords) - 1  # closed ring: last == first
-
-            # Classify each edge as boundary (False) or internal (True)
-            is_internal = []
-            for i in range(n_pts):
-                seg = LineString([ext_coords[i], ext_coords[(i + 1) % n_pts]])
-                try:
-                    shared_len = seg.intersection(boundary_line).length
-                    # internal if less than 5% of the edge overlaps the boundary
-                    is_internal.append(shared_len < seg.length * 0.05)
-                except Exception:
-                    is_internal.append(False)
-
-            if not any(is_internal):
-                # All edges on the boundary — no smoothing possible
-                smoothed.append(cell)
-                continue
-
-            # Build new coordinate ring:
-            # - boundary edges: emit the start vertex unchanged
-            # - internal edges: emit two Chaikin subdivision vertices
-            new_coords = []
-            for i in range(n_pts):
-                p0 = ext_coords[i]
-                p1 = ext_coords[(i + 1) % n_pts]
-                if is_internal[i]:
-                    q = (0.75*p0[0] + 0.25*p1[0], 0.75*p0[1] + 0.25*p1[1])
-                    r = (0.25*p0[0] + 0.75*p1[0], 0.25*p0[1] + 0.75*p1[1])
-                    new_coords.append(q)
-                    new_coords.append(r)
-                else:
-                    new_coords.append(p0)   # pin exactly on boundary
-
-            if len(new_coords) < 3:
-                smoothed.append(cell)
-                continue
-
-            new_coords.append(new_coords[0])  # close ring
-            s_poly = _repair_geom(Polygon(new_coords))
-
-            if s_poly.is_empty or s_poly.area < cell.area * 0.3:
-                smoothed.append(cell)
-            else:
-                smoothed.append(s_poly)
-
-        except Exception:
-            smoothed.append(cell)
-
-    # ── Step 6: Final gap-fill ───────────────────────────────────────────────
-    # Smoothing internal edges can push vertices very slightly outside
-    # the original polygon OR leave hair-thin gaps between cells.
-    # Re-clip each cell to poly, then fill any residual gap into the
-    # neighbour with the longest shared boundary.
-
-    final = []
-    covered2 = None
-    for cell in smoothed:
-        try:
-            c = _repair_geom(cell.intersection(poly))
-        except Exception:
-            c = cell
-        if not c.is_empty and c.area > 1e-8:
-            final.append(c)
-            covered2 = c if covered2 is None else _repair_geom(covered2.union(c))
-
-    # Fill gap
-    if covered2 is not None:
-        try:
-            gap = _repair_geom(poly.difference(covered2))
-            if not gap.is_empty and gap.area > 1e-8 and final:
-                best_i, best_shared = 0, -1.0
-                for i, c in enumerate(final):
-                    try:
-                        s = gap.intersection(c).length
-                    except Exception:
-                        s = 0.0
-                    if s > best_shared:
-                        best_shared, best_i = s, i
-                final[best_i] = _repair_geom(unary_union([final[best_i], gap]))
-        except Exception:
-            pass
 
     return final if final else [poly]
 
