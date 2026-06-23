@@ -643,32 +643,6 @@ def _subdivide_polygon(poly, n):
     # Result: no overlaps, no gaps, full coverage guaranteed.
     tiled = _gap_free_tile(poly, candidate_cells)
 
-    # ---- FINAL GAP REPAIR (fills tiny residual holes only) ----
-    try:
-        covered = unary_union(tiled)
-        residual = poly.difference(covered)
-    
-        if not residual.is_empty:
-            holes = [residual] if residual.geom_type == "Polygon" else list(residual.geoms)
-    
-            for hole in holes:
-                if hole.area > 1e-8:   # ignore numerical noise
-                    best_idx = None
-                    best_len = -1
-    
-                    for i, cell in enumerate(tiled):
-                        shared = cell.boundary.intersection(hole.boundary).length
-                        if shared > best_len:
-                            best_len = shared
-                            best_idx = i
-    
-                    if best_idx is not None:
-                        tiled[best_idx] = _repair_geom(
-                            tiled[best_idx].union(hole)
-                        )
-    except Exception:
-        pass
-
     # ── Step 4: Merge slivers (< 5% of target area) ──────────────────────
     target_area = poly.area / n
     min_area    = target_area * 0.05
@@ -714,7 +688,6 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
 
     for i, p in enumerate(pieces, start=1):
         p = _repair_geom(p)
-        p = p.buffer(0.001).buffer(-0.001)
         comp_id   = f"Comp_{i:03d}"
         area_ha   = round(p.area / 10000, 4)
         perim_m   = round(p.length, 4)
