@@ -306,7 +306,6 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
 # ================= GROUP D =================
 def _save_forest_layer(poly_rec, line_rec, pt_recs, save_dir, crs):
     os.makedirs(save_dir, exist_ok=True)
-    # Use the forest (or compartment) folder name as the file prefix
     prefix = os.path.basename(save_dir)
     gpd.GeoDataFrame([poly_rec], crs=crs).to_file(os.path.join(save_dir, f"{prefix}_polygon.shp"))
     gpd.GeoDataFrame([line_rec], crs=crs).to_file(os.path.join(save_dir, f"{prefix}_line.shp"))
@@ -371,73 +370,92 @@ def group_d(df, crs, out, mapping=None, mode="A"):
 # ================= GROUP E — POLYGON SUBDIVIDER =================
 #
 # Subdivides forest polygon(s) into N near-equal-area compartments using
-# iterative area-balanced bisection along the longest bounding-box axis.
+# Centroidal Voronoi Tessellation (CVT) via Lloyd's relaxation followed by
+# strict gap-free sequential tiling.
 #
-# e_mode = "A"  →  Single-forest  (like Group A: all rows = one polygon)
-#   Output:  out/compartments.shp + compartment_lines.shp + compartment_points.shp
-#            out/compartment_summary.xlsx
-#
-# e_mode = "B"  →  Multi-forest   (like Group B: Forest column groups rows)
-#   Output:  out/Forest_A/compartments.shp  …
-#            out/Forest_A/compartment_summary.xlsx  …
-#
-# Algorithm: recursive bisection — always splits the largest remaining piece
-#   along its longest axis at an area-balanced position (binary search).
-#   After reaching N pieces the compartments are numbered by area (largest first).
+# KEY FIX: Chaikin smoothing has been REMOVED. Smoothing shifts internal edge
+# vertices so adjacent cells no longer share the exact same edge coordinates,
+# producing visible gaps between compartments and along the outer boundary.
+# The gap-free tiling guarantee (sequential difference) now produces the
+# final geometries directly with no post-processing that could introduce gaps.
 
 def _repair_geom(g):
     """Fix invalid geometry with buffer(0)."""
     return g if g.is_valid else g.buffer(0)
 
 
-def _chaikin_smooth(coords, iterations=3):
+def _place_seeds(poly, n):
     """
-    Chaikin's corner-cutting algorithm.
-    Smooths a polygon ring by repeatedly cutting corners.
-    Returns smoothed coordinate list (closed ring).
+    Place n well-distributed seed points inside *poly* using a
+    grid-jitter approach (fast and reliable for any polygon shape).
+    Falls back to random interior points if grid yields too few.
     """
-    pts = list(coords)
-    # Ensure not closed (remove duplicate last point)
-    if len(pts) > 1 and pts[0] == pts[-1]:
-        pts = pts[:-1]
+    minx, miny, maxx, maxy = poly.bounds
+    dx = maxx - minx
+    dy = maxy - miny
 
-    for _ in range(iterations):
-        new_pts = []
-        n = len(pts)
-        for i in range(n):
-            p0 = pts[i]
-            p1 = pts[(i + 1) % n]
-            q = (0.75 * p0[0] + 0.25 * p1[0],
-                 0.75 * p0[1] + 0.25 * p1[1])
-            r = (0.25 * p0[0] + 0.75 * p1[0],
-                 0.25 * p0[1] + 0.75 * p1[1])
-            new_pts.append(q)
-            new_pts.append(r)
-        pts = new_pts
+    cols = max(int(np.ceil((n * dx / max(dy, 1e-6)) ** 0.5)) + 2, 3)
+    rows = max(int(np.ceil(n * dy / max(dx, 1e-6) / (cols / n))) + 2, 3)
+    step_x = dx / cols
+    step_y = dy / rows
 
-    # Close the ring
-    pts.append(pts[0])
-    return pts
+    rng   = np.random.default_rng(42)
+    seeds = []
+    for r in range(rows):
+        for c in range(cols):
+            x = minx + (c + 0.5) * step_x + rng.uniform(-step_x * 0.3, step_x * 0.3)
+            y = miny + (r + 0.5) * step_y + rng.uniform(-step_y * 0.3, step_y * 0.3)
+            pt = Point(x, y)
+            if poly.contains(pt):
+                seeds.append((x, y))
+
+    attempts = 0
+    while len(seeds) < n and attempts < 50000:
+        x = rng.uniform(minx, maxx)
+        y = rng.uniform(miny, maxy)
+        if poly.contains(Point(x, y)):
+            seeds.append((x, y))
+        attempts += 1
+
+    if len(seeds) >= n:
+        chosen = [seeds[0]]
+        remaining = seeds[1:]
+        while len(chosen) < n and remaining:
+            farthest = max(
+                remaining,
+                key=lambda s: min(
+                    (s[0]-c[0])**2 + (s[1]-c[1])**2 for c in chosen
+                )
+            )
+            chosen.append(farthest)
+            remaining.remove(farthest)
+        return chosen
+    else:
+        while len(seeds) < n:
+            s = seeds[-1]
+            seeds.append((s[0] + 1e-3, s[1] + 1e-3))
+        return seeds[:n]
 
 
-def _cvt_lloyd(poly, seeds, iterations=60):
+def _cvt_lloyd(poly, seeds, iterations=80):
     """
     Lloyd's relaxation for Centroidal Voronoi Tessellation inside *poly*.
     Seeds are moved toward the centroid of their Voronoi cell (clipped to poly)
     so compartments become spatially compact and nearly equal in area.
 
-    Returns list of (cell_polygon, seed_point) after convergence.
+    Returns list of candidate cell polygons after convergence.
+    These are CANDIDATE cells only — final gapless cells are built by
+    _gap_free_tile() afterwards.
     """
     from shapely.ops import voronoi_diagram
     from shapely.geometry import MultiPoint, GeometryCollection
 
-    boundary = poly.buffer(0)       # ensure valid
-    pts = list(seeds)               # list of (x, y) tuples
-
+    boundary = _repair_geom(poly)
+    pts = list(seeds)
     cells = []
+
     for iteration in range(iterations):
         mp     = MultiPoint([Point(x, y) for x, y in pts])
-        # voronoi_diagram envelope must fully contain the polygon
         envelope = boundary.envelope.buffer(
             max(boundary.envelope.area ** 0.5 * 0.1, 1)
         )
@@ -446,7 +464,6 @@ def _cvt_lloyd(poly, seeds, iterations=60):
         except Exception:
             break
 
-        # Clip each Voronoi region to the forest boundary
         cells = []
         used_pts = []
         for geom in vd.geoms:
@@ -462,10 +479,8 @@ def _cvt_lloyd(poly, seeds, iterations=60):
         if not cells:
             break
 
-        # Move each seed to the centroid of its Voronoi cell
         new_pts = [(c.x, c.y) for c in used_pts]
 
-        # Check convergence (max seed movement < 0.01% of bbox diagonal)
         if pts and new_pts and len(new_pts) == len(pts):
             diag = ((boundary.bounds[2] - boundary.bounds[0]) ** 2 +
                     (boundary.bounds[3] - boundary.bounds[1]) ** 2) ** 0.5
@@ -482,249 +497,27 @@ def _cvt_lloyd(poly, seeds, iterations=60):
     return cells if cells else None
 
 
-def _balance_areas(poly, cells, n, max_passes=8):
+def _gap_free_tile(poly, candidate_cells):
     """
-    Area-balance pass: if any cell deviates > 3% from target area,
-    move the shared boundary between large and small neighbours to equalise.
-    Uses iterative shrink/grow via buffer on the dividing line.
-    After balancing, clips all cells back to the original polygon and
-    fills any coverage gaps so the total area is preserved.
+    Convert candidate_cells into a GAPLESS, NON-OVERLAPPING tiling of poly
+    using strict sequential polygon difference:
+
+      tile[0]   = candidate[0] ∩ poly
+      tile[i]   = candidate[i] ∩ poly  −  union(tile[0..i-1])
+      tile[-1]  = poly − union(tile[0..-2])   ← guarantees full coverage
+
+    This is the ONLY step that produces final cell geometries.
+    No smoothing or further shifting is applied so adjacent cells always
+    share exactly the same edge — zero gaps guaranteed.
     """
-    from shapely.geometry import box as shapely_box
-
-    if not cells or len(cells) < 2:
-        return cells
-
-    target = poly.area / n
-    tolerance = target * 0.03    # 3 % tolerance
-
-    for _ in range(max_passes):
-        areas = [c.area for c in cells]
-        max_dev = max(abs(a - target) for a in areas)
-        if max_dev <= tolerance:
-            break
-
-        # Find the largest and smallest cell
-        big_i = max(range(len(cells)), key=lambda i: cells[i].area)
-        sml_i = min(range(len(cells)), key=lambda i: cells[i].area)
-        if big_i == sml_i:
-            break
-
-        big = cells[big_i]
-        sml = cells[sml_i]
-
-        # Shared boundary between them
-        try:
-            shared = big.intersection(sml)
-        except Exception:
-            break
-        if shared.is_empty or shared.length < 1e-3:
-            break
-
-        # Transfer a thin buffer strip from big → small
-        transfer_area = (big.area - target) * 0.5
-        strip_width   = transfer_area / (shared.length + 1e-10)
-        strip_width   = min(strip_width, (big.area ** 0.5) * 0.1)
-
-        try:
-            strip = big.intersection(sml.buffer(strip_width))
-        except Exception:
-            break
-
-        if strip.is_empty or strip.area < 1e-6:
-            break
-
-        try:
-            cells[big_i] = _repair_geom(big.difference(strip))
-            cells[sml_i] = _repair_geom(sml.union(strip))
-        except Exception:
-            break
-
-    # Final clip to original polygon boundary + gap fill
-    clipped = []
-    covered = None
-    for c in cells:
-        try:
-            c2 = _repair_geom(c.intersection(poly))
-        except Exception:
-            c2 = c
-        if not c2.is_empty and c2.area > 1e-6:
-            clipped.append(c2)
-            covered = c2 if covered is None else covered.union(c2)
-
-    # Fill any uncovered gap (rounding artefacts) into nearest cell
-    if covered is not None:
-        try:
-            gap = _repair_geom(poly.difference(covered))
-            if not gap.is_empty and gap.area > 1e-6:
-                best_i, best_shared = 0, -1.0
-                for i, c in enumerate(clipped):
-                    try:
-                        s = gap.intersection(c).length
-                    except Exception:
-                        s = 0.0
-                    if s > best_shared:
-                        best_shared, best_i = s, i
-                clipped[best_i] = _repair_geom(clipped[best_i].union(gap))
-        except Exception:
-            pass
-
-    return clipped if clipped else cells
-
-
-def _place_seeds(poly, n):
-    """
-    Place n well-distributed seed points inside *poly* using a
-    grid-jitter approach (fast and reliable for any polygon shape).
-    Falls back to random interior points if grid yields too few.
-    """
-    minx, miny, maxx, maxy = poly.bounds
-    dx = maxx - minx
-    dy = maxy - miny
-
-    # Try a dense grid first
-    cols = max(int(np.ceil((n * dx / max(dy, 1e-6)) ** 0.5)) + 2, 3)
-    rows = max(int(np.ceil(n * dy / max(dx, 1e-6) / (cols / n))) + 2, 3)
-    step_x = dx / cols
-    step_y = dy / rows
-
-    rng   = np.random.default_rng(42)
-    seeds = []
-    for r in range(rows):
-        for c in range(cols):
-            x = minx + (c + 0.5) * step_x + rng.uniform(-step_x * 0.3, step_x * 0.3)
-            y = miny + (r + 0.5) * step_y + rng.uniform(-step_y * 0.3, step_y * 0.3)
-            pt = Point(x, y)
-            if poly.contains(pt):
-                seeds.append((x, y))
-
-    # If not enough, sample random interior points
-    attempts = 0
-    while len(seeds) < n and attempts < 50000:
-        x = rng.uniform(minx, maxx)
-        y = rng.uniform(miny, maxy)
-        if poly.contains(Point(x, y)):
-            seeds.append((x, y))
-        attempts += 1
-
-    # Return exactly n seeds (trim or duplicate last if needed)
-    if len(seeds) >= n:
-        # Pick n most spread-out seeds using farthest-point selection
-        chosen = [seeds[0]]
-        remaining = seeds[1:]
-        while len(chosen) < n and remaining:
-            farthest = max(
-                remaining,
-                key=lambda s: min(
-                    (s[0]-c[0])**2 + (s[1]-c[1])**2 for c in chosen
-                )
-            )
-            chosen.append(farthest)
-            remaining.remove(farthest)
-        return chosen
-    else:
-        # Duplicate last seed slightly perturbed
-        while len(seeds) < n:
-            s = seeds[-1]
-            seeds.append((s[0] + 1e-3, s[1] + 1e-3))
-        return seeds[:n]
-
-
-def _subdivide_polygon(poly, n):
-    """
-    Subdivide *poly* into *n* near-equal-area compartments using:
-
-      1. Centroidal Voronoi Tessellation (CVT) via Lloyd's relaxation
-         → spatially compact, blob-shaped compartments (not strips)
-      2. Area-balancing pass
-         → equalises areas across all compartments (target ± 3%)
-      3. Chaikin corner-cutting smoothing
-         → smooth, natural-looking compartment boundaries
-         (smoothed only for the output geometry; topology preserved)
-
-    Works correctly for any n ≥ 2 on any valid polygon shape,
-    including highly concave and irregular forest boundaries.
-    """
-    if n <= 1:
-        return [_repair_geom(poly)]
-
-    poly = _repair_geom(poly)
-    if poly.is_empty or poly.area < 1e-10:
-        return [poly]
-
-    # ── Step 1: Place initial seeds ─────────────────────────────────────────
-    seeds = _place_seeds(poly, n)
-
-    # ── Step 2: CVT Lloyd relaxation ────────────────────────────────────────
-    cells = _cvt_lloyd(poly, seeds, iterations=80)
-
-    # Fallback if CVT fails completely (very thin/degenerate polygon)
-    if not cells or len(cells) < 1:
-        from shapely.geometry import box as shapely_box
-        minx, miny, maxx, maxy = poly.bounds
-        dx = maxx - minx
-        dy = maxy - miny
-        axis = "x" if dx >= dy else "y"
-        pieces = []
-        for k in range(1, n):
-            target_cum = poly.area * k / n
-            lo, hi = (minx, maxx) if axis == "x" else (miny, maxy)
-            mid = (lo + hi) / 2.0
-            for _ in range(60):
-                mid = (lo + hi) / 2.0
-                try:
-                    if axis == "x":
-                        cl = poly.intersection(shapely_box(minx-1, miny-1, mid, maxy+1))
-                    else:
-                        cl = poly.intersection(shapely_box(minx-1, miny-1, maxx+1, mid))
-                    got = cl.area if not cl.is_empty else 0.0
-                except Exception:
-                    break
-                if abs(got - target_cum) / (target_cum + 1e-10) < 0.001:
-                    break
-                if got < target_cum:
-                    lo = mid
-                else:
-                    hi = mid
-            pieces.append(mid)
-        cells = []
-        cuts = [(minx if axis == "x" else miny) - 1] + pieces + \
-               [(maxx if axis == "x" else maxy) + 1]
-        for i in range(n):
-            try:
-                if axis == "x":
-                    s = poly.intersection(shapely_box(cuts[i], miny-1, cuts[i+1], maxy+1))
-                else:
-                    s = poly.intersection(shapely_box(minx-1, cuts[i], maxx+1, cuts[i+1]))
-                if s and not s.is_empty and s.area > 1e-6:
-                    cells.append(_repair_geom(s))
-            except Exception:
-                pass
-        if not cells:
-            return [poly]
-
-    # ── Step 3: Gap-free tiling ──────────────────────────────────────────────
-    # After CVT + area balancing, floating-point clipping leaves micro-gaps
-    # between cells and between cells and the boundary.
-    # Fix: rebuild from scratch using a coverage-difference approach:
-    #   cell[0] = cells[0] ∩ poly
-    #   cell[1] = cells[1] ∩ poly  minus  cell[0]
-    #   cell[2] = cells[2] ∩ poly  minus  cell[0] ∪ cell[1]
-    #   ...
-    #   cell[n-1] = poly  minus  everything already claimed
-    # This guarantees: (a) every cell ⊆ poly, (b) no overlaps, (c) no gaps.
-
     tiled   = []
-    covered = None   # union of all cells placed so far
+    covered = None
 
-    for i, cell in enumerate(cells):
-        if i == len(cells) - 1:
-            # Last cell = whatever of poly hasn't been claimed yet
+    for i, cell in enumerate(candidate_cells):
+        if i == len(candidate_cells) - 1:
+            # Last cell = everything not yet claimed → guaranteed full coverage
             try:
-                if covered is not None:
-                    piece = _repair_geom(poly.difference(covered))
-                else:
-                    piece = poly
+                piece = _repair_geom(poly.difference(covered)) if covered is not None else poly
             except Exception:
                 piece = poly
         else:
@@ -733,7 +526,10 @@ def _subdivide_polygon(poly, n):
                 if covered is not None:
                     piece = _repair_geom(piece.difference(covered))
             except Exception:
-                piece = _repair_geom(cell.intersection(poly))
+                try:
+                    piece = _repair_geom(cell.intersection(poly))
+                except Exception:
+                    continue
 
         if piece.is_empty or piece.area < 1e-8:
             continue
@@ -741,10 +537,105 @@ def _subdivide_polygon(poly, n):
         tiled.append(piece)
         covered = piece if covered is None else _repair_geom(covered.union(piece))
 
-    if not tiled:
+    return tiled if tiled else [poly]
+
+
+def _strip_bisect_fallback(poly, n):
+    """
+    Fallback when CVT fails: axis-aligned area-balanced bisection.
+    Produces n cells that together cover poly with no gaps/overlaps
+    (cells are built via _gap_free_tile so the same guarantee holds).
+    """
+    from shapely.geometry import box as shapely_box
+
+    minx, miny, maxx, maxy = poly.bounds
+    dx = maxx - minx
+    dy = maxy - miny
+    axis = "x" if dx >= dy else "y"
+
+    cuts = []
+    for k in range(1, n):
+        target_cum = poly.area * k / n
+        lo, hi = (minx, maxx) if axis == "x" else (miny, maxy)
+        for _ in range(60):
+            mid = (lo + hi) / 2.0
+            try:
+                if axis == "x":
+                    cl = poly.intersection(shapely_box(minx-1, miny-1, mid, maxy+1))
+                else:
+                    cl = poly.intersection(shapely_box(minx-1, miny-1, maxx+1, mid))
+                got = cl.area if not cl.is_empty else 0.0
+            except Exception:
+                break
+            if abs(got - target_cum) / (target_cum + 1e-10) < 0.001:
+                break
+            if got < target_cum:
+                lo = mid
+            else:
+                hi = mid
+        cuts.append(mid)
+
+    lo_vals = [(minx if axis == "x" else miny) - 1] + cuts + \
+              [(maxx if axis == "x" else maxy) + 1]
+
+    candidate_cells = []
+    for i in range(n):
+        try:
+            if axis == "x":
+                s = poly.intersection(
+                    shapely_box(lo_vals[i], miny-1, lo_vals[i+1], maxy+1))
+            else:
+                s = poly.intersection(
+                    shapely_box(minx-1, lo_vals[i], maxx+1, lo_vals[i+1]))
+            if s and not s.is_empty and s.area > 1e-6:
+                candidate_cells.append(_repair_geom(s))
+        except Exception:
+            pass
+
+    return candidate_cells if candidate_cells else [poly]
+
+
+def _subdivide_polygon(poly, n):
+    """
+    Subdivide *poly* into *n* near-equal-area compartments.
+
+    Pipeline:
+      1. Place well-distributed seed points inside poly
+      2. CVT Lloyd relaxation → spatially compact candidate cells
+      3. Gap-free sequential tiling → guaranteed no gaps / no overlaps
+      4. Sliver merge → clean up fragments smaller than 5% of target area
+
+    NO smoothing is applied. Chaikin smoothing (present in an earlier version)
+    shifted internal edge vertices so adjacent cells no longer shared the same
+    edge, producing visible gaps between compartments and along the boundary.
+    The sequential difference tiling in step 3 is the sole producer of final
+    geometries, ensuring perfect coverage of poly with zero gaps.
+    """
+    if n <= 1:
+        return [_repair_geom(poly)]
+
+    poly = _repair_geom(poly)
+    if poly.is_empty or poly.area < 1e-10:
         return [poly]
 
-    # ── Step 4: Merge slivers (< 5 % of target) into longest-shared neighbour
+    # ── Step 1: Place initial seeds ──────────────────────────────────────
+    seeds = _place_seeds(poly, n)
+
+    # ── Step 2: CVT Lloyd relaxation → candidate cells ───────────────────
+    candidate_cells = _cvt_lloyd(poly, seeds, iterations=80)
+
+    # Fallback to strip bisection if CVT fails or returns too few cells
+    if not candidate_cells or len(candidate_cells) < max(2, n // 2):
+        candidate_cells = _strip_bisect_fallback(poly, n)
+
+    # ── Step 3: Gap-free sequential tiling ───────────────────────────────
+    # This is the ONLY step that produces the final cell geometries.
+    # Each cell = (candidate ∩ poly) − everything already claimed.
+    # The last cell = poly − everything already claimed.
+    # Result: no overlaps, no gaps, full coverage guaranteed.
+    tiled = _gap_free_tile(poly, candidate_cells)
+
+    # ── Step 4: Merge slivers (< 5% of target area) ──────────────────────
     target_area = poly.area / n
     min_area    = target_area * 0.05
 
@@ -773,107 +664,7 @@ def _subdivide_polygon(poly, n):
             tiled.append(sliver)
         changed = True
 
-    # ── Step 5: Smooth internal edges only, pin boundary vertices exactly ───
-    # boundary_line = the original polygon outline.
-    # Any edge of a compartment that lies ON boundary_line is kept exactly.
-    # Only the internal cut edges (between compartments) get Chaikin-smoothed.
-    # After smoothing we do NOT re-clip (which would create gaps).
-    # Instead we assign any unclaimed residual to the nearest neighbour so the
-    # total coverage = poly exactly.
-
-    boundary_line = poly.boundary
-    smoothed = []
-
-    for cell in tiled:
-        try:
-            if cell.geom_type != "Polygon" or len(cell.exterior.coords) < 4:
-                smoothed.append(cell)
-                continue
-
-            ext_coords = list(cell.exterior.coords)
-            n_pts = len(ext_coords) - 1  # closed ring: last == first
-
-            # Classify each edge as boundary (False) or internal (True)
-            is_internal = []
-            for i in range(n_pts):
-                seg = LineString([ext_coords[i], ext_coords[(i + 1) % n_pts]])
-                try:
-                    shared_len = seg.intersection(boundary_line).length
-                    # internal if less than 5% of the edge overlaps the boundary
-                    is_internal.append(shared_len < seg.length * 0.05)
-                except Exception:
-                    is_internal.append(False)
-
-            if not any(is_internal):
-                # All edges on the boundary — no smoothing possible
-                smoothed.append(cell)
-                continue
-
-            # Build new coordinate ring:
-            # - boundary edges: emit the start vertex unchanged
-            # - internal edges: emit two Chaikin subdivision vertices
-            new_coords = []
-            for i in range(n_pts):
-                p0 = ext_coords[i]
-                p1 = ext_coords[(i + 1) % n_pts]
-                if is_internal[i]:
-                    q = (0.75*p0[0] + 0.25*p1[0], 0.75*p0[1] + 0.25*p1[1])
-                    r = (0.25*p0[0] + 0.75*p1[0], 0.25*p0[1] + 0.75*p1[1])
-                    new_coords.append(q)
-                    new_coords.append(r)
-                else:
-                    new_coords.append(p0)   # pin exactly on boundary
-
-            if len(new_coords) < 3:
-                smoothed.append(cell)
-                continue
-
-            new_coords.append(new_coords[0])  # close ring
-            s_poly = _repair_geom(Polygon(new_coords))
-
-            if s_poly.is_empty or s_poly.area < cell.area * 0.3:
-                smoothed.append(cell)
-            else:
-                smoothed.append(s_poly)
-
-        except Exception:
-            smoothed.append(cell)
-
-    # ── Step 6: Final gap-fill ───────────────────────────────────────────────
-    # Smoothing internal edges can push vertices very slightly outside
-    # the original polygon OR leave hair-thin gaps between cells.
-    # Re-clip each cell to poly, then fill any residual gap into the
-    # neighbour with the longest shared boundary.
-
-    final = []
-    covered2 = None
-    for cell in smoothed:
-        try:
-            c = _repair_geom(cell.intersection(poly))
-        except Exception:
-            c = cell
-        if not c.is_empty and c.area > 1e-8:
-            final.append(c)
-            covered2 = c if covered2 is None else _repair_geom(covered2.union(c))
-
-    # Fill gap
-    if covered2 is not None:
-        try:
-            gap = _repair_geom(poly.difference(covered2))
-            if not gap.is_empty and gap.area > 1e-8 and final:
-                best_i, best_shared = 0, -1.0
-                for i, c in enumerate(final):
-                    try:
-                        s = gap.intersection(c).length
-                    except Exception:
-                        s = 0.0
-                    if s > best_shared:
-                        best_shared, best_i = s, i
-                final[best_i] = _repair_geom(unary_union([final[best_i], gap]))
-        except Exception:
-            pass
-
-    return final if final else [poly]
+    return tiled if tiled else [poly]
 
 
 def _save_compartments(pieces, forest_name, crs, save_dir):
@@ -958,7 +749,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
     with zipfile.ZipFile(zip_path, "r") as z:
         z.extractall(folder)
 
-    # Collect all .shp paths
     shp_candidates = []
     for root, _, files in os.walk(folder):
         for f in files:
@@ -968,7 +758,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
     if not shp_candidates:
         raise ValueError("No shapefile (.shp) found inside the ZIP archive.")
 
-    # Pick target shp
     shp_path = shp_candidates[0]
     if target_shp:
         target_name = os.path.basename(target_shp)
@@ -986,7 +775,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
     else:
         gdf = gdf.to_crs(crs)
 
-    # Try to find a name column (Forest / Name / Label / first text column)
     name_col = None
     for candidate in ["Forest", "forest", "Name", "name", "NAME",
                        "Label", "label", "LABEL", "ID", "id"]:
@@ -1009,7 +797,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
 
         feat_name = str(row[name_col]) if name_col else f"Feature_{i+1}"
 
-        # Flatten to individual Polygon objects
         if geom.geom_type == "Polygon":
             polys = [_repair_geom(geom)]
         elif geom.geom_type == "MultiPolygon":
@@ -1018,7 +805,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
             polys = [_repair_geom(g) for g in geom.geoms
                      if g.geom_type == "Polygon"] if hasattr(geom, "geoms") else []
 
-        # For MultiPolygon features merge into one polygon for subdivision
         if len(polys) > 1:
             merged = unary_union(polys)
             polys = [_repair_geom(merged)]
@@ -1043,13 +829,7 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
       • ZIP file             (is_zip=True)  — read polygon directly from shapefile
 
     e_mode="A"  →  Single-forest / single-polygon
-        ZIP:   subdivides each selected polygon feature independently;
-               if multiple features exist, each gets its own output folder.
-        CSV:   all rows → one boundary polygon → subdivided.
-
     e_mode="B"  →  Multi-forest (CSV only)
-        Each Forest group subdivided independently into its own folder.
-        (For ZIP input e_mode is forced to "A" — each feature is already one polygon.)
     """
     if n_compartments < 2:
         raise ValueError("Number of compartments must be at least 2.")
@@ -1064,7 +844,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
         features, _ = _load_polygons_from_zip(file_or_df, target_shp, crs)
 
         if len(features) == 1:
-            # Single polygon — save directly in run output folder
             feat_name, poly = features[0]
             pieces = _subdivide_polygon(poly, n_compartments)
             pg, lg, ptg = _save_compartments(pieces, feat_name, crs, out)
@@ -1072,7 +851,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
             all_line_gdfs.append(lg)
             all_pts_gdfs.append(ptg)
         else:
-            # Multiple features — one subfolder per feature
             for feat_name, poly in features:
                 pieces     = _subdivide_polygon(poly, n_compartments)
                 feat_dir   = os.path.join(out, _safe_dirname(feat_name))
@@ -1128,19 +906,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
 
 
 # ================= GROUP F — DEM SLOPE ANALYSIS =================
-#
-# Workflow:
-#   1. Accept forest boundary (CSV/Excel XY points OR ZIP/SHP polygon)
-#   2. Accept raw DEM GeoTIFF
-#   3. Compute slope in degrees from DEM using numpy gradient
-#   4. Clip slope raster to forest boundary (using rasterio.mask)
-#   5. Classify into 3 classes: <19°, 19-31°, >31°
-#   6. Calculate area per class (pixel count × pixel area in ha)
-#   7. Export: clipped_slope.tif, slope_classes.tif, slope_summary.xlsx,
-#              slope_polygon.shp (vectorised class polygons), preview PNG
-#
-# Required pip packages (add to requirements.txt):
-#   rasterio, scipy
 
 def _boundary_polygon_from_df(df, mapping):
     """Build a single WGS84-like polygon from XY boundary DataFrame."""
@@ -1359,7 +1124,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     Preview layout:
       Row 1 (top): [Slope Raster] [Classified Map + boundary outline]
       Row 2 (bottom): Full-width area summary table
-    Table is never on top of the maps.
     """
     import matplotlib.patches as mpatches
     import matplotlib.gridspec as gridspec
@@ -1367,7 +1131,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     valid = (class_arr > 0)
     has_label = f_mode in ("B", "E")
 
-    # Taller figure when compartment table has many rows
     n_rows = len(summary_rows)
     table_height = max(0.22, min(0.45, 0.06 + n_rows * 0.032))
     fig_h = 7 + (2 if n_rows > 6 else 0)
@@ -1379,18 +1142,18 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
         hspace=0.32, wspace=0.06,
         left=0.02, right=0.98, top=0.94, bottom=0.03
     )
-    ax1 = fig.add_subplot(gs[0, 0])   # slope raster
-    ax2 = fig.add_subplot(gs[0, 1])   # classified map
-    ax3 = fig.add_subplot(gs[1, :])   # full-width table
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax3 = fig.add_subplot(gs[1, :])
 
-    # ── Panel 1: raw slope raster ────────────────────────────────────────
+    # Panel 1: raw slope raster
     disp = np.where(valid, clipped_slope, np.nan)
     im   = ax1.imshow(disp, cmap="terrain", interpolation="bilinear")
     fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04, label="Degrees")
     ax1.set_title("Slope Raster (degrees)", fontsize=10, fontweight="bold", pad=6)
     ax1.axis("off")
 
-    # ── Panel 2: classified map + boundary ───────────────────────────────
+    # Panel 2: classified map + boundary
     colors_map = {0:(1,1,1,0), 1:(0.18,0.8,0.44,1),
                   2:(0.95,0.61,0.07,1), 3:(0.91,0.29,0.24,1)}
     rgb = np.zeros((*class_arr.shape, 4), dtype=np.float32)
@@ -1400,11 +1163,10 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     ax2.set_title("Slope Classification + Boundary", fontsize=10, fontweight="bold", pad=6)
     ax2.axis("off")
 
-    # Draw original boundary outline on classified panel
     if boundary_gdf is not None and not boundary_gdf.empty:
         try:
             h_px, w_px = class_arr.shape
-            bounds = boundary_gdf.total_bounds   # [minx, miny, maxx, maxy]
+            bounds = boundary_gdf.total_bounds
             bw = bounds[2] - bounds[0]
             bh = bounds[3] - bounds[1]
             def to_px(x, y):
@@ -1433,14 +1195,13 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     ax2.legend(handles=legend_items, loc="lower left",
                fontsize=7, framealpha=0.92, title="Slope Class", title_fontsize=7)
 
-    # ── Panel 3: full-width area summary table ────────────────────────────
+    # Panel 3: summary table
     ax3.axis("off")
     ax3.set_title("Slope Area Summary Table", fontsize=10, fontweight="bold", pad=4)
 
     if summary_rows:
         total_ha = sum(r["Area_ha"] for r in summary_rows
                        if not has_label or r.get("Class") == 1 or True)
-        # For compartment modes show per-compartment totals
         if has_label:
             col_labels = ["Compartment", "Slope Range", "Description",
                           "Pixel Count", "Area (ha)", "% of Compartment"]
@@ -1458,7 +1219,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
                  f"{r['Pixel_Count']:,}", f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
                 for r in summary_rows
             ]
-            # Add total row
             table_data.append(["TOTAL", "", "", f"{total_ha:.2f}", "100%"])
 
         tbl = ax3.table(
@@ -1484,7 +1244,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
                     cid = summary_rows[ri].get("Class", 0)
                     cell.set_facecolor(row_colors.get(cid, "#f8f9fa"))
                 else:
-                    # Total row
                     cell.set_facecolor("#ddeeff")
                     cell.set_text_props(fontweight="bold")
 
@@ -1511,7 +1270,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
     if pts_gdf is not None and not pts_gdf.empty:
         pts_gdf.plot(ax=ax, color=ptc, markersize=6, zorder=5)
 
-    # ── Sample-plot SN labels (Group C) ──────────────────────────────────
+    # Sample-plot SN labels (Group C)
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
     if label_col and lbl_src is not None and not lbl_src.empty and label_col in lbl_src.columns:
         for _, row in lbl_src.iterrows():
@@ -1531,7 +1290,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
                 zorder=6,
             )
 
-    # ── Compartment ID labels (Group E) ──────────────────────────────────
+    # Compartment ID labels (Group E)
     if poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns:
         for _, row in poly_gdf.iterrows():
             cx = row.geometry.centroid.x
@@ -1561,7 +1320,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
 def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
     """
     Convert a GeoDataFrame (already in WGS84) to KML Placemark XML strings.
-    Supports Polygon, LineString, MultiPolygon, and Point geometry types.
     """
     lines = []
     for i, row in gdf.iterrows():
@@ -1569,7 +1327,6 @@ def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
         if geom is None or geom.is_empty:
             continue
 
-        # Build a label from attributes
         if name_col and name_col in row.index and row[name_col]:
             label = str(row[name_col])
         elif "Comp_ID" in row.index and row["Comp_ID"]:
@@ -1582,7 +1339,6 @@ def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
         else:
             label = f"Feature {i+1}"
 
-        # Build description from all non-geometry attributes
         desc_parts = []
         for col in row.index:
             if col == "geometry": continue
@@ -1632,7 +1388,6 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     """
     Build a KMZ (zipped KML) from the three output GeoDataFrames.
     Reprojects everything to WGS84 (EPSG:4326) first.
-    Returns the URL path to serve the KMZ.
     """
     import zipfile as zf
 
@@ -1641,7 +1396,7 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
             return None
         try:
             if gdf.crs is None:
-                return None   # can't reproject without a CRS
+                return None
             return gdf.to_crs("EPSG:4326")
         except Exception:
             return None
@@ -1650,15 +1405,13 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     line_w = to_wgs84(line_gdf)
     pts_w  = to_wgs84(pts_gdf)
 
-    # Compute centroid for GE camera position
     ref_gdf = poly_w if poly_w is not None and not poly_w.empty else line_w
     if ref_gdf is not None and not ref_gdf.empty:
         union   = ref_gdf.unary_union
         cx, cy  = union.centroid.x, union.centroid.y
-        # Approximate altitude to fit the bounding box
         minx, miny, maxx, maxy = union.bounds
         span_deg = max(maxx - minx, maxy - miny)
-        alt_m    = max(500, int(span_deg * 111_000 * 2))   # rough scale
+        alt_m    = max(500, int(span_deg * 111_000 * 2))
     else:
         cx, cy, alt_m = 0, 0, 10000
 
@@ -1718,7 +1471,6 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     with zf.ZipFile(kmz_path, "w", zf.ZIP_DEFLATED) as kmz:
         kmz.writestr("doc.kml", kml.encode("utf-8"))
 
-    # Return centroid info alongside URL so the frontend can build the GE link
     return {
         "url":   f"/outputs/{run_id}/output.kmz",
         "lat":   round(cy, 6),
@@ -1764,7 +1516,6 @@ def upload():
 
         elif module == "C":
             poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
-            # Pass SN labels for the preview
             label_col     = "SN"
             label_pts_gdf = pts
 
@@ -1845,12 +1596,11 @@ def upload():
                 pc="yellow", lc="black", ptc="red",
                 label_col=label_col, label_pts_gdf=label_pts_gdf)
 
-        # Generate KMZ for Google Earth preview
         kmz_url = None
         try:
             kmz_url = generate_kmz(poly, line, pts, out, run_id)
         except Exception:
-            pass  # KMZ is optional — don't fail the whole request
+            pass
 
         return jsonify({
             "run_id":   run_id,
