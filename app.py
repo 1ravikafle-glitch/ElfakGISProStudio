@@ -643,15 +643,16 @@ def _rebuild_gap_free(poly, pieces):
     Rebuild compartments using cumulative difference to guarantee
     ZERO gaps and the union of all pieces = poly exactly.
 
-    Pieces are sorted by centroid position for deterministic order.
-    The last piece receives all remaining area.
+    The last piece always receives poly.difference(all_previous) so its
+    outer edges are EXACTLY the original polygon boundary — no rounding.
+    Pieces are sorted by centroid for deterministic order.
     """
     try:
         pieces_sorted = sorted(pieces,
                                key=lambda p: (round(p.centroid.x, -1),
                                               round(p.centroid.y, -1)))
     except Exception:
-        pieces_sorted = pieces
+        pieces_sorted = list(pieces)
 
     final     = []
     remaining = _repair_geom(poly)
@@ -660,25 +661,25 @@ def _rebuild_gap_free(poly, pieces):
         if remaining is None or remaining.is_empty:
             break
         if i == len(pieces_sorted) - 1:
-            # Last piece: take all remaining area — no gap possible
-            last = _as_polygon(remaining)
+            # Last piece = exact remainder of original polygon — perfect boundary
+            last = _as_polygon(_repair_geom(remaining))
             if last and last.area > 1e-8:
                 final.append(last)
         else:
             try:
-                c = _repair_geom(piece.intersection(remaining))
+                c = _as_polygon(_repair_geom(piece.intersection(remaining)))
             except Exception:
+                c = None
+            if c is None or c.area < 1e-8:
                 continue
-            p = _as_polygon(c)
-            if p is None or p.area < 1e-8:
-                continue
-            final.append(p)
+            final.append(c)
             try:
-                remaining = _repair_geom(remaining.difference(p))
+                remaining = _repair_geom(remaining.difference(c))
+                # remaining might become MultiPolygon — keep it as-is for now
             except Exception:
-                remaining = remaining
+                pass
 
-    return final if final else [poly]
+    return final if final else [_repair_geom(poly)]
 
 
 def _subdivide_polygon(poly, n):
@@ -760,7 +761,23 @@ def _subdivide_polygon(poly, n):
     # 4 — Area balance
     pieces = _area_balance(poly, cells, n)
 
-    # 5 — Gap-free rebuild
+    # 5 — Gap-free rebuild with boundary snapping
+    # snap() aligns piece edges within tolerance to the original polygon boundary,
+    # ensuring compartment edges that follow the forest outline are exact matches.
+    snap_tol = max(poly.area ** 0.5 * 0.001, 0.01)   # 0.1% of polygon scale
+    snapped  = []
+    for p in pieces:
+        try:
+            s = _repair_geom(p.intersection(poly))   # clip to boundary first
+            s = _as_polygon(s) or p
+            from shapely.ops import snap as shp_snap
+            s = _repair_geom(shp_snap(s, poly, snap_tol))
+            s = _as_polygon(s) or p
+        except Exception:
+            s = p
+        snapped.append(s)
+    pieces = snapped
+
     pieces = _rebuild_gap_free(poly, pieces)
 
     # 6 — Final polygon validation: every piece MUST be a Polygon
