@@ -714,6 +714,7 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
 
     for i, p in enumerate(pieces, start=1):
         p = _repair_geom(p)
+        p = p.buffer(0.001).buffer(-0.001)
         comp_id   = f"Comp_{i:03d}"
         area_ha   = round(p.area / 10000, 4)
         perim_m   = round(p.length, 4)
