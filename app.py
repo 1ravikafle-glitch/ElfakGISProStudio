@@ -506,10 +506,18 @@ def _gap_free_tile(poly, candidate_cells):
       tile[i]   = candidate[i] ∩ poly  −  union(tile[0..i-1])
       tile[-1]  = poly − union(tile[0..-2])   ← guarantees full coverage
 
+    Cells are sorted by area descending so the largest (most central) cells
+    are claimed first and the final residual cell is as compact as possible.
     This is the ONLY step that produces final cell geometries.
     No smoothing or further shifting is applied so adjacent cells always
     share exactly the same edge — zero gaps guaranteed.
     """
+    # Sort by area descending: largest cells claimed first keeps residual compact
+    try:
+        candidate_cells = sorted(candidate_cells, key=lambda c: c.area, reverse=True)
+    except Exception:
+        pass
+
     tiled   = []
     covered = None
 
@@ -1258,14 +1266,33 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
     Render a preview PNG.
     label_col       : column name in label_pts_gdf (or pts_gdf) to annotate points with.
     label_pts_gdf   : separate GDF whose points get labelled (used for Group C SN labels).
+
+    Group E (compartments) special rendering:
+      - All compartment polygons drawn with black edges (internal + outer boundaries)
+      - Outer boundary derived from union of all compartments drawn in yellow on top
+      This ensures the yellow outline sits exactly on the compartment edges with no gaps.
     """
     fig, ax = plt.subplots(figsize=(8, 8), dpi=180)
 
-    if poly_gdf is not None and not poly_gdf.empty:
-        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc, linewidth=1.2)
+    is_group_e = (poly_gdf is not None and not poly_gdf.empty
+                  and "Comp_ID" in poly_gdf.columns)
 
-    if line_gdf is not None and not line_gdf.empty:
-        line_gdf.plot(ax=ax, color=lc, linewidth=1.5)
+    if is_group_e:
+        # Draw all compartment edges in black (covers internal + outer edges)
+        poly_gdf.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
+        # Derive outer boundary from union → draw in yellow on top
+        try:
+            outer = unary_union(poly_gdf.geometry)
+            outer_gdf = gpd.GeoDataFrame([{"geometry": outer}], crs=poly_gdf.crs)
+            outer_gdf.plot(ax=ax, facecolor="none", edgecolor="yellow", linewidth=2.0, zorder=4)
+        except Exception:
+            pass
+    else:
+        if poly_gdf is not None and not poly_gdf.empty:
+            poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc, linewidth=1.2)
+
+        if line_gdf is not None and not line_gdf.empty:
+            line_gdf.plot(ax=ax, color=lc, linewidth=1.5)
 
     if pts_gdf is not None and not pts_gdf.empty:
         pts_gdf.plot(ax=ax, color=ptc, markersize=6, zorder=5)
