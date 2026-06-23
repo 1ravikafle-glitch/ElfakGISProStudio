@@ -461,7 +461,56 @@ def _gap_free_tile(poly, candidate_cells):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ★★★ POLYGON SUBDIVISION MAIN FUNCTION ★★★
 # ═══════════════════════════════════════════════════════════════════════════════
+def _balance_area_cells(cells, target_area, tolerance_ha=0.1):
 
+    tolerance_m2 = tolerance_ha * 10000
+
+    max_iter = 200
+
+    for _ in range(max_iter):
+
+        areas = [c.area for c in cells]
+
+        largest_idx = np.argmax(areas)
+        smallest_idx = np.argmin(areas)
+
+        diff = areas[largest_idx] - areas[smallest_idx]
+
+        if diff <= tolerance_m2 * 2:
+            break
+
+        large = cells[largest_idx]
+        small = cells[smallest_idx]
+
+        shared = large.boundary.intersection(small.boundary)
+
+        if shared.is_empty:
+            continue
+
+        transfer_area = min(diff / 2, tolerance_m2)
+
+        try:
+
+            move_dist = np.sqrt(transfer_area)
+
+            expanded = small.buffer(move_dist)
+
+            gain = expanded.intersection(large)
+
+            if gain.area > 0:
+
+                cells[smallest_idx] = _repair_geom(
+                    unary_union([small, gain])
+                )
+
+                cells[largest_idx] = _repair_geom(
+                    large.difference(gain)
+                )
+
+        except:
+            pass
+
+    return cells
 def _subdivide_polygon(poly, n):
     """
     Subdivide a polygon into n near-equal-area compartments with ZERO visible gaps.
@@ -482,18 +531,28 @@ def _subdivide_polygon(poly, n):
         return [poly]
 
     # Step 1: Place initial seeds
-    seeds = _place_seeds(poly, n)
+    seeds = _place_seeds(poly, n * 3)
+    seeds = seeds[:n]
 
     # Step 2: CVT Lloyd relaxation
-    candidate_cells = _cvt_lloyd(poly, seeds, iterations=80)
+    candidate_cells = _cvt_lloyd(poly, seeds, iterations=250)
 
     # Fallback to strip bisection if CVT fails
     if not candidate_cells or len(candidate_cells) < max(2, n // 2):
         candidate_cells = _strip_bisect_fallback(poly, n)
 
-    # Step 3: Gap-free tiling with coverage validation (includes the fix!)
+    # Step 3: Gap-free tiling with coverage validation
     tiled = _gap_free_tile(poly, candidate_cells)
-
+    
+    # Area balancing
+    target_area = poly.area / n
+    
+    tiled = _balance_area_cells(
+        tiled,
+        target_area,
+        tolerance_ha=0.1
+    )
+    
     # Step 4: Merge slivers
     target_area = poly.area / n
     min_area    = target_area * 0.05
