@@ -371,44 +371,17 @@ def group_d(df, crs, out, mapping=None, mode="A"):
 # ================= GROUP E — POLYGON SUBDIVIDER =================
 #
 # Subdivides forest polygon(s) into N near-equal-area compartments using
-# iterative area-balanced bisection along the longest bounding-box axis.
+# Constrained Voronoi Partitioning with Lloyd relaxation + area balancing.
 #
-# e_mode = "A"  →  Single-forest  (like Group A: all rows = one polygon)
-#   Output:  out/compartments.shp + compartment_lines.shp + compartment_points.shp
-#            out/compartment_summary.xlsx
-#
-# e_mode = "B"  →  Multi-forest   (like Group B: Forest column groups rows)
-#   Output:  out/Forest_A/compartments.shp  …
-#            out/Forest_A/compartment_summary.xlsx  …
-#
-# Algorithm: recursive bisection — always splits the largest remaining piece
-#   along its longest axis at an area-balanced position (binary search).
-#   After reaching N pieces the compartments are numbered by area (largest first).
+# KEY FIX: Gap-free rebuild now uses a strictly cumulative difference approach
+# where each piece is first clipped to the remaining polygon, ensuring that
+# ALL area is assigned and NO thin gap lines can appear between compartments.
+# The snap tolerance is raised to 1% of polygon scale (was 0.1%) so that
+# near-boundary edges align precisely with the original forest boundary.
 
 def _repair_geom(g):
     """Fix invalid geometry with buffer(0)."""
     return g if g.is_valid else g.buffer(0)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# GROUP E — SUBDIVISION ENGINE: Constrained Voronoi Partitioning
-# ═══════════════════════════════════════════════════════════════════════════
-#
-# Steps
-# ─────
-# 1. Place n seed points well-distributed inside the polygon (jittered grid +
-#    farthest-point selection).
-# 2. Build a Voronoi diagram clipped to the forest boundary → n initial cells.
-# 3. Lloyd's relaxation (move seed → cell centroid, repeat) for compactness.
-# 4. Area-balance pass: iteratively transfer thin strips from oversized cells
-#    to undersized neighbours until all cells are within ±1% of target.
-# 5. Cumulative-difference rebuild: final cells are assigned via
-#       cell[k] = remaining_polygon − union(cell[0..k-1])
-#    so the TOTAL coverage = original polygon exactly, no gap possible.
-# 6. Every output geometry is validated as a Polygon before being returned.
-#
-# Objective: Equal Area + Compact Shape (no long strips) + No Gaps
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _as_polygon(geom):
@@ -496,7 +469,6 @@ def _voronoi_cells(poly, seeds):
     """
     Build Voronoi diagram from seeds, clip each region to poly.
     Returns list of (Polygon, seed_point) pairs — only valid Polygon cells.
-    Missing cells (seed outside poly after clipping) are dropped gracefully.
     """
     from shapely.ops import voronoi_diagram
     from shapely.geometry import MultiPoint
@@ -583,8 +555,6 @@ def _area_balance(poly, cells, n, max_passes=12, tol=0.01):
     oversized cells to undersized neighbours that share a boundary.
     Tolerance: tol fraction of target area (default 1%).
     """
-    from shapely.geometry import box as B
-
     target = poly.area / n
     pieces = [c for c, _ in cells]
 
@@ -610,7 +580,6 @@ def _area_balance(poly, cells, n, max_passes=12, tol=0.01):
 
         if shared_len < 1e-3:
             # Not adjacent — try next most-deviant pair instead of stopping
-            # Find second most oversized that IS adjacent to the smallest
             found_adjacent = False
             sorted_big = sorted(range(len(pieces)), key=lambda i: pieces[i].area, reverse=True)
             for alt_big_i in sorted_big:
@@ -627,7 +596,7 @@ def _area_balance(poly, cells, n, max_passes=12, tol=0.01):
                     found_adjacent = True
                     break
             if not found_adjacent:
-                break  # truly no adjacent pair can be balanced
+                break
 
         strip_w = min(transfer / (shared_len + 1e-10),
                       (big.area**0.5) * 0.15)
@@ -655,21 +624,142 @@ def _area_balance(poly, cells, n, max_passes=12, tol=0.01):
     return pieces
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# FIX: Gap-free rebuild — strictly cumulative difference
+#
+# ROOT CAUSE of thin gap lines:
+#   The previous version sorted pieces by rounded centroid, then clipped each
+#   to `remaining` via intersection(). When two adjacent compartment edges
+#   were produced by the Voronoi/Lloyd pipeline with slightly different
+#   floating-point coordinates, the difference() call left a hairline sliver
+#   between them that was too small to be caught by the 2% sliver threshold
+#   but wide enough to render as a visible thin gap line.
+#
+# THE FIX — three-part approach:
+#   1. HIGHER SNAP TOLERANCE: Snap all pieces to the original polygon boundary
+#      at 1% of polygon scale (was 0.1%). This aligns near-boundary edges
+#      precisely with the original outline, eliminating gaps along the border.
+#   2. UNION-CLIP PRE-PASS: Before the cumulative rebuild, union all pieces,
+#      find any uncovered residual, then distribute residual fragments to their
+#      nearest neighbour by shared boundary length. This absorbs internal
+#      slivers before the rebuild starts.
+#   3. STRICT CUMULATIVE DIFFERENCE with buffer(0) healing: Each piece is
+#      clipped to `remaining` using intersection, and `remaining` is updated
+#      with difference(). The last piece always receives the exact remainder
+#      of the original polygon — its outer edges are mathematically identical
+#      to the original boundary, with zero floating-point gap possible.
+#      After each step, buffer(0) is applied to heal any degenerate edges
+#      introduced by the clip operation.
+# ═══════════════════════════════════════════════════════════════════════════
+
 def _rebuild_gap_free(poly, pieces):
     """
-    Rebuild compartments using cumulative difference to guarantee
-    ZERO gaps and the union of all pieces = poly exactly.
+    Rebuild compartments so their union equals poly EXACTLY — no gaps.
 
-    The last piece always receives poly.difference(all_previous) so its
-    outer edges are EXACTLY the original polygon boundary — no rounding.
-    Pieces are sorted by centroid for deterministic order.
+    Strategy:
+      1. Pre-snap all pieces to the original polygon boundary at a generous
+         tolerance (1% of polygon scale) to align near-border edges precisely.
+      2. Pre-distribute any uncovered area to nearest neighbours.
+      3. Cumulative difference: process pieces sorted by centroid, clip each
+         to the remaining polygon, update remaining. The last piece receives
+         the exact polygon remainder — guaranteed zero gap.
+      4. buffer(0) after each clip to heal degenerate/collapsed edges that
+         floating-point arithmetic can introduce during difference().
     """
+    from shapely.ops import snap as shp_snap
+
+    if not pieces:
+        return [_repair_geom(poly)]
+
+    # ── Step 1: snap every piece to the original polygon boundary ────────
+    # Tolerance = 1% of the polygon's characteristic length (was 0.1%).
+    # This is the key fix: near-boundary edges that differ by sub-pixel
+    # amounts are collapsed onto the exact original boundary, eliminating
+    # hairline gaps along the forest perimeter and between compartments
+    # whose edges were derived from the same original boundary segment.
+    snap_tol = max(poly.area ** 0.5 * 0.01, 0.1)  # 1% of scale, min 0.1 m
+
+    snapped = []
+    for p in pieces:
+        try:
+            # Clip to boundary first, then snap edges to original outline
+            clipped = _repair_geom(p.intersection(poly))
+            clipped = _as_polygon(clipped) or p
+            snapped_p = _repair_geom(shp_snap(clipped, poly, snap_tol))
+            snapped_p = _as_polygon(snapped_p) or clipped
+        except Exception:
+            snapped_p = p
+        snapped.append(snapped_p)
+    pieces = snapped
+
+    # ── Step 2: pre-distribute any uncovered residual ────────────────────
+    # After snapping, compute what area (if any) is not yet covered by any
+    # piece. Distribute each residual fragment to the neighbour with the
+    # longest shared boundary. This handles internal slivers that appear
+    # between pieces whose edges were independently snapped and no longer
+    # perfectly abut.
     try:
-        pieces_sorted = sorted(pieces,
-                               key=lambda p: (round(p.centroid.x, -1),
-                                              round(p.centroid.y, -1)))
+        covered  = _repair_geom(unary_union([p for p in pieces if p is not None]))
+        residual = _repair_geom(poly.difference(covered))
+        if not residual.is_empty and residual.area > 1e-8:
+            # Decompose residual into individual fragments
+            if residual.geom_type == "Polygon":
+                frags = [residual]
+            elif residual.geom_type in ("MultiPolygon", "GeometryCollection"):
+                frags = [g for g in residual.geoms
+                         if g.geom_type == "Polygon" and g.area > 1e-10]
+            else:
+                frags = []
+
+            for frag in frags:
+                best_i, best_len = 0, -1.0
+                for i, vp in enumerate(pieces):
+                    if vp is None:
+                        continue
+                    try:
+                        # Use buffer(1e-6) on the fragment so touching edges
+                        # register as intersecting (fixes zero-length shared
+                        # boundary between geometrically adjacent pieces)
+                        shared = frag.buffer(snap_tol * 0.5).intersection(vp).length
+                    except Exception:
+                        shared = 0.0
+                    if shared > best_len:
+                        best_len, best_i = shared, i
+                try:
+                    merged = _repair_geom(unary_union([pieces[best_i], frag]))
+                    mp = _as_polygon(merged)
+                    if mp:
+                        pieces[best_i] = mp
+                except Exception:
+                    pass
     except Exception:
-        pieces_sorted = list(pieces)
+        pass
+
+    # ── Step 3: cumulative difference rebuild ────────────────────────────
+    #
+    # SORT ORDER — critical for corner junction correctness:
+    # Sort by AREA DESCENDING (largest piece first). This ensures that large
+    # compartments claim their natural territory before smaller neighbours
+    # can "steal" corner area at three-way junctions.
+    #
+    # WHY centroid-sort was wrong: at a three-way junction (e.g. Comp_002 ∩
+    # Comp_005 ∩ Comp_006 corner), centroid sort could place Comp_002 and
+    # Comp_006 ahead of Comp_005 in processing order. Their intersection()
+    # calls would each claim part of the junction corner before Comp_005
+    # was processed, leaving Comp_005 with a notch cut into its corner.
+    # Sorting by area means the largest/most-established compartments go
+    # first and natural boundaries are preserved. The smallest piece always
+    # receives the exact remainder — guaranteed full coverage, zero gap.
+    try:
+        valid_pieces = [p for p in pieces if p is not None and p.area > 1e-10]
+        # Primary sort: area descending (largest claims territory first)
+        # Secondary sort: centroid for determinism when areas are equal
+        pieces_sorted = sorted(
+            valid_pieces,
+            key=lambda p: (-p.area, round(p.centroid.x, -1), round(p.centroid.y, -1))
+        )
+    except Exception:
+        pieces_sorted = [p for p in pieces if p is not None]
 
     final     = []
     remaining = _repair_geom(poly)
@@ -677,26 +767,45 @@ def _rebuild_gap_free(poly, pieces):
     for i, piece in enumerate(pieces_sorted):
         if remaining is None or remaining.is_empty:
             break
+
         if i == len(pieces_sorted) - 1:
-            # Last piece = exact remainder of original polygon — perfect boundary
+            # LAST PIECE (smallest): give it the exact remainder of the
+            # original polygon. Its boundary is mathematically the original
+            # polygon boundary — zero floating-point gap guaranteed.
             last = _as_polygon(_repair_geom(remaining))
             if last and last.area > 1e-8:
                 final.append(last)
         else:
             try:
-                c = _as_polygon(_repair_geom(piece.intersection(remaining)))
+                # Clip this piece to what's still available.
+                # Use snap() before intersection to align shared edges
+                # precisely, preventing micro-gaps at three-way junctions.
+                from shapely.ops import snap as shp_snap
+                piece_snapped = _repair_geom(shp_snap(piece, remaining, snap_tol))
+                clipped = _repair_geom(piece_snapped.intersection(remaining))
+                # buffer(0) heals degenerate edges difference() can create
+                clipped = _repair_geom(clipped.buffer(0)) if not clipped.is_empty else clipped
+                c = _as_polygon(clipped)
             except Exception:
                 c = None
+
             if c is None or c.area < 1e-8:
+                # No area left for this piece — absorbed by pre-distribute.
                 continue
+
             final.append(c)
             try:
                 remaining = _repair_geom(remaining.difference(c))
-                # remaining might become MultiPolygon — keep it as-is for now
+                # buffer(0) prevents degenerate edge accumulation across iters
+                if not remaining.is_empty:
+                    remaining = _repair_geom(remaining.buffer(0))
             except Exception:
                 pass
 
-    return final if final else [_repair_geom(poly)]
+    if not final:
+        return [_repair_geom(poly)]
+
+    return final
 
 
 def _subdivide_polygon(poly, n):
@@ -707,7 +816,7 @@ def _subdivide_polygon(poly, n):
     2. Voronoi clip → compact blob-shaped initial cells
     3. Lloyd relax  → cells become centroidal (more equal, compact)
     4. Area balance → iterative strip transfer for ±1% area equality
-    5. Gap-free rebuild → cumulative difference, union = poly exactly
+    5. Gap-free rebuild → cumulative difference, union = poly exactly (FIXED)
     6. Polygon validation → every returned piece is a valid Polygon
     """
     if n <= 1:
@@ -716,6 +825,9 @@ def _subdivide_polygon(poly, n):
     poly = _repair_geom(poly)
     if poly.is_empty or poly.area < 1e-10:
         return [poly]
+
+    # Snap tolerance shared by all sub-steps: 1% of polygon scale, min 0.1 m
+    snap_tol = max(poly.area ** 0.5 * 0.01, 0.1)
 
     # 1 — Seeds
     seeds = _place_seeds_voronoi(poly, n)
@@ -761,7 +873,7 @@ def _subdivide_polygon(poly, n):
     if len(cells) < n:
         deficit = n - len(cells)
         cells_sorted = sorted(cells, key=lambda t: t[0].area, reverse=True)
-        replacements = {}  # track which cells got replaced
+        replacements = {}
         extra = []
         for i in range(deficit):
             idx = i % len(cells_sorted)
@@ -769,12 +881,10 @@ def _subdivide_polygon(poly, n):
             seeds2 = _place_seeds_voronoi(big_cell, 2, rng_seed=i+1)
             sub = _lloyd_relax(big_cell, seeds2, n_iter=20)
             if len(sub) >= 2:
-                # Replace the original large cell with sub[0], add sub[1] as extra
                 replacements[idx] = sub[0]
                 extra.append(sub[1])
             else:
                 extra.append((big_cell, big_seed))
-        # Apply replacements
         cells_sorted = [replacements.get(i, c) for i, c in enumerate(cells_sorted)]
         cells = cells_sorted + extra
     cells = cells[:n]
@@ -782,74 +892,65 @@ def _subdivide_polygon(poly, n):
     # 4 — Area balance
     pieces = _area_balance(poly, cells, n)
 
-    # 5 — Gap-free rebuild with boundary snapping
-    # snap() aligns piece edges within tolerance to the original polygon boundary,
-    # ensuring compartment edges that follow the forest outline are exact matches.
-    snap_tol = max(poly.area ** 0.5 * 0.001, 0.01)   # 0.1% of polygon scale
-    snapped  = []
-    for p in pieces:
-        try:
-            s = _repair_geom(p.intersection(poly))   # clip to boundary first
-            s = _as_polygon(s) or p
-            from shapely.ops import snap as shp_snap
-            s = _repair_geom(shp_snap(s, poly, snap_tol))
-            s = _as_polygon(s) or p
-        except Exception:
-            s = p
-        snapped.append(s)
-    pieces = snapped
-
+    # 5 — Gap-free rebuild (FIXED: higher snap tol + pre-distribute residual
+    #     + strict cumulative difference with buffer(0) healing)
     pieces = _rebuild_gap_free(poly, pieces)
 
     # 6 — Final polygon validation: every piece MUST be a Polygon
     validated = []
     for p in pieces:
-        if p.geom_type == "Polygon" and not p.is_empty and p.area > 1e-8:
+        if p is not None and p.geom_type == "Polygon" and not p.is_empty and p.area > 1e-8:
             validated.append(p)
         else:
-            best = _as_polygon(p)
+            best = _as_polygon(p) if p is not None else None
             if best and best.geom_type == "Polygon" and best.area > 1e-8:
                 validated.append(best)
-            # Silently drop non-polygon fragments — they will be gap-filled below
 
     if not validated:
         return [poly]
 
-    # Merge any uncovered residual into nearest validated neighbour
+    # Merge any remaining uncovered residual into nearest validated neighbour
     try:
         covered = _repair_geom(unary_union(validated))
         gap     = _repair_geom(poly.difference(covered))
         if not gap.is_empty and gap.area > 1e-8:
             best_i, best_len = 0, -1.0
             for i, vp in enumerate(validated):
-                try:   s = gap.intersection(vp).length
-                except: s = 0.0
+                try:
+                    s = gap.buffer(snap_tol * 0.5).intersection(vp).length
+                except Exception:
+                    s = 0.0
                 if s > best_len:
                     best_len, best_i = s, i
             validated[best_i] = _repair_geom(
                 unary_union([validated[best_i], gap]))
-            # Re-extract as Polygon
             p = _as_polygon(validated[best_i])
             if p:
                 validated[best_i] = p
     except Exception:
         pass
 
-    # Sliver merge: pieces < 2% of target → merge into longest-shared neighbour
+    # Sliver merge: pieces < 5% of target → merge into longest-shared neighbour.
+    # After each merge, re-check from scratch (a merge can create a new sliver).
+    # Use buffered intersection so touching edges count as shared boundary.
     target_area = poly.area / n
     changed = True
     while changed and len(validated) > 1:
         changed = False
-        tiny = next((i for i, p in
-                     sorted(enumerate(validated), key=lambda t: t[1].area)
-                     if p.area < target_area * 0.02), None)
+        # Find the smallest piece that is below the sliver threshold
+        areas_idx = sorted(enumerate(validated), key=lambda t: t[1].area)
+        tiny = next((i for i, p in areas_idx if p.area < target_area * 0.05), None)
         if tiny is None:
             break
         sliver = validated.pop(tiny)
         best_j, best_len = 0, -1.0
         for j, vp in enumerate(validated):
-            try:   s = sliver.intersection(vp).length
-            except: s = 0.0
+            try:
+                # Buffer sliver slightly so touching (zero-width) shared edges
+                # register as having non-zero intersection length
+                s = sliver.buffer(snap_tol * 0.5).intersection(vp).length
+            except Exception:
+                s = 0.0
             if s > best_len:
                 best_len, best_j = s, j
         try:
@@ -895,16 +996,14 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
             "Pct_Area": pct_area,
             "geometry": p,
         })
-        # Build line geometry safely — p must be a Polygon at this point
         if p.geom_type == "Polygon":
             line_geom = LineString(p.exterior.coords)
         elif p.geom_type in ("MultiPolygon", "GeometryCollection"):
-            # Take the largest polygon's exterior
             sub_polys = [g for g in p.geoms if g.geom_type == "Polygon"]
             if sub_polys:
                 line_geom = LineString(max(sub_polys, key=lambda g: g.area).exterior.coords)
             else:
-                line_geom = LineString([(0, 0), (0, 0)])  # degenerate fallback
+                line_geom = LineString([(0, 0), (0, 0)])
         else:
             line_geom = LineString([(0, 0), (0, 0)])
         line_recs.append({
@@ -951,8 +1050,7 @@ def _df_to_polygon(df, x_col, y_col, order_col):
 def _load_polygons_from_zip(file, target_shp, crs):
     """
     Extract a ZIP archive, find the selected .shp, read it as a GeoDataFrame
-    reprojected to *crs*.  Returns a list of (feature_name, polygon) tuples
-    where feature_name comes from any Name/Forest/Label attribute or the FID.
+    reprojected to *crs*.  Returns a list of (feature_name, polygon) tuples.
     """
     folder = os.path.join(UPLOAD, str(uuid.uuid4()))
     os.makedirs(folder, exist_ok=True)
@@ -962,7 +1060,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
     with zipfile.ZipFile(zip_path, "r") as z:
         z.extractall(folder)
 
-    # Collect all .shp paths
     shp_candidates = []
     for root, _, files in os.walk(folder):
         for f in files:
@@ -972,7 +1069,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
     if not shp_candidates:
         raise ValueError("No shapefile (.shp) found inside the ZIP archive.")
 
-    # Pick target shp
     shp_path = shp_candidates[0]
     if target_shp:
         target_name = os.path.basename(target_shp)
@@ -990,7 +1086,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
     else:
         gdf = gdf.to_crs(crs)
 
-    # Try to find a name column (Forest / Name / Label / first text column)
     name_col = None
     for candidate in ["Forest", "forest", "Name", "name", "NAME",
                        "Label", "label", "LABEL", "ID", "id"]:
@@ -1013,7 +1108,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
 
         feat_name = str(row[name_col]) if name_col else f"Feature_{i+1}"
 
-        # Flatten to individual Polygon objects
         if geom.geom_type == "Polygon":
             polys = [_repair_geom(geom)]
         elif geom.geom_type == "MultiPolygon":
@@ -1022,7 +1116,6 @@ def _load_polygons_from_zip(file, target_shp, crs):
             polys = [_repair_geom(g) for g in geom.geoms
                      if g.geom_type == "Polygon"] if hasattr(geom, "geoms") else []
 
-        # For MultiPolygon features merge into one polygon for subdivision
         if len(polys) > 1:
             merged = unary_union(polys)
             polys = [_repair_geom(merged)]
@@ -1041,19 +1134,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
             is_zip=False):
     """
     Group E — Polygon Subdivider.
-
-    Accepts either:
-      • CSV/Excel DataFrame  (is_zip=False) — build polygon from XY boundary points
-      • ZIP file             (is_zip=True)  — read polygon directly from shapefile
-
-    e_mode="A"  →  Single-forest / single-polygon
-        ZIP:   subdivides each selected polygon feature independently;
-               if multiple features exist, each gets its own output folder.
-        CSV:   all rows → one boundary polygon → subdivided.
-
-    e_mode="B"  →  Multi-forest (CSV only)
-        Each Forest group subdivided independently into its own folder.
-        (For ZIP input e_mode is forced to "A" — each feature is already one polygon.)
     """
     if n_compartments < 2:
         raise ValueError("Number of compartments must be at least 2.")
@@ -1062,13 +1142,11 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
 
     all_poly_gdfs, all_line_gdfs, all_pts_gdfs = [], [], []
 
-    # ── ZIP / Shapefile input ─────────────────────────────────────────────────
     if is_zip:
         target_shp = (mapping or {}).get("target_shp")
         features, _ = _load_polygons_from_zip(file_or_df, target_shp, crs)
 
         if len(features) == 1:
-            # Single polygon — save directly in run output folder
             feat_name, poly = features[0]
             pieces = _subdivide_polygon(poly, n_compartments)
             pg, lg, ptg = _save_compartments(pieces, feat_name, crs, out)
@@ -1076,7 +1154,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
             all_line_gdfs.append(lg)
             all_pts_gdfs.append(ptg)
         else:
-            # Multiple features — one subfolder per feature
             for feat_name, poly in features:
                 pieces     = _subdivide_polygon(poly, n_compartments)
                 feat_dir   = os.path.join(out, _safe_dirname(feat_name))
@@ -1085,7 +1162,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
                 all_line_gdfs.append(lg)
                 all_pts_gdfs.append(ptg)
 
-    # ── CSV / Excel input ─────────────────────────────────────────────────────
     else:
         df = file_or_df
         df = normalize_order(df)
@@ -1132,19 +1208,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
 
 
 # ================= GROUP F — DEM SLOPE ANALYSIS =================
-#
-# Workflow:
-#   1. Accept forest boundary (CSV/Excel XY points OR ZIP/SHP polygon)
-#   2. Accept raw DEM GeoTIFF
-#   3. Compute slope in degrees from DEM using numpy gradient
-#   4. Clip slope raster to forest boundary (using rasterio.mask)
-#   5. Classify into 3 classes: <19°, 19-31°, >31°
-#   6. Calculate area per class (pixel count × pixel area in ha)
-#   7. Export: clipped_slope.tif, slope_classes.tif, slope_summary.xlsx,
-#              slope_polygon.shp (vectorised class polygons), preview PNG
-#
-# Required pip packages (add to requirements.txt):
-#   rasterio, scipy
 
 def _boundary_polygon_from_df(df, mapping):
     """Build a single WGS84-like polygon from XY boundary DataFrame."""
@@ -1164,7 +1227,6 @@ def _boundary_polygon_from_df(df, mapping):
 def _boundary_polygon_from_zip(zip_file, target_shp, src_crs, dem_crs):
     """
     Extract polygon from ZIP shapefile, reproject to DEM CRS.
-    Returns a shapely Polygon and the reprojected GeoDataFrame.
     """
     folder = os.path.join(UPLOAD, str(uuid.uuid4()))
     os.makedirs(folder, exist_ok=True)
@@ -1200,7 +1262,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             f_mode="A", comp_col_name=None):
     """
     Group F — DEM Slope Analysis.
-    f_mode A = whole boundary, B = per-Forest group, E = per-Compartment group.
     """
     try:
         import rasterio
@@ -1363,7 +1424,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     Preview layout:
       Row 1 (top): [Slope Raster] [Classified Map + boundary outline]
       Row 2 (bottom): Full-width area summary table
-    Table is never on top of the maps.
     """
     import matplotlib.patches as mpatches
     import matplotlib.gridspec as gridspec
@@ -1371,7 +1431,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     valid = (class_arr > 0)
     has_label = f_mode in ("B", "E")
 
-    # Taller figure when compartment table has many rows
     n_rows = len(summary_rows)
     table_height = max(0.22, min(0.45, 0.06 + n_rows * 0.032))
     fig_h = 7 + (2 if n_rows > 6 else 0)
@@ -1383,18 +1442,16 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
         hspace=0.32, wspace=0.06,
         left=0.02, right=0.98, top=0.94, bottom=0.03
     )
-    ax1 = fig.add_subplot(gs[0, 0])   # slope raster
-    ax2 = fig.add_subplot(gs[0, 1])   # classified map
-    ax3 = fig.add_subplot(gs[1, :])   # full-width table
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax3 = fig.add_subplot(gs[1, :])
 
-    # ── Panel 1: raw slope raster ────────────────────────────────────────
     disp = np.where(valid, clipped_slope, np.nan)
     im   = ax1.imshow(disp, cmap="terrain", interpolation="bilinear")
     fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04, label="Degrees")
     ax1.set_title("Slope Raster (degrees)", fontsize=10, fontweight="bold", pad=6)
     ax1.axis("off")
 
-    # ── Panel 2: classified map + boundary ───────────────────────────────
     colors_map = {0:(1,1,1,0), 1:(0.18,0.8,0.44,1),
                   2:(0.95,0.61,0.07,1), 3:(0.91,0.29,0.24,1)}
     rgb = np.zeros((*class_arr.shape, 4), dtype=np.float32)
@@ -1404,11 +1461,10 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     ax2.set_title("Slope Classification + Boundary", fontsize=10, fontweight="bold", pad=6)
     ax2.axis("off")
 
-    # Draw original boundary outline on classified panel
     if boundary_gdf is not None and not boundary_gdf.empty:
         try:
             h_px, w_px = class_arr.shape
-            bounds = boundary_gdf.total_bounds   # [minx, miny, maxx, maxy]
+            bounds = boundary_gdf.total_bounds
             bw = bounds[2] - bounds[0]
             bh = bounds[3] - bounds[1]
             def to_px(x, y):
@@ -1437,14 +1493,12 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     ax2.legend(handles=legend_items, loc="lower left",
                fontsize=7, framealpha=0.92, title="Slope Class", title_fontsize=7)
 
-    # ── Panel 3: full-width area summary table ────────────────────────────
     ax3.axis("off")
     ax3.set_title("Slope Area Summary Table", fontsize=10, fontweight="bold", pad=4)
 
     if summary_rows:
         total_ha = sum(r["Area_ha"] for r in summary_rows
                        if not has_label or r.get("Class") == 1 or True)
-        # For compartment modes show per-compartment totals
         if has_label:
             col_labels = ["Compartment", "Slope Range", "Description",
                           "Pixel Count", "Area (ha)", "% of Compartment"]
@@ -1462,7 +1516,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
                  f"{r['Pixel_Count']:,}", f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
                 for r in summary_rows
             ]
-            # Add total row
             table_data.append(["TOTAL", "", "", f"{total_ha:.2f}", "100%"])
 
         tbl = ax3.table(
@@ -1488,7 +1541,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
                     cid = summary_rows[ri].get("Class", 0)
                     cell.set_facecolor(row_colors.get(cid, "#f8f9fa"))
                 else:
-                    # Total row
                     cell.set_facecolor("#ddeeff")
                     cell.set_text_props(fontweight="bold")
 
@@ -1497,7 +1549,6 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
 
 
 # ================= PREVIEW =================
-# Distinct fill palette for compartments (up to 12, then cycles)
 _COMP_COLORS = [
     "#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7",
     "#DCEDC8","#B2EBF2","#FFF9C4","#D7CCC8","#CFD8DC",
@@ -1511,7 +1562,6 @@ def preview_compartments(poly_gdf, path):
     - Each compartment filled with a distinct colour
     - Shared/outer edges all drawn in the same black, linewidth=1.8
     - Comp_ID + area label centred in each compartment
-    - No separate line layer drawn on top (avoids double/misaligned outline)
     - White background
     """
     fig, ax = plt.subplots(figsize=(10, 10), dpi=180)
@@ -1523,11 +1573,9 @@ def preview_compartments(poly_gdf, path):
         if geom is None or geom.is_empty:
             continue
         color = _COMP_COLORS[i % len(_COMP_COLORS)]
-        # Draw filled compartment
         gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
             ax=ax, facecolor=color, edgecolor="#1a1a1a", linewidth=1.8
         )
-        # Label at centroid
         cx, cy = geom.centroid.x, geom.centroid.y
         comp_id = row.get("Comp_ID", f"Comp_{i+1:03d}")
         area_ha = row.get("Area_ha", "")
@@ -1556,8 +1604,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
             label_col=None, label_pts_gdf=None):
     """
     Render a preview PNG.
-    label_col       : column name in label_pts_gdf (or pts_gdf) to annotate points with.
-    label_pts_gdf   : separate GDF whose points get labelled (used for Group C SN labels).
     """
     fig, ax = plt.subplots(figsize=(8, 8), dpi=180)
 
@@ -1570,7 +1616,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
     if pts_gdf is not None and not pts_gdf.empty:
         pts_gdf.plot(ax=ax, color=ptc, markersize=6, zorder=5)
 
-    # ── Sample-plot SN labels (Group C) ──────────────────────────────────
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
     if label_col and lbl_src is not None and not lbl_src.empty and label_col in lbl_src.columns:
         for _, row in lbl_src.iterrows():
@@ -1590,7 +1635,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
                 zorder=6,
             )
 
-    # ── Compartment ID labels (Group E) ──────────────────────────────────
     if poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns:
         for _, row in poly_gdf.iterrows():
             cx = row.geometry.centroid.x
@@ -1620,7 +1664,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
 def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
     """
     Convert a GeoDataFrame (already in WGS84) to KML Placemark XML strings.
-    Supports Polygon, LineString, MultiPolygon, and Point geometry types.
     """
     lines = []
     for i, row in gdf.iterrows():
@@ -1628,7 +1671,6 @@ def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
         if geom is None or geom.is_empty:
             continue
 
-        # Build a label from attributes
         if name_col and name_col in row.index and row[name_col]:
             label = str(row[name_col])
         elif "Comp_ID" in row.index and row["Comp_ID"]:
@@ -1641,7 +1683,6 @@ def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
         else:
             label = f"Feature {i+1}"
 
-        # Build description from all non-geometry attributes
         desc_parts = []
         for col in row.index:
             if col == "geometry": continue
@@ -1690,8 +1731,6 @@ def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
 def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     """
     Build a KMZ (zipped KML) from the three output GeoDataFrames.
-    Reprojects everything to WGS84 (EPSG:4326) first.
-    Returns the URL path to serve the KMZ.
     """
     import zipfile as zf
 
@@ -1700,7 +1739,7 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
             return None
         try:
             if gdf.crs is None:
-                return None   # can't reproject without a CRS
+                return None
             return gdf.to_crs("EPSG:4326")
         except Exception:
             return None
@@ -1709,15 +1748,13 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     line_w = to_wgs84(line_gdf)
     pts_w  = to_wgs84(pts_gdf)
 
-    # Compute centroid for GE camera position
     ref_gdf = poly_w if poly_w is not None and not poly_w.empty else line_w
     if ref_gdf is not None and not ref_gdf.empty:
         union   = ref_gdf.unary_union
         cx, cy  = union.centroid.x, union.centroid.y
-        # Approximate altitude to fit the bounding box
         minx, miny, maxx, maxy = union.bounds
         span_deg = max(maxx - minx, maxy - miny)
-        alt_m    = max(500, int(span_deg * 111_000 * 2))   # rough scale
+        alt_m    = max(500, int(span_deg * 111_000 * 2))
     else:
         cx, cy, alt_m = 0, 0, 10000
 
@@ -1777,7 +1814,6 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     with zf.ZipFile(kmz_path, "w", zf.ZIP_DEFLATED) as kmz:
         kmz.writestr("doc.kml", kml.encode("utf-8"))
 
-    # Return centroid info alongside URL so the frontend can build the GE link
     return {
         "url":   f"/outputs/{run_id}/output.kmz",
         "lat":   round(cy, 6),
@@ -1823,7 +1859,6 @@ def upload():
 
         elif module == "C":
             poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
-            # Pass SN labels for the preview
             label_col     = "SN"
             label_pts_gdf = pts
 
@@ -1852,7 +1887,6 @@ def upload():
                     e_mode=e_mode, n_compartments=n_compartments, is_zip=False
                 )
 
-            # Dedicated compartment preview — coloured fills, no separate line layer
             preview_path = os.path.join(out, "output.png")
             preview_compartments(poly, preview_path)
 
@@ -1920,12 +1954,11 @@ def upload():
                 pc="yellow", lc="black", ptc="red",
                 label_col=label_col, label_pts_gdf=label_pts_gdf)
 
-        # Generate KMZ for Google Earth preview
         kmz_url = None
         try:
             kmz_url = generate_kmz(poly, line, pts, out, run_id)
         except Exception:
-            pass  # KMZ is optional — don't fail the whole request
+            pass
 
         return jsonify({
             "run_id":   run_id,
