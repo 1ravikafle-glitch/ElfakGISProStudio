@@ -4,1947 +4,910 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Elfak GIS Engine Pro — Premium Forest Studio</title>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-
 <style>
 :root {
-    --bg-canopy: #000000;
-    --bg-glass: rgba(255, 255, 255, 0.55);
-    --bg-card: rgba(255, 255, 255, 0.55);
-    --border-soft: rgba(20, 40, 30, 0.09);
-    --border-active: #10b981;
-    --glow-mint: rgba(16, 185, 129, 0.18);
-
-    --white-pure: #ffffff;
-    --white-snow: #1c2b22;
-    --white-mist: #33453a;
-    --text-muted: #74897d;
-
-    --mint: #10b981;
-    --emerald-glow: linear-gradient(135deg, #34d399 0%, #059669 100%);
-    --amber-timber: #d97706;
-    --survey-blue: #65a30d;
-    --gold-accent: #059669;
-
-    --font-display: 'Space Grotesk', system-ui, sans-serif;
-    --font-body: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-
-    --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
-    --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-* {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(16, 185, 129, 0.3) transparent;
-}
-
-body {
-    margin: 0;
-    font-family: var(--font-body);
-    background: radial-gradient(circle at 50% 0%, #ffffff 0%, #eef7f0 45%, var(--bg-canopy) 100%);
-    color: var(--white-snow);
-    height: 100vh;
-    overflow: hidden;
-    -webkit-font-smoothing: antialiased;
-    position: relative;
-    user-select: none;
-}
-
-body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    opacity: 0.6;
-    mix-blend-mode: multiply;
-    background-image:
-        repeating-radial-gradient(circle at 18% 22%, transparent 0px, transparent 38px, rgba(101,163,13,0.05) 39px, transparent 41px, transparent 78px),
-        repeating-radial-gradient(circle at 85% 78%, transparent 0px, transparent 46px, rgba(16,185,129,0.04) 47px, transparent 49px, transparent 92px),
-        repeating-radial-gradient(circle at 78% 12%, transparent 0px, transparent 30px, rgba(5,150,105,0.035) 31px, transparent 33px, transparent 62px);
-}
-
-.app-shell {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    opacity: 0;
-    animation: shellEnter 0.7s var(--ease-smooth) forwards;
-}
-
-@keyframes shellEnter {
-    from { opacity: 0; transform: translateY(10px) scale(0.995); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.app-header {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 28px 14px;
-    animation: headerSlide 0.6s var(--ease-smooth) 0.05s both;
-}
-
-@keyframes headerSlide {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}
-
-.brand-mark {
-    width: 38px;
-    height: 38px;
-    border-radius: 11px;
-    background: linear-gradient(135deg, var(--gold-accent) 0%, var(--border-active) 100%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 6px 18px var(--glow-mint);
-    flex-shrink: 0;
-    transition: box-shadow 0.4s var(--ease-soft), transform 0.4s var(--ease-soft);
-}
-
-.brand:hover .brand-mark {
-    box-shadow: 0 8px 26px var(--glow-mint);
-    transform: rotate(-6deg) scale(1.05);
-}
-
-.brand-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.brand-name {
-    font-family: var(--font-display);
-    font-size: 16px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    color: var(--white-snow);
-}
-
-.brand-sub {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-}
-
-.header-readout {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-muted);
-}
-
-.header-readout .pip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.header-readout .pip-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #10b981;
-    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
-    animation: pulseGlow 2s infinite alternate;
-}
-
-.header-readout .pip-value {
-    color: var(--white-mist);
-    font-weight: 500;
-    transition: color 0.3s var(--ease-soft);
-    display: inline-block;
-}
-
-.app-layout {
-    display: grid;
-    grid-template-columns: 280px 10px 1fr 10px 420px;
-    flex: 1;
-    min-height: 0;
-    padding: 0 20px 20px;
-    box-sizing: border-box;
-    animation: layoutRise 0.7s var(--ease-smooth) 0.1s both;
-}
-
-@keyframes layoutRise {
-    from { opacity: 0; transform: translateY(14px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.layout-resizer {
-    position: relative;
-    z-index: 10;
-    transition: background 0.25s var(--ease-soft);
-    border-radius: 4px;
-}
-.layout-resizer::after {
-    content: '';
-    position: absolute;
-    border-radius: 3px;
-    background: rgba(16, 185, 129, 0.0);
-    transition: background 0.25s var(--ease-soft);
-}
-.layout-resizer.col-resizer::after {
-    top: 50%; left: 50%;
-    width: 3px; height: 36px;
-    transform: translate(-50%, -50%);
-}
-.layout-resizer.row-resizer::after {
-    top: 50%; left: 50%;
-    width: 36px; height: 3px;
-    transform: translate(-50%, -50%);
-}
-.layout-resizer:hover, .layout-resizer.dragging {
-    background: rgba(16, 185, 129, 0.18);
-}
-.layout-resizer:hover::after, .layout-resizer.dragging::after {
-    background: rgba(16, 185, 129, 0.55);
-}
-
-.layout-resizer.col-resizer {
-    cursor: col-resize;
-    width: 6px;
-    margin: 0 2px;
-    height: 100%;
-}
-
-.layout-resizer.row-resizer {
-    cursor: row-resize;
-    height: 6px;
-    margin: 2px 0;
-    width: 100%;
-}
-
-.holo-panel {
-    background: var(--bg-glass);
-    backdrop-filter: blur(30px);
-    -webkit-backdrop-filter: blur(30px);
-    border: 1px solid var(--border-soft);
-    border-radius: 20px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow: 0 10px 40px rgba(28, 60, 45, 0.10);
-    transition: border-color 0.4s var(--ease-soft), box-shadow 0.4s var(--ease-soft);
-    position: relative;
-    height: 100%;
-    min-width: 150px;
-    min-height: 80px;
-}
-
-.holo-panel:hover {
-    border-color: rgba(16, 185, 129, 0.22);
-    box-shadow: 0 14px 50px rgba(28, 60, 45, 0.14);
-}
-
-.holo-panel::after {
-    content: '';
-    position: absolute;
-    top: 10px; left: 10px;
-    width: 10px; height: 10px;
-    border-top: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-left: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-radius: 3px 0 0 0;
-    pointer-events: none;
-    transition: border-color 0.4s var(--ease-soft);
-}
-.holo-panel::before {
-    content: '';
-    position: absolute;
-    bottom: 10px; right: 10px;
-    width: 10px; height: 10px;
-    border-bottom: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-right: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-radius: 0 0 3px 0;
-    pointer-events: none;
-    transition: border-color 0.4s var(--ease-soft);
-}
-.holo-panel:hover::after,
-.holo-panel:hover::before {
-    border-color: rgba(16, 185, 129, 0.6);
-}
-
-.panel-title {
-    font-family: var(--font-display);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: var(--white-mist);
-    opacity: 0.85;
-    padding: 16px 24px;
-    border-bottom: 1px solid rgba(241, 245, 249, 0.04);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.panel-title::before {
-    content: '';
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 1px;
-    background: #10b981;
-    box-shadow: 0 0 6px rgba(16, 185, 129, 0.55);
-    flex-shrink: 0;
-    transition: transform 0.4s var(--ease-soft), box-shadow 0.4s var(--ease-soft);
-}
-
-.holo-panel:hover .panel-title::before {
-    transform: rotate(45deg) scale(1.15);
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
-}
-
-.panel-scroll {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px 24px;
-    scroll-behavior: smooth;
-}
-
-.panel-scroll::-webkit-scrollbar,
-.config-stack::-webkit-scrollbar {
-    width: 6px;
-}
-.panel-scroll::-webkit-scrollbar-track,
-.config-stack::-webkit-scrollbar-track {
-    background: transparent;
-}
-.panel-scroll::-webkit-scrollbar-thumb,
-.config-stack::-webkit-scrollbar-thumb {
-    background: rgba(16, 185, 129, 0.25);
-    border-radius: 10px;
-    transition: background 0.25s var(--ease-soft);
-}
-.panel-scroll::-webkit-scrollbar-thumb:hover,
-.config-stack::-webkit-scrollbar-thumb:hover {
-    background: rgba(16, 185, 129, 0.5);
-}
-
-.tree-node {
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 13px;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
-    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
-                transform 0.3s var(--ease-soft), box-shadow 0.3s var(--ease-soft);
-}
-.tree-node:hover {
-    background: rgba(20, 40, 30, 0.05);
-    color: var(--white-snow);
-    transform: translateX(4px);
-}
-.tree-node:active {
-    transform: translateX(4px) scale(0.985);
-}
-.tree-node.active {
-    background: rgba(16, 185, 129, 0.12);
-    color: var(--white-snow);
-    font-weight: 600;
-    box-shadow: inset 1px 0 0 var(--border-active);
-}
-
-.workspace-split {
-    display: grid;
-    grid-template-rows: 1fr 6px 120px;
-    height: 100%;
-    min-height: 0;
-}
-
-.matrix-container {
-    display: flex;
-    gap: 24px;
-    height: 100%;
-}
-
-.matrix-selectors {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.matrix-tab {
-    width: 48px;
-    height: 48px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-soft);
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.35s var(--ease-smooth);
-}
-.matrix-tab:hover {
-    color: var(--white-snow);
-    border-color: rgba(28, 60, 45, 0.25);
-    transform: scale(1.06);
-}
-.matrix-tab:active {
-    transform: scale(0.97);
-}
-
-.matrix-tab.active-tab {
-    color: var(--white-snow);
-    background: rgba(16, 185, 129, 0.15);
-    border-color: var(--border-active);
-    box-shadow: 0 0 20px var(--glow-mint);
-    animation: pulseGlow 2s infinite alternate;
-}
-
-@keyframes pulseGlow {
-    0% { box-shadow: 0 0 12px rgba(16, 185, 129, 0.2); }
-    100% { box-shadow: 0 0 24px rgba(16, 185, 129, 0.45); }
-}
-
-.config-stack {
-    flex: 1;
-    overflow-y: auto;
-    padding-right: 6px;
-    scroll-behavior: smooth;
-}
-
-.group-content-card {
-    display: none;
-    flex-direction: column;
-    gap: 16px;
-}
-.group-content-card.active-card {
-    display: flex;
-    animation: cardEnter 0.4s var(--ease-smooth) both;
-}
-@keyframes cardEnter {
-    from { opacity: 0; transform: translateY(8px) scale(0.992); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
-.hidden {
-    display: none !important;
-    pointer-events: none;
-}
-
-.cyber-dropzone {
-    border: 1px dashed rgba(28, 60, 45, 0.18);
-    background: rgba(255, 255, 255, 0.35);
-    border-radius: 12px;
-    padding: 18px;
-    text-align: center;
-    cursor: pointer;
-    position: relative;
-    transition: border-color 0.35s var(--ease-soft), background 0.35s var(--ease-soft),
-                transform 0.35s var(--ease-soft), box-shadow 0.35s var(--ease-soft);
-}
-.cyber-dropzone:hover {
-    border-color: var(--border-active);
-    background: rgba(16, 185, 129, 0.04);
-    box-shadow: 0 6px 22px rgba(16, 185, 129, 0.10);
-    transform: translateY(-1px);
-}
-.cyber-dropzone:active {
-    transform: translateY(0) scale(0.995);
-}
-.cyber-dropzone.drag-over {
-    border-color: var(--border-active);
-    background: rgba(16, 185, 129, 0.08);
-    box-shadow: 0 0 0 3px var(--glow-mint);
-}
-.cyber-dropzone input[type="file"] {
-    position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;
-}
-.cyber-dropzone span {
-    font-size: 12px;
-    color: var(--white-mist);
-    font-weight: 500;
-    transition: color 0.3s var(--ease-soft);
-}
-.cyber-dropzone:hover span {
-    color: var(--white-snow);
-}
-
-.input-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-}
-
-.field-group label {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: 5px;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    transition: color 0.3s var(--ease-soft);
-}
-.field-group:focus-within label {
-    color: var(--mint);
-}
-
-.vector-badge {
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    color: #0d9488;
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    animation: cardEnter 0.35s var(--ease-smooth) both;
-}
-select, input[type="number"], input[type="text"] {
-    width: 100%;
-    background: rgba(255, 255, 255, 0.85);
-    border: 1px solid var(--border-soft);
-    border-radius: 8px;
-    padding: 0 12px;
-    color: #1c2b22;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 500;
-    outline: none;
-    box-sizing: border-box;
-    height: 32px;
-    transition: border-color 0.25s var(--ease-soft), background 0.25s var(--ease-soft),
-                box-shadow 0.25s var(--ease-soft), transform 0.15s var(--ease-soft);
-}
-select, input[type="number"] {
-    font-family: var(--font-mono);
-}
-select:hover, input[type="number"]:hover, input[type="text"]:hover {
-    border-color: rgba(28, 60, 45, 0.22);
-}
-select:focus, input[type="number"]:focus, input[type="text"]:focus {
-    border-color: var(--survey-blue);
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 0 10px rgba(101, 163, 13, 0.18);
-}
-input[type="text"]:focus {
-    border-color: var(--border-active);
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 0 10px var(--glow-mint);
-}
-
-.toggle-switch-container {
-    display: flex;
-    background: rgba(20, 40, 30, 0.05);
-    padding: 4px;
-    border-radius: 8px;
-    border: 1px solid var(--border-soft);
-}
-.toggle-option {
-    flex: 1;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
-    padding: 6px 0;
-    border-radius: 6px;
-    cursor: pointer;
-    color: var(--text-muted);
-    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
-                box-shadow 0.3s var(--ease-soft), transform 0.2s var(--ease-soft);
-}
-.toggle-option:hover {
-    color: var(--white-snow);
-}
-.toggle-option:active {
-    transform: scale(0.97);
-}
-.toggle-option.active-toggle {
-    background: var(--white-pure);
-    color: var(--white-snow);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-}
-
-.console-layout {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 28px;
-}
-
-.btn-cyber-run {
-    background: var(--emerald-glow);
-    border: none;
-    color: var(--white-pure);
-    padding: 12px 28px;
-    border-radius: 12px;
-    font-family: var(--font-display);
-    font-weight: 600;
-    font-size: 13px;
-    letter-spacing: 0.03em;
-    cursor: pointer;
-    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.2);
-    transition: transform 0.35s var(--ease-smooth), box-shadow 0.35s var(--ease-smooth), filter 0.3s var(--ease-soft);
-    position: relative;
-    overflow: hidden;
-}
-.btn-cyber-run::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.35) 50%, transparent 70%);
-    transform: translateX(-100%);
-    transition: transform 0.6s var(--ease-soft);
-}
-.btn-cyber-run:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.45);
-}
-.btn-cyber-run:hover::after {
-    transform: translateX(100%);
-}
-.btn-cyber-run:active {
-    transform: translateY(0) scale(0.985);
-    filter: brightness(0.97);
-}
-
-.radial-progress-box {
-    position: relative;
-    width: 56px;
-    height: 56px;
-    transition: transform 0.4s var(--ease-soft);
-}
-.radial-svg {
-    transform: rotate(-90deg);
-}
-.track-arc {
-    fill: none; stroke: rgba(28, 60, 45, 0.08); stroke-width: 4;
-}
-.fill-arc {
-    fill: none; stroke: var(--mint); stroke-width: 4;
-    stroke-linecap: round;
-    stroke-dasharray: 150.7; stroke-dashoffset: 150.7;
-    transition: stroke-dashoffset 0.8s var(--ease-soft), stroke 0.4s var(--ease-soft);
-}
-
-#status-headline {
-    transition: color 0.3s var(--ease-soft);
-}
-#status-headline.is-processing {
-    animation: pulse 1.1s infinite alternate;
-    color: var(--mint);
-}
-#status-headline.is-error {
-    color: #dc2626;
-}
-.radial-progress-box.is-processing {
-    animation: spinPulse 1.4s infinite linear;
-}
-@keyframes spinPulse {
-    0% { transform: rotate(0deg) scale(1); }
-    50% { transform: rotate(180deg) scale(1.04); }
-    100% { transform: rotate(360deg) scale(1); }
-}
-.fill-arc.is-error {
-    stroke: #dc2626 !important;
-}
-
-.visualizer-desk {
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-.canvas-wrapper {
-    flex: 1;
-    background-color: #0f0a12;
-    background-image:
-        linear-gradient(rgba(101, 163, 13, 0.045) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(101, 163, 13, 0.045) 1px, transparent 1px);
-    background-size: 28px 28px;
-    border: 1px solid rgba(241, 245, 249, 0.02);
-    border-radius: 16px;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: inset 0 10px 40px rgba(0,0,0,0.7);
-    transition: box-shadow 0.4s var(--ease-soft);
-}
-
-.canvas-wrapper::before {
-    content: ''; position: absolute; inset: 0;
-    border: 1px solid var(--border-active); border-radius: 16px;
-    pointer-events: none; opacity: 0.12;
-    transition: opacity 0.4s var(--ease-soft);
-}
-
-.canvas-wrapper.is-active::before {
-    opacity: 0.35;
-}
-
-#empty-notice {
-    font-size:12px;
-    font-family: var(--font-mono);
-    letter-spacing:0.04em;
-    color: var(--text-muted);
-    transition: opacity 0.4s var(--ease-soft);
-}
-
-#output-img {
-  display: block;          /* Make the image a block element to eliminate inline spacing */
-  max-width: 95%;          /* Ensure it doesn't overflow the container */
-  max-height: 95%;         /* Limit height for aspect ratio preservation */
-  object-fit: contain;     /* Maintain aspect ratio without cropping */
-  margin: 0;               /* Remove any default margin */
-  border-radius: 10px;     /* Keep your existing border radius if desired */
-}
-
-@keyframes imageReveal {
-    from { opacity: 0; transform: scale(0.96); filter: blur(6px); }
-    to { opacity: 1; transform: scale(1); filter: blur(0); }
-}
-
-.meta-footer {
-    margin-top: 18px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-}
-
-#run-meta {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    transition: color 0.3s var(--ease-soft);
-}
-
-.btn-download {
-    background: rgba(28, 43, 34, 0.06);
-    border: 1px solid var(--border-soft);
-    color: var(--white-snow);
-    padding: 8px 18px;
-    border-radius: 8px;
-    font-size: 12px;
-    text-decoration: none;
-    font-weight: 500;
-    display: none;
-    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
-                border-color 0.3s var(--ease-soft), transform 0.25s var(--ease-soft),
-                box-shadow 0.3s var(--ease-soft);
-}
-.btn-download.is-visible {
-    display: inline-block;
-    animation: cardEnter 0.4s var(--ease-smooth) both;
-}
-.btn-download:hover {
-    background: var(--white-snow);
-    color: var(--white-pure);
-    border-color: var(--white-snow);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 18px rgba(28, 43, 34, 0.25);
-}
-.btn-download:active {
-    transform: translateY(0) scale(0.98);
-}
-
-.btn-disabled {
-    opacity: 0.5;
-    pointer-events: none;
-}
-
-.loading-glow {
-    animation: pulse 1s infinite alternate;
-}
-
-@keyframes pulse {
-    from { opacity: 0.6; }
-    to { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-    }
-}
+  --bg-glass:rgba(255,255,255,0.55);--border-soft:rgba(20,40,30,0.09);--border-active:#10b981;
+  --glow-mint:rgba(16,185,129,0.18);--white-pure:#ffffff;--white-snow:#1c2b22;--white-mist:#33453a;
+  --text-muted:#74897d;--mint:#10b981;--emerald-glow:linear-gradient(135deg,#34d399 0%,#059669 100%);
+  --survey-blue:#65a30d;--gold-accent:#059669;
+  --font-display:'Space Grotesk',system-ui,sans-serif;--font-body:'Inter',system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,monospace;
+  --ease-smooth:cubic-bezier(0.22,1,0.36,1);--ease-soft:cubic-bezier(0.4,0,0.2,1);
+}
+*{scrollbar-width:thin;scrollbar-color:rgba(16,185,129,0.3) transparent;box-sizing:border-box;}
+body{margin:0;font-family:var(--font-body);background:radial-gradient(circle at 50% 0%,#ffffff 0%,#eef7f0 45%,#000 100%);
+  color:var(--white-snow);height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;user-select:none;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opacity:0.6;mix-blend-mode:multiply;
+  background-image:repeating-radial-gradient(circle at 18% 22%,transparent 0,transparent 38px,rgba(101,163,13,.05) 39px,transparent 41px,transparent 78px),
+  repeating-radial-gradient(circle at 85% 78%,transparent 0,transparent 46px,rgba(16,185,129,.04) 47px,transparent 49px,transparent 92px);}
+.app-shell{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;
+  opacity:0;animation:shellEnter .7s var(--ease-smooth) forwards;}
+@keyframes shellEnter{from{opacity:0;transform:translateY(10px) scale(.995)}to{opacity:1;transform:none}}
+.app-header{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:14px 24px 10px;
+  animation:headerSlide .6s var(--ease-smooth) .05s both;}
+@keyframes headerSlide{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+.brand{display:flex;align-items:center;gap:12px;}
+.brand-mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--gold-accent),var(--border-active));
+  display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px var(--glow-mint);
+  transition:box-shadow .4s,transform .4s;}
+.brand:hover .brand-mark{box-shadow:0 8px 26px var(--glow-mint);transform:rotate(-6deg) scale(1.05);}
+.brand-name{font-family:var(--font-display);font-size:15px;font-weight:700;letter-spacing:.04em;}
+.brand-sub{font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--text-muted);}
+.header-readout{display:flex;align-items:center;gap:20px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);}
+.pip{display:flex;align-items:center;gap:7px;}
+.pip-dot{width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 8px rgba(16,185,129,.6);animation:pulseGlow 2s infinite alternate;}
+.pip-value{color:var(--white-mist);font-weight:500;}
+.app-layout{display:grid;grid-template-columns:272px 10px 1fr 10px 410px;flex:1;min-height:0;padding:0 16px 16px;}
+.layout-resizer{position:relative;z-index:10;border-radius:4px;transition:background .25s;}
+.layout-resizer::after{content:'';position:absolute;border-radius:3px;background:rgba(16,185,129,0);transition:background .25s;}
+.layout-resizer.col-resizer{cursor:col-resize;width:6px;margin:0 2px;height:100%;}
+.layout-resizer.col-resizer::after{top:50%;left:50%;width:3px;height:36px;transform:translate(-50%,-50%);}
+.layout-resizer.row-resizer{cursor:row-resize;height:6px;margin:2px 0;width:100%;}
+.layout-resizer.row-resizer::after{top:50%;left:50%;width:36px;height:3px;transform:translate(-50%,-50%);}
+.layout-resizer:hover,.layout-resizer.dragging{background:rgba(16,185,129,.18);}
+.layout-resizer:hover::after,.layout-resizer.dragging::after{background:rgba(16,185,129,.55);}
+.holo-panel{background:var(--bg-glass);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);
+  border:1px solid var(--border-soft);border-radius:18px;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 10px 40px rgba(28,60,45,.10);transition:border-color .4s,box-shadow .4s;position:relative;
+  height:100%;min-width:140px;min-height:60px;}
+.holo-panel:hover{border-color:rgba(16,185,129,.22);box-shadow:0 14px 50px rgba(28,60,45,.14);}
+.holo-panel::after{content:'';position:absolute;top:9px;left:9px;width:9px;height:9px;
+  border-top:1.5px solid rgba(16,185,129,.35);border-left:1.5px solid rgba(16,185,129,.35);border-radius:3px 0 0 0;pointer-events:none;}
+.holo-panel::before{content:'';position:absolute;bottom:9px;right:9px;width:9px;height:9px;
+  border-bottom:1.5px solid rgba(16,185,129,.35);border-right:1.5px solid rgba(16,185,129,.35);border-radius:0 0 3px 0;pointer-events:none;}
+.panel-title{font-family:var(--font-display);font-size:10px;text-transform:uppercase;letter-spacing:.16em;
+  color:var(--white-mist);opacity:.85;padding:13px 20px;border-bottom:1px solid rgba(241,245,249,.04);
+  font-weight:600;display:flex;align-items:center;gap:9px;flex-shrink:0;}
+.panel-title::before{content:'';display:inline-block;width:5px;height:5px;border-radius:1px;background:#10b981;
+  box-shadow:0 0 6px rgba(16,185,129,.55);flex-shrink:0;transition:transform .4s,box-shadow .4s;}
+.holo-panel:hover .panel-title::before{transform:rotate(45deg) scale(1.15);box-shadow:0 0 10px rgba(16,185,129,.8);}
+.panel-scroll{flex:1;overflow-y:auto;padding:16px 20px;scroll-behavior:smooth;}
+.panel-scroll::-webkit-scrollbar,.config-stack::-webkit-scrollbar{width:5px;}
+.panel-scroll::-webkit-scrollbar-thumb,.config-stack::-webkit-scrollbar-thumb{background:rgba(16,185,129,.25);border-radius:10px;}
+.tree-node{padding:9px 12px;border-radius:7px;font-size:12px;color:var(--text-muted);cursor:pointer;
+  display:flex;align-items:center;gap:9px;margin-bottom:5px;
+  transition:background .3s,color .3s,transform .3s,box-shadow .3s;}
+.tree-node:hover{background:rgba(20,40,30,.05);color:var(--white-snow);transform:translateX(4px);}
+.tree-node.active{background:rgba(16,185,129,.12);color:var(--white-snow);font-weight:600;box-shadow:inset 1px 0 0 var(--border-active);}
+.workspace-split{display:grid;grid-template-rows:1fr 6px 110px;height:100%;}
+.matrix-container{display:flex;gap:20px;height:100%;}
+.matrix-selectors{display:flex;flex-direction:column;gap:10px;}
+.matrix-tab{width:44px;height:44px;background:var(--bg-glass);border:1px solid var(--border-soft);border-radius:11px;
+  display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:14px;font-weight:600;
+  color:var(--text-muted);cursor:pointer;transition:all .35s var(--ease-smooth);}
+.matrix-tab:hover{color:var(--white-snow);border-color:rgba(28,60,45,.25);transform:scale(1.06);}
+.matrix-tab.active-tab{color:var(--white-snow);background:rgba(16,185,129,.15);border-color:var(--border-active);
+  box-shadow:0 0 20px var(--glow-mint);animation:pulseGlow 2s infinite alternate;}
+@keyframes pulseGlow{0%{box-shadow:0 0 12px rgba(16,185,129,.2)}100%{box-shadow:0 0 24px rgba(16,185,129,.45)}}
+.config-stack{flex:1;overflow-y:auto;padding-right:4px;scroll-behavior:smooth;}
+.group-content-card{display:none;flex-direction:column;gap:13px;}
+.group-content-card.active-card{display:flex;animation:cardEnter .4s var(--ease-smooth) both;}
+@keyframes cardEnter{from{opacity:0;transform:translateY(8px) scale(.992)}to{opacity:1;transform:none}}
+.hidden{display:none !important;pointer-events:none;}
+.cyber-dropzone{border:1px dashed rgba(28,60,45,.18);background:rgba(255,255,255,.35);border-radius:11px;
+  padding:15px;text-align:center;cursor:pointer;position:relative;
+  transition:border-color .35s,background .35s,transform .35s,box-shadow .35s;}
+.cyber-dropzone:hover{border-color:var(--border-active);background:rgba(16,185,129,.04);
+  box-shadow:0 6px 22px rgba(16,185,129,.10);transform:translateY(-1px);}
+.cyber-dropzone.drag-over{border-color:var(--border-active);background:rgba(16,185,129,.08);box-shadow:0 0 0 3px var(--glow-mint);}
+.cyber-dropzone input[type="file"]{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;}
+.cyber-dropzone span{font-size:11px;color:var(--white-mist);font-weight:500;}
+.input-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.field-group label{display:block;font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;
+  color:var(--text-muted);margin-bottom:4px;font-weight:500;letter-spacing:.08em;transition:color .3s;}
+.field-group:focus-within label{color:var(--mint);}
+.vector-badge{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);color:#0d9488;
+  padding:9px 12px;border-radius:8px;font-family:var(--font-mono);font-size:10.5px;display:flex;flex-direction:column;gap:7px;}
+select,input[type="number"],input[type="text"]{width:100%;background:rgba(255,255,255,.85);
+  border:1px solid var(--border-soft);border-radius:7px;padding:0 10px;color:#1c2b22;
+  font-family:var(--font-body);font-size:11.5px;font-weight:500;outline:none;height:30px;
+  transition:border-color .25s,background .25s,box-shadow .25s;}
+select,input[type="number"]{font-family:var(--font-mono);}
+select:focus,input[type="number"]:focus,input[type="text"]:focus{
+  border-color:var(--border-active);background:rgba(255,255,255,.95);box-shadow:0 0 10px var(--glow-mint);}
+.toggle-switch-container{display:flex;background:rgba(20,40,30,.05);padding:3px;border-radius:7px;border:1px solid var(--border-soft);}
+.toggle-option{flex:1;text-align:center;font-family:var(--font-mono);font-size:9.5px;font-weight:600;
+  padding:5px 0;border-radius:5px;cursor:pointer;color:var(--text-muted);transition:background .3s,color .3s,box-shadow .3s;}
+.toggle-option:hover{color:var(--white-snow);}
+.toggle-option.active-toggle{background:var(--white-pure);color:var(--white-snow);box-shadow:0 2px 6px rgba(0,0,0,.05);}
+.console-layout{display:flex;align-items:center;justify-content:space-between;padding:0 22px;}
+.btn-cyber-run{background:var(--emerald-glow);border:none;color:var(--white-pure);padding:11px 24px;
+  border-radius:11px;font-family:var(--font-display);font-weight:600;font-size:12px;letter-spacing:.03em;
+  cursor:pointer;box-shadow:0 4px 15px rgba(16,185,129,.2);transition:transform .35s,box-shadow .35s,filter .3s;position:relative;overflow:hidden;}
+.btn-cyber-run::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.35) 50%,transparent 70%);
+  transform:translateX(-100%);transition:transform .6s;}
+.btn-cyber-run:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(16,185,129,.45);}
+.btn-cyber-run:hover::after{transform:translateX(100%);}
+.btn-cyber-run:active{transform:translateY(0) scale(.985);}
+.radial-progress-box{position:relative;width:52px;height:52px;}
+.radial-svg{transform:rotate(-90deg);}
+.track-arc{fill:none;stroke:rgba(28,60,45,.08);stroke-width:4;}
+.fill-arc{fill:none;stroke:var(--mint);stroke-width:4;stroke-linecap:round;
+  stroke-dasharray:138.2;stroke-dashoffset:138.2;transition:stroke-dashoffset .8s,stroke .4s;}
+#status-headline.is-processing{animation:pulse 1.1s infinite alternate;color:var(--mint);}
+#status-headline.is-error{color:#dc2626;}
+.radial-progress-box.is-processing{animation:spinPulse 1.4s infinite linear;}
+@keyframes spinPulse{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.04)}100%{transform:rotate(360deg) scale(1)}}
+.fill-arc.is-error{stroke:#dc2626 !important;}
+@keyframes pulse{from{opacity:.6}to{opacity:1}}
+.visualizer-desk{padding:20px;display:flex;flex-direction:column;height:100%;}
+.canvas-wrapper{flex:1;background-color:#0f0a12;
+  background-image:linear-gradient(rgba(101,163,13,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(101,163,13,.045) 1px,transparent 1px);
+  background-size:26px 26px;border:1px solid rgba(241,245,249,.02);border-radius:14px;position:relative;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;box-shadow:inset 0 10px 40px rgba(0,0,0,.7);}
+.canvas-wrapper::before{content:'';position:absolute;inset:0;border:1px solid var(--border-active);border-radius:14px;pointer-events:none;opacity:.12;}
+.canvas-wrapper.is-active::before{opacity:.35;}
+#output-img{display:block;max-width:95%;max-height:95%;object-fit:contain;border-radius:9px;}
+#empty-notice{font-size:11px;font-family:var(--font-mono);letter-spacing:.04em;color:var(--text-muted);}
+.meta-footer{margin-top:14px;display:flex;align-items:flex-end;justify-content:space-between;}
+#run-meta{font-size:10.5px;color:var(--text-muted);font-family:var(--font-mono);}
+.btn-download{background:rgba(28,43,34,.06);border:1px solid var(--border-soft);color:var(--white-snow);
+  padding:7px 16px;border-radius:7px;font-size:11px;text-decoration:none;font-weight:500;display:none;
+  transition:background .3s,color .3s,border-color .3s,transform .25s,box-shadow .3s;}
+.btn-download.is-visible{display:inline-block;animation:cardEnter .4s var(--ease-smooth) both;}
+.btn-download:hover{background:var(--white-snow);color:var(--white-pure);border-color:var(--white-snow);
+  transform:translateY(-2px);box-shadow:0 6px 18px rgba(28,43,34,.25);}
+.info-note{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:7px;
+  padding:8px 11px;font-family:var(--font-mono);font-size:9.5px;color:#92400e;line-height:1.6;}
+.section-sep{height:1px;background:rgba(20,40,30,.07);margin:4px 0;}
 </style>
 </head>
-
 <body>
-
 <div class="app-shell">
 
-    <header class="app-header">
-        <div class="brand">
-            <div class="brand-mark">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="9" stroke="#06231a" stroke-width="1.6"/>
-                    <path d="M12 4 L14.2 11 L20 12 L14.2 13 L12 20 L9.8 13 L4 12 L9.8 11 Z" fill="#06231a"/>
-                </svg>
-            </div>
-            <div class="brand-text">
-                <div class="brand-name">Elfak GIS Engine Pro</div>
-                <div class="brand-sub">Premium Forest Studio</div>
-            </div>
-        </div>
-        <div class="header-readout">
-            <div class="pip"><span class="pip-dot"></span><span>Engine Status</span><span class="pip-value">Online</span></div>
-            <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs">EPSG:32644</span></div>
-            <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
-        </div>
-    </header>
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9" stroke="#06231a" stroke-width="1.6"/>
+        <path d="M12 4 L14.2 11 L20 12 L14.2 13 L12 20 L9.8 13 L4 12 L9.8 11 Z" fill="#06231a"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand-name">Elfak GIS Engine Pro</div>
+      <div class="brand-sub">Premium Forest Studio</div>
+    </div>
+  </div>
+  <div class="header-readout">
+    <div class="pip"><span class="pip-dot"></span><span>Engine</span><span class="pip-value">Online</span></div>
+    <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs">EPSG:32644</span></div>
+    <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
+  </div>
+</header>
 
-    <div class="app-layout" id="main-layout-container">
+<div class="app-layout" id="main-layout-container">
 
-        <div class="holo-panel">
-            <div class="panel-title">Forest Map Navigator</div>
-            <div class="panel-scroll">
-                <div class="tree-node active" onclick="switchTab('A')">🌲 Group A — Boundary Whole</div>
-                <div class="tree-node" onclick="switchTab('B')">🌲 Group B — Segment Forest</div>
-                <div class="tree-node" onclick="switchTab('C')">🌲 Group C — Sample Plot</div>
-                <div class="tree-node" onclick="switchTab('D')">🌲 Group D — Complex Version A</div>
-                <div class="tree-node" onclick="switchTab('E')">✂️ Group E — Polygon Subdivider</div>
-                <div class="tree-node" onclick="switchTab('F')">🏔️ Group F — Slope Analysis</div>
+  <!-- LEFT NAV -->
+  <div class="holo-panel">
+    <div class="panel-title">Forest Map Navigator</div>
+    <div class="panel-scroll">
+      <div class="tree-node active" onclick="switchTab('A')">🌲 Group A — Boundary Whole</div>
+      <div class="tree-node" onclick="switchTab('B')">🌲 Group B — Segment Forest</div>
+      <div class="tree-node" onclick="switchTab('C')">🌲 Group C — Sample Plot</div>
+      <div class="tree-node" onclick="switchTab('D')">🌲 Group D — Complex Version</div>
+      <div class="tree-node" onclick="switchTab('E')">✂️ Group E — Polygon Subdivider</div>
+      <div class="tree-node" onclick="switchTab('F')">🏔️ Group F — Slope Analysis</div>
+      <div class="section-sep" style="margin-top:20px;"></div>
+      <div class="field-group" style="margin-top:14px;">
+        <label>Target GIS Projection</label>
+        <select id="zone" onchange="document.getElementById('header-crs').textContent='EPSG:326'+this.value">
+          <option value="44">UTM Zone 44N (EPSG:32644)</option>
+          <option value="45">UTM Zone 45N (EPSG:32645)</option>
+          <option value="43">UTM Zone 43N (EPSG:32643)</option>
+          <option value="46">UTM Zone 46N (EPSG:32646)</option>
+        </select>
+      </div>
+    </div>
+  </div>
 
-                <div style="margin-top: 35px;">
-                    <div class="field-group">
-                        <label>Target GIS Projection</label>
-                        <select id="zone" onchange="document.getElementById('header-crs').textContent = 'EPSG:326' + this.value">
-                            <option value="44">UTM Zone 44N (EPSG:32644)</option>
-                            <option value="45">UTM Zone 45N (EPSG:32645)</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-        </div>
+  <div class="layout-resizer col-resizer" id="left-col-handle"></div>
 
-        <div class="layout-resizer col-resizer" id="left-col-handle"></div>
-        <div class="workspace-split" id="center-workspace-container">
+  <!-- CENTER WORKSPACE -->
+  <div class="workspace-split" id="center-workspace-container">
+    <div class="holo-panel">
+      <div class="panel-title">Parameter Settings Matrix</div>
+      <div class="panel-scroll matrix-container">
 
-            <div class="holo-panel">
-                <div class="panel-title">Parameter Settings Matrix</div>
-                <div class="panel-scroll matrix-container">
-
-                    <div class="matrix-selectors">
-                        <div class="matrix-tab active-tab" id="tab-A" onclick="switchTab('A')">A</div>
-                        <div class="matrix-tab" id="tab-B" onclick="switchTab('B')">B</div>
-                        <div class="matrix-tab" id="tab-C" onclick="switchTab('C')">C</div>
-                        <div class="matrix-tab" id="tab-D" onclick="switchTab('D')">D</div>
-                        <div class="matrix-tab" id="tab-E" onclick="switchTab('E')">E</div>
-                        <div class="matrix-tab" id="tab-F" onclick="switchTab('F')">F</div>
-                    </div>
-
-                    <div class="config-stack">
-
-                        <!-- GROUP A -->
-                        <div class="group-content-card active-card" id="card-A">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select Excel Data</span>
-                                <input type="file" class="file">
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order Vector</label><select data-key="Order"></select></div>
-                                <div class="field-group">
-                                    <label>Enter Forest Name</label>
-                                    <input type="text" data-key="forest" value="FOREST" placeholder="Enter Forest Name">
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- GROUP B -->
-                        <div class="group-content-card" id="card-B">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel Data</span><input type="file" class="file"></div>
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
-                            </div>
-                            <div class="field-group"><label>Compartment Identifier</label><select data-key="Compartment"></select></div>
-                        </div>
-
-                        <!-- GROUP C -->
-                        <div class="group-content-card" id="card-C">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
-                                <input type="file" class="file" id="file-c">
-                            </div>
-
-                            <div id="c-dynamic-content">
-                                <div class="field-group" id="c-mode-selector-wrapper">
-                                    <label>Mode Selection</label>
-                                    <div class="toggle-switch-container">
-                                        <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
-                                        <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
-                                    </div>
-                                </div>
-
-                                <div id="c-zip-notice" class="field-group hidden">
-                                    <div class="vector-badge">
-                                        <div style="font-weight: 600; margin-bottom: 2px;">📦 Archive Bundle Map Detected</div>
-                                        <div style="font-size: 10px; opacity: 0.8; margin-bottom: 8px;">Skipping XY matching. Select target layer from the package:</div>
-                                        <div class="field-group" style="width: 100%;">
-                                            <label style="color: #064e3b;">Target Vector Layer (.shp)</label>
-                                            <select id="c-shp-selector" style="background: #ffffff; border-color: rgba(16, 185, 129, 0.4); color: #064e3b;"></select>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div id="c-coordinate-fields-container">
-                                    <div class="input-row" id="c-vector-row-1">
-                                        <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                        <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                                    </div>
-                                    <div class="input-row" id="c-vector-row-2">
-                                        <div class="field-group"><label>Order Vector</label><select data-key="Order"></select></div>
-                                        <div class="field-group hidden" id="c-forest-wrapper">
-                                            <label>Forest Identifier</label>
-                                            <select data-key="Forest"></select>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="field-group" style="margin-top: 4px;">
-                                    <label>Sample Grid Settings (leave blank for defaults)</label>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group">
-                                        <label>Cell Width — w (default 50)</label>
-                                        <input type="number" id="c-grid-w" min="0.01" step="any" placeholder="50">
-                                    </div>
-                                    <div class="field-group">
-                                        <label>Cell Height — h (default 50)</label>
-                                        <input type="number" id="c-grid-h" min="0.01" step="any" placeholder="50">
-                                    </div>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group">
-                                        <label>Grid Rows (default 10)</label>
-                                        <input type="number" id="c-grid-rows" min="1" step="1" placeholder="10">
-                                    </div>
-                                    <div class="field-group">
-                                        <label>Grid Cols (default 10)</label>
-                                        <input type="number" id="c-grid-cols" min="1" step="1" placeholder="10">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- GROUP D — Whole Forest or Segmented (Forest → Compartment subfolders) -->
-                        <div class="group-content-card" id="card-D">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Forest File</span><input type="file" class="file"></div>
-
-                            <!-- Mode toggle — mirrors Group C -->
-                            <div class="field-group">
-                                <label>Mode Selection</label>
-                                <div class="toggle-switch-container">
-                                    <div class="toggle-option active-toggle" id="d-toggle-A" onclick="setGroupDSubMode('A')">Whole Forest</div>
-                                    <div class="toggle-option" id="d-toggle-B" onclick="setGroupDSubMode('B')">Segmented</div>
-                                </div>
-                            </div>
-
-                            <!-- Output hint badge — updates with mode -->
-                            <div class="vector-badge" id="d-mode-hint">
-                                <div style="font-weight:600;" id="d-hint-title">📂 One folder per Forest</div>
-                                <div style="font-size:10px;opacity:0.8;" id="d-hint-sub">Forest_A/ → Polygon.shp · Line.shp · Point.shp</div>
-                            </div>
-
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
-                            </div>
-
-                            <!-- Compartment — shown only in Segmented mode -->
-                            <div class="field-group" id="d-comp-wrapper" style="display:none;">
-                                <label>Compartment Identifier</label>
-                                <select data-key="Compartment"></select>
-                            </div>
-                        </div>
-
-                        <!-- GROUP E — Polygon Subdivider (CSV/Excel OR ZIP/SHP) -->
-                        <div class="group-content-card" id="card-E">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✂️ Select Boundary File (CSV/XLS or ZIP)</span>
-                                <input type="file" class="file" id="file-e">
-                            </div>
-
-                            <!-- ZIP notice — shown when a .zip is uploaded -->
-                            <div id="e-zip-notice" class="field-group hidden">
-                                <div class="vector-badge">
-                                    <div style="font-weight:600;margin-bottom:2px;">📦 Archive Bundle Detected</div>
-                                    <div style="font-size:10px;opacity:0.8;margin-bottom:8px;">Select the polygon layer to subdivide:</div>
-                                    <div class="field-group" style="width:100%;">
-                                        <label style="color:#064e3b;">Target Polygon Layer (.shp)</label>
-                                        <select id="e-shp-selector" style="background:#ffffff;border-color:rgba(16,185,129,0.4);color:#064e3b;"></select>
-                                    </div>
-                                    <div style="font-size:10px;opacity:0.75;margin-top:6px;">Each polygon feature in the layer will be subdivided independently into <span id="e-zip-n-display">4</span> compartments.</div>
-                                </div>
-                            </div>
-
-                            <!-- CSV/Excel fields — hidden when ZIP is uploaded -->
-                            <div id="e-csv-fields">
-                                <!-- Mode toggle: Single Forest vs Multi-Forest -->
-                                <div class="field-group">
-                                    <label>Forest Input Mode</label>
-                                    <div class="toggle-switch-container">
-                                        <div class="toggle-option active-toggle" id="e-toggle-A" onclick="setGroupESubMode('A')">Single Forest</div>
-                                        <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
-                                    </div>
-                                </div>
-
-                                <!-- Output structure hint -->
-                                <div class="vector-badge" id="e-mode-hint">
-                                    <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
-                                    <div style="font-size:10px;opacity:0.8;" id="e-hint-sub">compartments.shp · compartment_summary.xlsx</div>
-                                </div>
-
-                                <div class="input-row">
-                                    <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                    <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                    <!-- Forest col shown only in Multi-Forest mode -->
-                                    <div class="field-group" id="e-forest-wrapper" style="display:none;">
-                                        <label>Forest Identifier</label>
-                                        <select data-key="Forest"></select>
-                                    </div>
-                                    <!-- Forest name input for Single mode -->
-                                    <div class="field-group" id="e-forestname-wrapper">
-                                        <label>Forest Name</label>
-                                        <input type="text" data-key="forest" value="FOREST" placeholder="Forest name">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Number of compartments — always visible -->
-                            <div class="field-group">
-                                <label>Number of Compartments to Create</label>
-                                <input type="number" id="e-n-compartments" min="2" max="200" step="1" value="4"
-                                       placeholder="4" oninput="document.getElementById('e-zip-n-display').textContent=this.value||4">
-                            </div>
-
-                            <!-- Algorithm info -->
-                            <div class="vector-badge" style="background:rgba(101,163,13,0.08);border-color:rgba(101,163,13,0.3);">
-                                <div style="font-weight:600;color:#3f6212;">🌳 Bisection Algorithm</div>
-                                <div style="font-size:10px;opacity:0.85;color:#3f6212;">Iteratively splits along the longest axis at area-balanced positions. Each compartment will be near-equal in area. Output includes Area_ha, Perim_m, and Pct_Area per compartment.</div>
-                            </div>
-                        </div>
-
-                        <!-- GROUP F — DEM Slope Analysis -->
-                        <div class="group-content-card" id="card-F">
-
-                            <!-- Mode selection -->
-                            <div class="field-group">
-                                <label>Boundary Input Mode</label>
-                                <div class="toggle-switch-container">
-                                    <div class="toggle-option active-toggle" id="f-toggle-A" onclick="setGroupFMode('A')">Single Forest</div>
-                                    <div class="toggle-option" id="f-toggle-B" onclick="setGroupFMode('B')">Multi-Forest</div>
-                                    <div class="toggle-option" id="f-toggle-E" onclick="setGroupFMode('E')">Compartments</div>
-                                </div>
-                            </div>
-
-                            <!-- Mode hint -->
-                            <div class="vector-badge" id="f-mode-hint" style="padding:8px 12px;">
-                                <div style="font-size:10px;color:#064e3b;" id="f-mode-hint-text">
-                                    Single boundary → one slope table for the whole forest
-                                </div>
-                            </div>
-
-                            <!-- Step 1: Forest Boundary -->
-                            <div class="field-group"><label>Step 1 — Forest Boundary (CSV/XLS or ZIP/SHP)</label></div>
-                            <div class="cyber-dropzone" id="f-boundary-drop">
-                                <span class="dz-text" id="f-boundary-label">🌲 Upload Boundary File</span>
-                                <input type="file" id="file-f-boundary" accept=".csv,.xlsx,.xls,.zip">
-                            </div>
-
-                            <!-- ZIP notice -->
-                            <div id="f-zip-notice" class="field-group hidden">
-                                <div class="vector-badge">
-                                    <div style="font-weight:600;margin-bottom:4px;">📦 Archive Detected</div>
-                                    <div class="field-group" style="width:100%;margin-bottom:6px;">
-                                        <label style="color:#064e3b;">Boundary Polygon Layer (.shp)</label>
-                                        <select id="f-shp-selector" style="background:#fff;border-color:rgba(16,185,129,0.4);color:#064e3b;"></select>
-                                    </div>
-                                    <!-- Compartment column for ZIP (modes B and E) -->
-                                    <div id="f-zip-comp-wrapper" class="field-group hidden" style="width:100%;">
-                                        <label style="color:#064e3b;">Grouping Column Name (Forest / Compartment)</label>
-                                        <input type="text" id="f-zip-comp-col"
-                                               style="background:#fff;border-color:rgba(16,185,129,0.4);color:#064e3b;"
-                                               placeholder="e.g. Forest or Compartment">
-                                        <div style="font-size:9px;opacity:0.7;margin-top:3px;color:#064e3b;">
-                                            Type the exact column name from your SHP attribute table
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- CSV fields -->
-                            <div id="f-csv-fields">
-                                <div class="input-row">
-                                    <div class="field-group"><label>X Coordinate</label><select id="f-x-col"><option>X</option></select></div>
-                                    <div class="field-group"><label>Y Coordinate</label><select id="f-y-col"><option>Y</option></select></div>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group"><label>Point Order</label><select id="f-order-col"><option value="">— none —</option></select></div>
-                                    <div class="field-group"><label>Forest Name</label>
-                                        <input type="text" id="f-forest-name" value="FOREST" placeholder="Forest name">
-                                    </div>
-                                </div>
-                                <!-- Compartment col for CSV modes B/E -->
-                                <div id="f-csv-comp-wrapper" class="field-group hidden">
-                                    <label>Grouping Column (Forest / Compartment)</label>
-                                    <select id="f-csv-comp-col"><option value="">— auto detect —</option></select>
-                                </div>
-                            </div>
-
-                            <!-- Step 2: DEM -->
-                            <div class="field-group" style="margin-top:4px;">
-                                <label>Step 2 — Raw DEM GeoTIFF (slope computed automatically)</label>
-                            </div>
-                            <div class="cyber-dropzone" id="f-dem-drop">
-                                <span class="dz-text" id="f-dem-label">🏔️ Upload DEM (.tif / .tiff)</span>
-                                <input type="file" id="file-f-dem" accept=".tif,.tiff">
-                            </div>
-
-                            <!-- Class info -->
-                            <div class="vector-badge" style="background:rgba(101,163,13,0.08);border-color:rgba(101,163,13,0.3);">
-                                <div style="font-weight:600;color:#3f6212;">📊 Output Slope Classes</div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px;">
-                                    <div style="background:#2ecc71;color:white;border-radius:6px;padding:6px;text-align:center;font-size:10px;font-weight:600;">Class 1<br>&lt; 19°<br><span style="font-weight:400;">Gentle</span></div>
-                                    <div style="background:#f39c12;color:white;border-radius:6px;padding:6px;text-align:center;font-size:10px;font-weight:600;">Class 2<br>19–31°<br><span style="font-weight:400;">Moderate</span></div>
-                                    <div style="background:#e74c3c;color:white;border-radius:6px;padding:6px;text-align:center;font-size:10px;font-weight:600;">Class 3<br>&gt; 31°<br><span style="font-weight:400;">Steep</span></div>
-                                </div>
-                            </div>
-
-                        </div>
-
-                    </div>
-                </div>
-            </div>
-
-            <div class="layout-resizer row-resizer" id="center-row-handle"></div>
-
-            <div class="holo-panel console-layout">
-                <div>
-                    <button class="btn-cyber-run" onclick="runPipeline()">Execute Process</button>
-                </div>
-                <div style="display: flex; align-items: center; gap: 16px;">
-                    <div style="text-align: right;">
-                        <div id="status-headline" style="font-size:12px; font-weight:600; font-family: var(--font-display); color:var(--white-snow);">Core Standby</div>
-                        <div id="status-sub" style="font-size:10px; font-family: var(--font-mono); letter-spacing:0.04em; color:var(--text-muted); margin-top:2px;">Topology Balanced</div>
-                    </div>
-                    <div class="radial-progress-box">
-                        <svg class="radial-svg" width="56" height="56">
-                            <circle class="track-arc" cx="28" cy="28" r="24"></circle>
-                            <circle class="fill-arc" id="radial-bar" cx="28" cy="28" r="24"></circle>
-                        </svg>
-                    </div>
-                </div>
-            </div>
-
+        <div class="matrix-selectors">
+          <div class="matrix-tab active-tab" id="tab-A" onclick="switchTab('A')">A</div>
+          <div class="matrix-tab" id="tab-B" onclick="switchTab('B')">B</div>
+          <div class="matrix-tab" id="tab-C" onclick="switchTab('C')">C</div>
+          <div class="matrix-tab" id="tab-D" onclick="switchTab('D')">D</div>
+          <div class="matrix-tab" id="tab-E" onclick="switchTab('E')">E</div>
+          <div class="matrix-tab" id="tab-F" onclick="switchTab('F')">F</div>
         </div>
 
-        <div class="layout-resizer col-resizer" id="right-col-handle"></div>
+        <div class="config-stack">
 
-        <div class="holo-panel visualizer-desk">
-            <!-- Preview tab switcher -->
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 12px 0;">
-                <div class="panel-title" style="padding:0;">Dynamic Preview</div>
-                <div class="toggle-switch-container" style="width:auto;gap:0;" id="preview-tab-bar">
-                    <div class="toggle-option active-toggle" id="ptab-static" onclick="switchPreviewTab('static')"
-                         style="padding:5px 14px;font-size:10px;">🗺 Static</div>
-                    <div class="toggle-option" id="ptab-ge" onclick="switchPreviewTab('ge')"
-                         style="padding:5px 14px;font-size:10px;">🌍 Google Earth</div>
+          <!-- GROUP A -->
+          <div class="group-content-card active-card" id="card-A">
+            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel / CSV Data</span><input type="file" class="file"></div>
+            <div class="input-row">
+              <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+              <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+              <div class="field-group"><label>Forest Name</label><input type="text" data-key="forest" value="FOREST" placeholder="Enter name"></div>
+            </div>
+            <div class="vector-badge" style="background:rgba(101,163,13,.08);border-color:rgba(101,163,13,.3);">
+              <div style="font-weight:600;color:#3f6212;">ℹ️ Output includes total area (ha) in preview</div>
+            </div>
+          </div>
+
+          <!-- GROUP B -->
+          <div class="group-content-card" id="card-B">
+            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel / CSV Data</span><input type="file" class="file"></div>
+            <div class="input-row">
+              <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+              <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+              <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
+            </div>
+            <div class="field-group"><label>Compartment Identifier</label><select data-key="Compartment"></select></div>
+          </div>
+
+          <!-- GROUP C -->
+          <div class="group-content-card" id="card-C">
+            <div class="cyber-dropzone"><span class="dz-text">✨ CSV / XLS or ZIP Shapefile</span><input type="file" class="file" id="file-c"></div>
+            <div class="field-group" id="c-mode-wrapper">
+              <label>Mode</label>
+              <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
+                <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
+              </div>
+            </div>
+            <div id="c-zip-notice" class="hidden">
+              <div class="vector-badge">
+                <div style="font-weight:600;">📦 Archive Detected</div>
+                <div class="field-group" style="width:100%;margin-top:4px;">
+                  <label style="color:#064e3b;">Target Layer (.shp)</label>
+                  <select id="c-shp-selector" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;"></select>
                 </div>
+              </div>
+            </div>
+            <div id="c-coord-fields">
+              <div class="input-row">
+                <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+                <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>Order</label><select data-key="Order"></select></div>
+                <div class="field-group hidden" id="c-forest-wrapper"><label>Forest ID</label><select data-key="Forest"></select></div>
+              </div>
+            </div>
+            <div class="section-sep"></div>
+            <div class="input-row">
+              <div class="field-group"><label>Cell Width w (default 50)</label><input type="number" id="c-grid-w" min="0.01" step="any" placeholder="50"></div>
+              <div class="field-group"><label>Cell Height h (default 50)</label><input type="number" id="c-grid-h" min="0.01" step="any" placeholder="50"></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Grid Rows (default 10)</label><input type="number" id="c-grid-rows" min="1" step="1" placeholder="10"></div>
+              <div class="field-group"><label>Grid Cols (default 10)</label><input type="number" id="c-grid-cols" min="1" step="1" placeholder="10"></div>
+            </div>
+          </div>
+
+          <!-- GROUP D -->
+          <div class="group-content-card" id="card-D">
+            <div class="cyber-dropzone"><span class="dz-text">✨ Multi-Forest File</span><input type="file" class="file"></div>
+            <div class="field-group">
+              <label>Mode</label>
+              <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="d-toggle-A" onclick="setGroupDSubMode('A')">Whole Forest</div>
+                <div class="toggle-option" id="d-toggle-B" onclick="setGroupDSubMode('B')">Segmented</div>
+              </div>
+            </div>
+            <div class="vector-badge" id="d-mode-hint">
+              <div style="font-weight:600;" id="d-hint-title">📂 One folder per Forest</div>
+              <div style="font-size:10px;opacity:.8;" id="d-hint-sub">Forest_A/ → Polygon.shp · Line.shp · Point.shp</div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+              <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+              <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
+            </div>
+            <div class="field-group hidden" id="d-comp-wrapper">
+              <label>Compartment Identifier</label><select data-key="Compartment"></select>
+            </div>
+          </div>
+
+          <!-- GROUP E -->
+          <div class="group-content-card" id="card-E">
+            <div class="cyber-dropzone"><span class="dz-text">✂️ CSV / XLS or ZIP Shapefile</span><input type="file" class="file" id="file-e"></div>
+
+            <!-- ZIP notice -->
+            <div id="e-zip-notice" class="hidden">
+              <div class="vector-badge">
+                <div style="font-weight:600;">📦 Archive Detected — Select polygon layer</div>
+                <div class="field-group" style="width:100%;margin-top:4px;">
+                  <label style="color:#064e3b;">Target Polygon Layer (.shp)</label>
+                  <select id="e-shp-selector" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;"></select>
+                </div>
+                <!-- Forest identifier column from SHP attributes -->
+                <div class="field-group" style="width:100%;margin-top:6px;" id="e-zip-forest-col-wrapper">
+                  <label style="color:#064e3b;">Forest Identifier Column in SHP (for Multi-Forest)</label>
+                  <select id="e-zip-forest-col" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;">
+                    <option value="">— auto detect —</option>
+                  </select>
+                </div>
+                <div style="font-size:9.5px;opacity:.7;margin-top:4px;">
+                  Each polygon feature will be subdivided into <span id="e-zip-n-display">4</span> compartments independently.
+                </div>
+              </div>
             </div>
 
-            <!-- Static preview (existing) -->
-            <div id="preview-static" style="flex:1;display:flex;flex-direction:column;min-height:0;">
-                <div class="canvas-wrapper" style="flex:1;">
-                    <div id="empty-notice" style="font-size:12px; font-family: var(--font-mono); letter-spacing:0.04em; color:var(--text-muted);">Awaiting data rendering execution...</div>
-                    <img id="output-img" alt="Spatial Matrix Layout Output Workspace">
+            <!-- CSV fields -->
+            <div id="e-csv-fields">
+              <div class="field-group">
+                <label>Forest Input Mode</label>
+                <div class="toggle-switch-container">
+                  <div class="toggle-option active-toggle" id="e-toggle-A" onclick="setGroupESubMode('A')">Single Forest</div>
+                  <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
                 </div>
+              </div>
+              <div class="vector-badge" id="e-mode-hint">
+                <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
+                <div style="font-size:10px;opacity:.8;" id="e-hint-sub">division_points.xlsx exported for ArcGIS reconstruction</div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+                <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+                <div class="field-group hidden" id="e-forest-wrapper"><label>Forest Identifier</label><select data-key="Forest"></select></div>
+                <div class="field-group" id="e-forestname-wrapper"><label>Forest Name</label><input type="text" data-key="forest" value="FOREST" placeholder="Name"></div>
+              </div>
             </div>
 
-            <!-- Google Earth Web panel -->
-            <div id="preview-ge" style="flex:1;display:none;flex-direction:column;min-height:0;padding:8px 0;">
-                <!-- Idle state -->
-                <div id="ge-idle" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(15,10,18,0.04);border-radius:14px;border:1px dashed var(--border-soft);">
-                    <div style="font-size:28px;">🌍</div>
-                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:center;max-width:240px;line-height:1.6;">
-                        Run the pipeline first, then export your output to Google Earth.
-                    </div>
-                </div>
-                <!-- Ready state -->
-                <div id="ge-ready" style="display:none;flex:1;flex-direction:column;gap:12px;overflow-y:auto;">
-                    <div style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.25);border-radius:12px;padding:16px 18px;">
-                        <div style="font-family:var(--font-display);font-size:12px;font-weight:700;color:var(--white-snow);margin-bottom:8px;">🌍 Google Earth Export Ready</div>
-                        <div id="ge-coords" style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:14px;line-height:1.7;"></div>
+            <div class="field-group">
+              <label>Number of Compartments</label>
+              <input type="number" id="e-n-compartments" min="2" max="200" step="1" value="4"
+                     oninput="document.getElementById('e-zip-n-display').textContent=this.value||4">
+            </div>
+            <div class="vector-badge" style="background:rgba(101,163,13,.08);border-color:rgba(101,163,13,.3);">
+              <div style="font-weight:600;color:#3f6212;">📐 Straight-Line Bisection Algorithm</div>
+              <div style="font-size:9.5px;color:#3f6212;opacity:.9;">Cuts along longest axis only — all division lines are perfectly straight. Boundary followed exactly. Division-points Excel + SHP exported for ArcGIS.</div>
+            </div>
+          </div>
 
-                        <!-- Step 1: Download KMZ — primary -->
-                        <div style="font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--white-mist);margin-bottom:6px;">STEP 1 — Download the KMZ</div>
-                        <a id="ge-kmz-btn" href="#" download="output.kmz"
-                           style="display:block;text-align:center;background:linear-gradient(135deg,#34d399,#059669);
-                                  color:white;padding:12px 0;border-radius:10px;font-family:var(--font-display);
-                                  font-weight:600;font-size:13px;text-decoration:none;margin-bottom:14px;
-                                  box-shadow:0 4px 14px rgba(16,185,129,0.3);">
-                            ⬇ Download KMZ File
-                        </a>
-
-                        <!-- Step 2: Open GE Desktop or fly-to -->
-                        <div style="font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--white-mist);margin-bottom:6px;">STEP 2 — View in Google Earth</div>
-                        <div style="display:flex;gap:8px;margin-bottom:14px;">
-                            <a id="ge-open-btn" href="#" target="_blank" rel="noopener"
-                               style="flex:1;display:block;text-align:center;background:rgba(28,43,34,0.06);
-                                      border:1px solid var(--border-soft);color:var(--white-snow);
-                                      padding:10px 0;border-radius:10px;font-family:var(--font-display);
-                                      font-weight:500;font-size:11px;text-decoration:none;">
-                                🌐 Fly to Location<br><span style="font-size:9px;opacity:0.6;">(Google Earth Web — no polygons)</span>
-                            </a>
-                            <div style="flex:1;background:rgba(28,43,34,0.04);border:1px solid var(--border-soft);
-                                        border-radius:10px;padding:10px;text-align:center;font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);line-height:1.6;">
-                                🖥 <strong>Google Earth Desktop / Pro</strong><br>
-                                Open the KMZ → all polygons, lines &amp; points appear automatically
-                            </div>
-                        </div>
-
-                        <!-- Why no polygon in GE Web -->
-                        <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:10px 12px;font-family:var(--font-mono);font-size:9.5px;color:#92400e;line-height:1.6;">
-                            ⚠ <strong>Google Earth Web</strong> does not support embedding or loading local KMZ files from a web app — this is a browser security restriction, not a bug. For full polygon overlay, use <strong>Google Earth Desktop / Pro</strong> (free download).
-                        </div>
-                    </div>
-                </div>
+          <!-- GROUP F -->
+          <div class="group-content-card" id="card-F">
+            <div class="field-group">
+              <label>Analysis Mode</label>
+              <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="f-toggle-A" onclick="setGroupFMode('A')">Single Forest</div>
+                <div class="toggle-option" id="f-toggle-B" onclick="setGroupFMode('B')">Multi-Forest</div>
+                <div class="toggle-option" id="f-toggle-E" onclick="setGroupFMode('E')">Compartments</div>
+              </div>
+            </div>
+            <div class="vector-badge" id="f-mode-hint" style="padding:7px 11px;">
+              <div style="font-size:9.5px;color:#064e3b;" id="f-mode-hint-text">Single boundary → one slope table for the whole forest</div>
             </div>
 
-            <div class="meta-footer">
-                <div>
-                    <div id="run-meta" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Metrics: Ready</div>
-                </div>
-                <a id="download-btn" class="btn-download" href="#">Export Package (ZIP)</a>
+            <!-- Boundary file -->
+            <div class="field-group"><label>Step 1 — Forest Boundary (CSV/XLS or ZIP/SHP)</label></div>
+            <div class="cyber-dropzone" id="f-boundary-drop">
+              <span class="dz-text" id="f-boundary-label">🌲 Upload Boundary File</span>
+              <input type="file" id="file-f-boundary" accept=".csv,.xlsx,.xls,.zip">
             </div>
+
+            <!-- ZIP notice -->
+            <div id="f-zip-notice" class="hidden">
+              <div class="vector-badge">
+                <div style="font-weight:600;margin-bottom:4px;">📦 Archive Detected</div>
+                <div class="field-group" style="width:100%;margin-bottom:6px;">
+                  <label style="color:#064e3b;">Boundary Polygon Layer (.shp)</label>
+                  <select id="f-shp-selector" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;"></select>
+                </div>
+                <div id="f-zip-comp-wrapper" class="field-group hidden" style="width:100%;">
+                  <label style="color:#064e3b;">Grouping Column Name</label>
+                  <input type="text" id="f-zip-comp-col" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;" placeholder="e.g. Forest or Compartment">
+                </div>
+              </div>
+            </div>
+
+            <!-- CSV fields -->
+            <div id="f-csv-fields">
+              <div class="input-row">
+                <div class="field-group"><label>X / Easting</label><select id="f-x-col"><option>X</option></select></div>
+                <div class="field-group"><label>Y / Northing</label><select id="f-y-col"><option>Y</option></select></div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>Point Order</label><select id="f-order-col"><option value="">— none —</option></select></div>
+                <div class="field-group"><label>Forest Name</label><input type="text" id="f-forest-name" value="FOREST" placeholder="Forest name"></div>
+              </div>
+              <div id="f-csv-comp-wrapper" class="field-group hidden">
+                <label>Grouping Column (Forest / Compartment)</label>
+                <select id="f-csv-comp-col"><option value="">— auto detect —</option></select>
+              </div>
+            </div>
+
+            <!-- DEM file -->
+            <div class="field-group" style="margin-top:2px;"><label>Step 2 — Raw DEM GeoTIFF</label></div>
+            <div class="cyber-dropzone" id="f-dem-drop">
+              <span class="dz-text" id="f-dem-label">🏔️ Upload DEM (.tif / .tiff)</span>
+              <input type="file" id="file-f-dem" accept=".tif,.tiff">
+            </div>
+
+            <!-- Field area recalibration -->
+            <div class="field-group">
+              <label>Field Area (ha) — optional, for recalibration</label>
+              <input type="number" id="f-field-area" min="0" step="any" placeholder="e.g. 47.5 — leave blank to skip">
+            </div>
+
+            <div class="vector-badge" style="background:rgba(101,163,13,.08);border-color:rgba(101,163,13,.3);">
+              <div style="font-weight:600;color:#3f6212;">📊 Slope Classes</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:6px;">
+                <div style="background:#2ecc71;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9.5px;font-weight:600;">Class 1<br>&lt;19°<br>Gentle</div>
+                <div style="background:#f39c12;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9.5px;font-weight:600;">Class 2<br>19–31°<br>Moderate</div>
+                <div style="background:#e74c3c;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9.5px;font-weight:600;">Class 3<br>&gt;31°<br>Steep</div>
+              </div>
+            </div>
+            <div class="info-note">⚙️ Workflow: Rect DEM extract (20% buffer) → slope → reclassify → raster-to-poly → dissolve → clip to boundary → calibrate</div>
+          </div>
+
+        </div><!-- config-stack -->
+      </div><!-- matrix-container -->
+    </div><!-- holo-panel -->
+
+    <div class="layout-resizer row-resizer" id="center-row-handle"></div>
+
+    <!-- CONSOLE BAR -->
+    <div class="holo-panel console-layout">
+      <button class="btn-cyber-run" onclick="runPipeline()">▶ Execute Process</button>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="text-align:right;">
+          <div id="status-headline" style="font-size:12px;font-weight:600;font-family:var(--font-display);">Core Standby</div>
+          <div id="status-sub" style="font-size:9.5px;font-family:var(--font-mono);letter-spacing:.04em;color:var(--text-muted);margin-top:2px;">Topology Balanced</div>
         </div>
+        <div class="radial-progress-box">
+          <svg class="radial-svg" width="52" height="52">
+            <circle class="track-arc" cx="26" cy="26" r="22"></circle>
+            <circle class="fill-arc" id="radial-bar" cx="26" cy="26" r="22"></circle>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div><!-- workspace-split -->
 
+  <div class="layout-resizer col-resizer" id="right-col-handle"></div>
+
+  <!-- RIGHT PREVIEW PANEL -->
+  <div class="holo-panel visualizer-desk">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 10px 0;flex-shrink:0;">
+      <div class="panel-title" style="padding:0;">Dynamic Preview</div>
+      <div class="toggle-switch-container" style="width:auto;">
+        <div class="toggle-option active-toggle" id="ptab-static" onclick="switchPreviewTab('static')" style="padding:4px 12px;font-size:9.5px;">🗺 Static</div>
+        <div class="toggle-option" id="ptab-ge" onclick="switchPreviewTab('ge')" style="padding:4px 12px;font-size:9.5px;">🌍 Google Earth</div>
+      </div>
     </div>
 
-</div>
+    <div id="preview-static" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+      <div class="canvas-wrapper" style="flex:1;">
+        <div id="empty-notice">Awaiting data rendering execution...</div>
+        <img id="output-img" alt="Output">
+      </div>
+    </div>
+
+    <div id="preview-ge" style="flex:1;display:none;flex-direction:column;min-height:0;padding:4px 0;">
+      <div id="ge-idle" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(15,10,18,.04);border-radius:12px;border:1px dashed var(--border-soft);">
+        <div style="font-size:26px;">🌍</div>
+        <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);text-align:center;max-width:220px;line-height:1.6;">Run the pipeline first, then export to Google Earth.</div>
+      </div>
+      <div id="ge-ready" style="display:none;flex:1;flex-direction:column;gap:10px;overflow-y:auto;">
+        <div style="background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.25);border-radius:11px;padding:14px 16px;">
+          <div style="font-family:var(--font-display);font-size:12px;font-weight:700;margin-bottom:6px;">🌍 Google Earth Export Ready</div>
+          <div id="ge-coords" style="font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);margin-bottom:12px;line-height:1.7;"></div>
+          <div style="font-family:var(--font-mono);font-size:9.5px;font-weight:600;color:var(--white-mist);margin-bottom:5px;">STEP 1 — Download KMZ</div>
+          <a id="ge-kmz-btn" href="#" download="output.kmz" style="display:block;text-align:center;background:linear-gradient(135deg,#34d399,#059669);color:white;padding:10px 0;border-radius:9px;font-family:var(--font-display);font-weight:600;font-size:12px;text-decoration:none;margin-bottom:12px;box-shadow:0 4px 14px rgba(16,185,129,.3);">⬇ Download KMZ File</a>
+          <div style="font-family:var(--font-mono);font-size:9.5px;font-weight:600;color:var(--white-mist);margin-bottom:5px;">STEP 2 — View in Google Earth</div>
+          <a id="ge-open-btn" href="#" target="_blank" style="display:block;text-align:center;background:rgba(28,43,34,.06);border:1px solid var(--border-soft);color:var(--white-snow);padding:9px 0;border-radius:9px;font-family:var(--font-display);font-size:11px;text-decoration:none;margin-bottom:10px;">🌐 Fly to Location (GE Web)</a>
+          <div class="info-note">⚠ GE Web cannot load local KMZ. For full polygon overlay use <strong>Google Earth Desktop/Pro</strong> (free).</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="meta-footer">
+      <div id="run-meta">Metrics: Ready</div>
+      <a id="download-btn" class="btn-download" href="#">Export Package (ZIP)</a>
+    </div>
+  </div>
+
+</div><!-- app-layout -->
+</div><!-- app-shell -->
 
 <script>
+const BACKEND_URL = window.location.origin;
 let activeModule = "A";
 let groupCSubMode = "A";
 let groupDSubMode = "A";
 let groupESubMode = "A";
 let groupFMode    = "A";
-const BACKEND_URL = window.location.origin;
 
-/* ── COLUMN ALIAS RESOLVER ─────────────────────────────────────────────── */
+/* ── COLUMN ALIAS RESOLVER ───────────────────────────────────────────── */
 const COL_ALIASES = {
-    X: new Set([
-        "x","xcoord","xcoordinate","xcord","xcords","xcoords",
-        "east","easting","eastings","lon","long","longitude","lng",
-        "pointx","coordx","utme","utmx"
-    ]),
-    Y: new Set([
-        "y","ycoord","ycoordinate","ycord","ycords","ycoords",
-        "north","northing","northings","lat","latitude",
-        "pointy","coordy","utmn","utmy"
-    ]),
-    Order: new Set([
-        "order","id","sn","sno","serial","serialno","serialnumber",
-        "seq","sequence","index","rowid","fid","no","num","number",
-        "plotid","plotno","pointid","pointno","pid"
-    ]),
-    Forest: new Set([
-        "forest","forestname","forestid","forestno","fname",
-        "forestblock","block"
-    ]),
-    Compartment: new Set([
-        "compartment","comp","compartmentno","compartmentid",
-        "compno","compid","section","sectionno"
-    ])
+  X:           new Set(["x","xcoord","xcoordinate","xcord","east","easting","eastings","lon","long","longitude","lng","pointx","coordx","utme","utmx"]),
+  Y:           new Set(["y","ycoord","ycoordinate","ycord","north","northing","northings","lat","latitude","pointy","coordy","utmn","utmy"]),
+  Order:       new Set(["order","id","sn","sno","serial","serialno","seq","sequence","index","rowid","fid","no","num","number","plotid","plotno","pointid","pointno","pid"]),
+  Forest:      new Set(["forest","forestname","forestid","forestno","fname","forestblock","block"]),
+  Compartment: new Set(["compartment","comp","compartmentno","compartmentid","compno","compid","section","sectionno"])
 };
-
-function norm(s){
-    return (s || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
+function norm(s){ return (s||"").toString().toLowerCase().replace(/[^a-z0-9]/g,""); }
 function detect(cols){
-    const map = {X:null, Y:null, Order:null, Forest:null, Compartment:null};
-    cols.forEach(c => {
-        const n = norm(c);
-        Object.entries(COL_ALIASES).forEach(([key, aliases]) => {
-            if(!map[key] && aliases.has(n)) map[key] = c;
-        });
-    });
-    return map;
+  const map={X:null,Y:null,Order:null,Forest:null,Compartment:null};
+  cols.forEach(c=>{const n=norm(c);Object.entries(COL_ALIASES).forEach(([k,a])=>{if(!map[k]&&a.has(n))map[k]=c;});});
+  return map;
 }
 
-/* ── STATUS RESET ──────────────────────────────────────────────────────── */
-function resetStatus(){
-    document.getElementById("status-headline").textContent = "Core Standby";
-    document.getElementById("status-sub").textContent = "Topology Balanced";
-    document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
-}
-
-/* ── TAB SWITCH ────────────────────────────────────────────────────────── */
-function switchTab(t){
-    activeModule = t;
-    document.querySelectorAll(".group-content-card").forEach(c => c.classList.remove("active-card"));
-    const activeCard = document.getElementById("card-"+t);
-    if(activeCard) activeCard.classList.add("active-card");
-    document.querySelectorAll(".matrix-tab").forEach(tab => {
-        tab.classList.toggle("active-tab", tab.id === "tab-" + t);
-    });
-    document.querySelectorAll(".tree-node").forEach(node => {
-        node.classList.toggle("active", node.getAttribute("onclick") === "switchTab('"+t+"')");
-    });
-    const labels = {
-        A:"A · Boundary Whole",
-        B:"B · Segment Forest",
-        C:"C · Sample Plot Workspace",
-        D:"D · Complex Version A",
-        E:"E · Polygon Subdivider",
-        F:"F · Slope Analysis"
-    };
-    document.getElementById("header-module").textContent = labels[t];
-}
-
-/* ── GROUP C MODE ──────────────────────────────────────────────────────── */
-function setGroupCSubMode(subMode){
-    groupCSubMode = subMode;
-    document.getElementById('c-toggle-A').classList.toggle('active-toggle', subMode==='A');
-    document.getElementById('c-toggle-B').classList.toggle('active-toggle', subMode==='B');
-    const fileInp = document.getElementById('file-c');
-    const isZip = fileInp?.files?.[0]?.name?.toLowerCase().endsWith(".zip");
-    const forestWrapper = document.getElementById('c-forest-wrapper');
-    if(subMode==="B" && !isZip){
-        forestWrapper.classList.remove("hidden");
-    } else {
-        forestWrapper.classList.add("hidden");
-    }
-}
-
-/* ── FILL DROPDOWNS ────────────────────────────────────────────────────── */
+/* ── FILL DROPDOWNS ─────────────────────────────────────────────────── */
 function fill(card, cols){
-    const map = detect(cols);
-    card.querySelectorAll("select[data-key]").forEach(sel => {
-        sel.innerHTML = "";
-        // Add a blank "— none —" option for optional fields (Order, Compartment)
-        const key = sel.dataset.key;
-        if(key === "Order" || key === "Compartment"){
-            const blank = document.createElement("option");
-            blank.value = "";
-            blank.textContent = "— none —";
-            sel.appendChild(blank);
-        }
-        cols.forEach(c => {
-            const opt = document.createElement("option");
-            opt.value = c;
-            opt.textContent = c;
-            sel.appendChild(opt);
-        });
-        if(map[key]) sel.value = map[key];
-        else if(key !== "Order" && key !== "Compartment" && cols.length > 0) sel.value = cols[0];
-    });
-}
-
-/* ── GROUP D MODE ──────────────────────────────────────────────────────── */
-function setGroupDSubMode(subMode){
-    groupDSubMode = subMode;
-    document.getElementById('d-toggle-A').classList.toggle('active-toggle', subMode === 'A');
-    document.getElementById('d-toggle-B').classList.toggle('active-toggle', subMode === 'B');
-
-    const compWrapper = document.getElementById('d-comp-wrapper');
-    const hintTitle   = document.getElementById('d-hint-title');
-    const hintSub     = document.getElementById('d-hint-sub');
-
-    if(subMode === 'B'){
-        compWrapper.style.display = 'block';
-        hintTitle.textContent = '📂 Forest → Compartment subfolders';
-        hintSub.textContent   = 'Forest_A/Comp_1/ → Polygon.shp · Line.shp · Point.shp';
-    } else {
-        compWrapper.style.display = 'none';
-        hintTitle.textContent = '📂 One folder per Forest';
-        hintSub.textContent   = 'Forest_A/ → Polygon.shp · Line.shp · Point.shp';
+  const map = detect(cols);
+  card.querySelectorAll("select[data-key]").forEach(sel=>{
+    const key = sel.dataset.key;
+    sel.innerHTML = "";
+    if(key==="Order"||key==="Compartment"){
+      const b=document.createElement("option"); b.value=""; b.textContent="— none —"; sel.appendChild(b);
     }
+    cols.forEach(c=>{const o=document.createElement("option");o.value=c;o.textContent=c;sel.appendChild(o);});
+    if(map[key]) sel.value=map[key];
+    else if(key!=="Order"&&key!=="Compartment"&&cols.length>0) sel.value=cols[0];
+  });
 }
 
-/* ── GROUP E MODE ──────────────────────────────────────────────────────── */
-function setGroupESubMode(subMode){
-    groupESubMode = subMode;
-    document.getElementById('e-toggle-A').classList.toggle('active-toggle', subMode === 'A');
-    document.getElementById('e-toggle-B').classList.toggle('active-toggle', subMode === 'B');
-
-    const forestWrapper     = document.getElementById('e-forest-wrapper');
-    const forestNameWrapper = document.getElementById('e-forestname-wrapper');
-    const hintTitle         = document.getElementById('e-hint-title');
-    const hintSub           = document.getElementById('e-hint-sub');
-
-    if(subMode === 'B'){
-        forestWrapper.style.display     = 'block';
-        forestNameWrapper.style.display = 'none';
-        hintTitle.textContent = '✂️ Each Forest → N compartments (own folder)';
-        hintSub.textContent   = 'Forest_A/ → compartments.shp · compartment_summary.xlsx';
-    } else {
-        forestWrapper.style.display     = 'none';
-        forestNameWrapper.style.display = 'block';
-        hintTitle.textContent = '✂️ One forest → N compartments';
-        hintSub.textContent   = 'compartments.shp · compartment_summary.xlsx';
-    }
+/* ── TAB SWITCH ──────────────────────────────────────────────────────── */
+function switchTab(t){
+  activeModule=t;
+  document.querySelectorAll(".group-content-card").forEach(c=>c.classList.remove("active-card"));
+  const card=document.getElementById("card-"+t);
+  if(card) card.classList.add("active-card");
+  document.querySelectorAll(".matrix-tab").forEach(tab=>tab.classList.toggle("active-tab",tab.id==="tab-"+t));
+  document.querySelectorAll(".tree-node").forEach(n=>n.classList.toggle("active",n.getAttribute("onclick")==="switchTab('"+t+"')"));
+  const labels={A:"A · Boundary Whole",B:"B · Segment Forest",C:"C · Sample Plot",D:"D · Complex Version",E:"E · Polygon Subdivider",F:"F · Slope Analysis"};
+  document.getElementById("header-module").textContent=labels[t];
 }
 
+/* ── GROUP C ─────────────────────────────────────────────────────────── */
+function setGroupCSubMode(sub){
+  groupCSubMode=sub;
+  document.getElementById("c-toggle-A").classList.toggle("active-toggle",sub==="A");
+  document.getElementById("c-toggle-B").classList.toggle("active-toggle",sub==="B");
+  const isZip=document.getElementById("file-c")?.files?.[0]?.name?.toLowerCase().endsWith(".zip");
+  document.getElementById("c-forest-wrapper").classList.toggle("hidden",!(sub==="B"&&!isZip));
+}
 
-/* ── GROUP F MODE ──────────────────────────────────────────────────────── */
+/* ── GROUP D ─────────────────────────────────────────────────────────── */
+function setGroupDSubMode(sub){
+  groupDSubMode=sub;
+  document.getElementById("d-toggle-A").classList.toggle("active-toggle",sub==="A");
+  document.getElementById("d-toggle-B").classList.toggle("active-toggle",sub==="B");
+  document.getElementById("d-comp-wrapper").classList.toggle("hidden",sub!=="B");
+  document.getElementById("d-hint-title").textContent=sub==="B"?"📂 Forest → Compartment subfolders":"📂 One folder per Forest";
+  document.getElementById("d-hint-sub").textContent=sub==="B"?"Forest_A/Comp_1/ → Polygon.shp · Line.shp · Point.shp":"Forest_A/ → Polygon.shp · Line.shp · Point.shp";
+}
+
+/* ── GROUP E ─────────────────────────────────────────────────────────── */
+function setGroupESubMode(sub){
+  groupESubMode=sub;
+  document.getElementById("e-toggle-A").classList.toggle("active-toggle",sub==="A");
+  document.getElementById("e-toggle-B").classList.toggle("active-toggle",sub==="B");
+  document.getElementById("e-forest-wrapper").classList.toggle("hidden",sub!=="B");
+  document.getElementById("e-forestname-wrapper").classList.toggle("hidden",sub==="B");
+  document.getElementById("e-hint-title").textContent=sub==="B"?"✂️ Each Forest → N compartments (own folder)":"✂️ One forest → N compartments";
+  document.getElementById("e-hint-sub").textContent=sub==="B"?"Each forest gets its own folder with division_points.xlsx":"division_points.xlsx + SHP exported for ArcGIS";
+}
+
+/* ── GROUP F ─────────────────────────────────────────────────────────── */
 function setGroupFMode(mode){
-    groupFMode = mode;
-    ['A','B','E'].forEach(m => {
-        document.getElementById('f-toggle-'+m)?.classList.toggle('active-toggle', m === mode);
-    });
-
-    const csvComp = document.getElementById('f-csv-comp-wrapper');
-    const zipComp = document.getElementById('f-zip-comp-wrapper');
-    const hintEl  = document.getElementById('f-mode-hint-text');
-
-    const needsComp = (mode === 'B' || mode === 'E');
-    if(csvComp) csvComp.classList.toggle('hidden', !needsComp);
-    if(zipComp) zipComp.classList.toggle('hidden', !needsComp);
-
-    const hints = {
-        A: 'Single boundary → one slope table for the whole forest',
-        B: 'Groups by Forest column → separate slope table per forest',
-        E: 'Groups by Compartment column → separate slope table per compartment',
-    };
-    if(hintEl) hintEl.textContent = hints[mode] || hints.A;
-
-    // Also populate f-zip-comp-col from the SHP attribute columns if ZIP is loaded
-    // (columns not available until SHP is read server-side; show a text field instead)
+  groupFMode=mode;
+  ["A","B","E"].forEach(m=>document.getElementById("f-toggle-"+m)?.classList.toggle("active-toggle",m===mode));
+  const needsComp=mode==="B"||mode==="E";
+  document.getElementById("f-csv-comp-wrapper")?.classList.toggle("hidden",!needsComp);
+  document.getElementById("f-zip-comp-wrapper")?.classList.toggle("hidden",!needsComp);
+  const hints={A:"Single boundary → one slope table for the whole forest",B:"Groups by Forest column → slope table per forest",E:"Groups by Compartment column → slope table per compartment"};
+  document.getElementById("f-mode-hint-text").textContent=hints[mode]||hints.A;
 }
 
-/* ── GROUP F FILE HANDLERS ─────────────────────────────────────────────── */
-(function setupGroupF(){
-    // Boundary file
-    const boundaryInp = document.getElementById('file-f-boundary');
-    if(boundaryInp) boundaryInp.addEventListener('change', async function(){
-        const file = this.files[0];
-        if(!file) return;
-        document.getElementById('f-boundary-label').textContent = '📄 ' + file.name;
+/* ── FILE HANDLERS ───────────────────────────────────────────────────── */
+async function parseCSVCols(file){
+  if(!file) return null;
+  if(!file.name.toLowerCase().endsWith(".csv")) return null;
+  const txt=await file.text();
+  const clean=txt.replace(/^\uFEFF/,"").replace(/\r/g,"");
+  const line=clean.split("\n").find(l=>l.trim())||"";
+  let d=","; if(line.includes(";"))d=";"; else if(line.includes("\t"))d="\t";
+  return line.split(d).map(x=>x.trim()).filter(Boolean);
+}
 
-        const csvFields = document.getElementById('f-csv-fields');
-        const zipNotice = document.getElementById('f-zip-notice');
-        const shpSel    = document.getElementById('f-shp-selector');
-
-        if(file.name.toLowerCase().endsWith('.zip')){
-            csvFields.classList.add('hidden');
-            zipNotice.classList.remove('hidden');
-            const zip = await JSZip.loadAsync(await file.arrayBuffer());
-            const shpFiles = Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith('.shp'));
-            shpSel.innerHTML = shpFiles.length
-                ? shpFiles.map(f=>`<option>${f}</option>`).join('')
-                : '<option>No SHP found</option>';
-        } else {
-            csvFields.classList.remove('hidden');
-            zipNotice.classList.add('hidden');
-            // Detect columns for CSV
-            if(file.name.toLowerCase().endsWith('.csv')){
-                const txt   = await file.text();
-                const clean = txt.replace(/^\uFEFF/,'').replace(/\r/g,'');
-                const line  = clean.split('\n').find(l=>l.trim())||'';
-                let delim   = ',';
-                if(line.includes(';')) delim=';';
-                else if(line.includes('\t')) delim='\t';
-                const cols = line.split(delim).map(c=>c.trim()).filter(Boolean);
-                if(cols.length){
-                    const map = detect(cols);
-                    ['f-x-col','f-y-col','f-order-col'].forEach(id=>{
-                        const sel = document.getElementById(id);
-                        const key = {
-                            'f-x-col':'X','f-y-col':'Y','f-order-col':'Order'
-                        }[id];
-                        sel.innerHTML = (key==='Order'?'<option value="">— none —</option>':'')
-                            + cols.map(c=>`<option>${c}</option>`).join('');
-                        if(map[key]) sel.value = map[key];
-                    });
-                    // Populate grouping column selector with all detected columns
-                    const compSel = document.getElementById('f-csv-comp-col');
-                    if(compSel){
-                        compSel.innerHTML = '<option value="">— auto detect —</option>'
-                            + cols.map(c=>`<option>${c}</option>`).join('');
-                        // Auto-select Forest or Compartment if found
-                        if(map['Forest']) compSel.value = map['Forest'];
-                        else if(map['Compartment']) compSel.value = map['Compartment'];
-                    }
-                }
-            }
+async function handleZipShpList(file, selEl, extraColSel){
+  const zip=await JSZip.loadAsync(await file.arrayBuffer());
+  const shpFiles=Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith(".shp"));
+  selEl.innerHTML=shpFiles.length?shpFiles.map(f=>`<option>${f}</option>`).join(""):"<option>No SHP found</option>";
+  // Try to peek at .dbf columns for forest col selector
+  if(extraColSel){
+    const dbfFiles=Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith(".dbf"));
+    if(dbfFiles.length){
+      try{
+        const dbfData=await zip.files[dbfFiles[0]].async("arraybuffer");
+        const cols=parseDbfColNames(dbfData);
+        if(cols.length){
+          extraColSel.innerHTML='<option value="">— auto detect —</option>'+cols.map(c=>`<option>${c}</option>`).join("");
+          const m=detect(cols);
+          if(m.Forest) extraColSel.value=m.Forest;
         }
-    });
+      }catch(e){}
+    }
+  }
+}
 
-    // DEM file
-    const demInp = document.getElementById('file-f-dem');
-    if(demInp) demInp.addEventListener('change', function(){
-        const file = this.files[0];
-        if(file) document.getElementById('f-dem-label').textContent = '🏔️ ' + file.name;
-    });
+function parseDbfColNames(buf){
+  try{
+    const view=new DataView(buf);
+    const numCols=Math.floor((view.getUint16(8,true)-32)/32);
+    const cols=[];
+    for(let i=0;i<numCols;i++){
+      let name="";
+      for(let j=0;j<11;j++){const b=view.getUint8(32+i*32+j);if(b===0)break;name+=String.fromCharCode(b);}
+      if(name) cols.push(name.trim());
+    }
+    return cols;
+  }catch(e){return [];}
+}
 
-    // Drag-over for both F dropzones
-    ['f-boundary-drop','f-dem-drop'].forEach(id=>{
-        const zone = document.getElementById(id);
-        if(!zone) return;
-        const inp  = zone.querySelector('input[type="file"]');
-        ['dragenter','dragover'].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.add('drag-over');}));
-        ['dragleave','drop'].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.remove('drag-over');}));
-        zone.addEventListener('drop',ev=>{
-            if(ev.dataTransfer?.files?.length && inp){
-                inp.files = ev.dataTransfer.files;
-                inp.dispatchEvent(new Event('change',{bubbles:true}));
-            }
-        });
-    });
-})();
+// Groups A,B,C,D,E standard file inputs
+document.querySelectorAll(".file").forEach(inp=>{
+  inp.onchange=async function(){
+    const file=this.files[0]; if(!file) return;
+    const card=this.closest(".group-content-card");
+    const dzText=card.querySelector(".dz-text");
+    if(dzText) dzText.textContent="📄 "+file.name;
 
-/* ── FILE HANDLER (Groups A B C D E) ──────────────────────────────────── */
-document.querySelectorAll(".file").forEach(inp => {
-    inp.onchange = async function(){
-        const file = this.files[0];
-        if(!file) return;
-        const card = this.closest(".group-content-card");
-        if(card.id === "card-C") setGroupCSubMode(groupCSubMode);
-        const dzText = card.querySelector(".dz-text");
-        if(dzText) dzText.textContent = "📄 " + file.name;
-        resetStatus();
-
-        /* GROUP C ZIP */
-        if(card.id === "card-C"){
-            const coordFields = document.getElementById("c-coordinate-fields-container");
-            const zipNotice = document.getElementById("c-zip-notice");
-            const shpSelector = document.getElementById("c-shp-selector");
-            if(file.name.toLowerCase().endsWith(".zip")){
-                coordFields.classList.add("hidden");
-                zipNotice.classList.remove("hidden");
-                const zip = await JSZip.loadAsync(await file.arrayBuffer());
-                const shpFiles = [];
-                Object.keys(zip.files).forEach(path => {
-                    if(path.toLowerCase().endsWith(".shp")) shpFiles.push(path);
-                });
-                shpSelector.innerHTML = shpFiles.length
-                    ? shpFiles.map(f=>`<option>${f}</option>`).join("")
-                    : "<option>No SHP found</option>";
-                return;
-            } else {
-                coordFields.classList.remove("hidden");
-                zipNotice.classList.add("hidden");
-            }
-        }
-
-        /* GROUP E ZIP */
-        if(card.id === "card-E"){
-            const csvFields  = document.getElementById("e-csv-fields");
-            const zipNotice  = document.getElementById("e-zip-notice");
-            const shpSelector = document.getElementById("e-shp-selector");
-            if(file.name.toLowerCase().endsWith(".zip")){
-                csvFields.classList.add("hidden");
-                zipNotice.classList.remove("hidden");
-                const zip = await JSZip.loadAsync(await file.arrayBuffer());
-                const shpFiles = [];
-                Object.keys(zip.files).forEach(path => {
-                    if(path.toLowerCase().endsWith(".shp")) shpFiles.push(path);
-                });
-                shpSelector.innerHTML = shpFiles.length
-                    ? shpFiles.map(f=>`<option>${f}</option>`).join("")
-                    : "<option>No SHP found</option>";
-                return;
-            } else {
-                csvFields.classList.remove("hidden");
-                zipNotice.classList.add("hidden");
-            }
-        }
-
-        /* CSV column detection */
-        let cols = ["X","Y","Order","Forest","Compartment"];
-        if(file.name.toLowerCase().endsWith(".csv")){
-            const txt = await file.text();
-            const clean = txt.replace(/^\uFEFF/, "").replace(/\r/g, "");
-            const firstLine = clean.split("\n").find(l => l.trim().length > 0) || "";
-            let delimiter = ",";
-            if(firstLine.includes(";")) delimiter = ";";
-            else if(firstLine.includes("\t")) delimiter = "\t";
-            let detected = firstLine.split(delimiter).map(x => x.trim()).filter(Boolean);
-            if(detected.length > 0) cols = detected;
-        }
-        fill(card, cols);
-    };
-});
-
-/* ── PAYLOAD BUILDER ───────────────────────────────────────────────────── */
-function buildMappingPayload(card){
-    const m = {};
-    card.querySelectorAll("select[data-key]").forEach(sel => {
-        // skip if ancestor has .hidden class OR display:none (Group D compartment toggle)
-        let hidden = false;
-        let el = sel.parentElement;
-        while(el && el !== card){
-            if(el.classList.contains("hidden") || el.style.display === "none"){
-                hidden = true; break;
-            }
-            el = el.parentElement;
-        }
-        if(!hidden && sel.value) m[sel.dataset.key] = sel.value;
-    });
-    if(!m.X) m.X = "X";
-    if(!m.Y) m.Y = "Y";
+    // Group C ZIP
     if(card.id==="card-C"){
-        if(!document.getElementById("c-zip-notice").classList.contains("hidden")){
-            m.target_shp = document.getElementById("c-shp-selector").value;
-        }
+      const isZip=file.name.toLowerCase().endsWith(".zip");
+      document.getElementById("c-coord-fields").classList.toggle("hidden",isZip);
+      document.getElementById("c-zip-notice").classList.toggle("hidden",!isZip);
+      if(isZip){ await handleZipShpList(file,document.getElementById("c-shp-selector"),null); return; }
     }
+
+    // Group E ZIP
     if(card.id==="card-E"){
-        if(!document.getElementById("e-zip-notice").classList.contains("hidden")){
-            m.target_shp = document.getElementById("e-shp-selector").value;
-        }
-    }
-    return m;
-}
-
-/* ── RUN PIPELINE ──────────────────────────────────────────────────────── */
-async function runPipeline(){
-    if(activeModule === "F"){
-        // Group F uses two separate file inputs — handle separately
-        const boundaryFile = document.getElementById('file-f-boundary')?.files?.[0];
-        const demFile      = document.getElementById('file-f-dem')?.files?.[0];
-        if(!boundaryFile){ alert("Please upload a forest boundary file (CSV/XLS or ZIP)."); return; }
-        if(!demFile){      alert("Please upload a DEM GeoTIFF file."); return; }
-
-        document.getElementById("status-headline").textContent = "Processing...";
-        document.getElementById("status-sub").textContent = "Running Slope Analysis";
-        document.getElementById("radial-bar").style.strokeDashoffset = "80";
-
-        const fd = new FormData();
-        fd.append("file",     boundaryFile);
-        fd.append("dem_file", demFile);
-        fd.append("module",   "F");
-        fd.append("f_mode",   groupFMode);
-        fd.append("zone",     document.getElementById("zone").value);
-        fd.append("f_forest", document.getElementById("f-forest-name")?.value || "FOREST");
-
-        const mapping = {};
-        const xSel = document.getElementById('f-x-col');
-        const ySel = document.getElementById('f-y-col');
-        const oSel = document.getElementById('f-order-col');
-        if(xSel?.value) mapping.X = xSel.value;
-        if(ySel?.value) mapping.Y = ySel.value;
-        if(oSel?.value) mapping.Order = oSel.value;
-
-        // Compartment / grouping column for modes B and E
-        const isFZip = document.getElementById('f-zip-notice') &&
-                       !document.getElementById('f-zip-notice').classList.contains('hidden');
-        if(isFZip){
-            const shpSel = document.getElementById('f-shp-selector');
-            if(shpSel?.value) mapping.target_shp = shpSel.value;
-            const zipComp = document.getElementById('f-zip-comp-col');
-            if(zipComp?.value) fd.append("comp_col", zipComp.value);
-        } else {
-            const csvComp = document.getElementById('f-csv-comp-col');
-            if(csvComp?.value) fd.append("comp_col", csvComp.value);
-        }
-        fd.append("mapping", JSON.stringify(mapping));
-
-        try{
-            const res  = await fetch(`${BACKEND_URL}/upload`, {method:"POST", body:fd});
-            const data = await res.json();
-            if(data.error) throw new Error(data.error);
-            document.getElementById("status-headline").textContent = "Complete";
-            document.getElementById("status-sub").textContent = "Slope Analysis Ready";
-            document.getElementById("radial-bar").style.strokeDashoffset = "0";
-            const img = document.getElementById("output-img");
-            img.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
-            img.style.display = "block";
-            document.getElementById("empty-notice").style.display = "none";
-            const dl = document.getElementById("download-btn");
-            dl.href = `${BACKEND_URL}${data.download}`;
-            dl.style.display = "inline-block";
-            if(data.kmz_url) activateGoogleEarth(data.kmz_url, data.run_id);
-        } catch(e){
-            document.getElementById("status-headline").textContent = "Error";
-            document.getElementById("status-sub").textContent = "Slope analysis failed";
-            document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
-            alert(e.message || "Backend error");
-        }
-        return;  // skip the normal runPipeline flow below
+      const isZip=file.name.toLowerCase().endsWith(".zip");
+      document.getElementById("e-csv-fields").classList.toggle("hidden",isZip);
+      document.getElementById("e-zip-notice").classList.toggle("hidden",!isZip);
+      if(isZip){
+        await handleZipShpList(file,document.getElementById("e-shp-selector"),document.getElementById("e-zip-forest-col"));
+        return;
+      }
     }
 
-    const card = document.getElementById("card-"+activeModule);
-    const file = card.querySelector("input[type=file]")?.files?.[0];
-    if(!file){ alert("Upload file first"); return; }
-
-    document.getElementById("status-headline").textContent = "Processing...";
-    document.getElementById("status-sub").textContent = "Running GIS Engine";
-    document.getElementById("radial-bar").style.strokeDashoffset = "80";
-
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("module", activeModule);
-    fd.append("mode", activeModule==="C" ? groupCSubMode : activeModule);
-    if(activeModule === "D") fd.append("d_mode", groupDSubMode);
-    if(activeModule === "E"){
-        fd.append("e_mode", groupESubMode);
-        const nComp = document.getElementById("e-n-compartments");
-        if(nComp && nComp.value) fd.append("n_compartments", nComp.value);
-    }
-    fd.append("zone", document.getElementById("zone").value);
-    const mapping = buildMappingPayload(card);
-
-    const forestInput = card.querySelector('input[type="text"][data-key="forest"]');
-    if(forestInput && forestInput.value.trim()){
-        fd.append("forest", forestInput.value.trim());
-    }
-
-    if(activeModule === "C"){
-        const gridFields = {
-            "c-grid-w": "w",
-            "c-grid-h": "h",
-            "c-grid-rows": "rows",
-            "c-grid-cols": "cols"
-        };
-        Object.entries(gridFields).forEach(([elId, formKey]) => {
-            const el = document.getElementById(elId);
-            if(el && el.value !== "" && !isNaN(Number(el.value))){
-                fd.append(formKey, el.value);
-            }
-        });
-    }
-
-    fd.append("mapping", JSON.stringify({
-        X:           mapping.X           || "X",
-        Y:           mapping.Y           || "Y",
-        Order:       mapping.Order       || null,
-        Forest:      mapping.Forest      || null,
-        Compartment: mapping.Compartment || null,
-        target_shp:  mapping.target_shp  || null
-    }));
-
-    try{
-        const res = await fetch(`${BACKEND_URL}/upload`, {method:"POST", body:fd});
-        const data = await res.json();
-        if(data.error) throw new Error(data.error);
-
-        document.getElementById("status-headline").textContent = "Complete";
-        document.getElementById("status-sub").textContent = "Output Ready";
-        document.getElementById("radial-bar").style.strokeDashoffset = "0";
-
-        const img = document.getElementById("output-img");
-        img.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
-        img.style.display = "block";
-        document.getElementById("empty-notice").style.display = "none";
-
-        const dl = document.getElementById("download-btn");
-        dl.href = data.download.startsWith("http")
-            ? data.download
-            : `${BACKEND_URL}${data.download}`;
-        dl.style.display = "inline-block";
-
-        // Activate Google Earth panel if KMZ was generated
-        if(data.kmz_url){
-            activateGoogleEarth(data.kmz_url, data.run_id);
-        }
-
-    } catch(e){
-        console.error(e);
-        document.getElementById("status-headline").textContent = "Error";
-        document.getElementById("status-sub").textContent = "Pipeline failed";
-        document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
-        alert(e.message || "Backend error or mapping mismatch");
-    }
-}
-
-/* ── PREVIEW TAB SWITCHER ──────────────────────────────────────────────── */
-function switchPreviewTab(tab){
-    const isStatic = tab === 'static';
-    document.getElementById('ptab-static').classList.toggle('active-toggle', isStatic);
-    document.getElementById('ptab-ge').classList.toggle('active-toggle', !isStatic);
-    document.getElementById('preview-static').style.display = isStatic ? 'flex' : 'none';
-    document.getElementById('preview-ge').style.display     = isStatic ? 'none' : 'flex';
-}
-
-/* ── GOOGLE EARTH PANEL ACTIVATION ────────────────────────────────────── */
-function activateGoogleEarth(kmzInfo, run_id){
-    const lat    = kmzInfo.lat;
-    const lon    = kmzInfo.lon;
-    const alt    = kmzInfo.alt;
-    const kmzUrl = BACKEND_URL + kmzInfo.url;
-    const geUrl  = `https://earth.google.com/web/@${lat},${lon},${alt}a,${alt}d,0y,0h,0t,0r`;
-
-    document.getElementById('ge-idle').style.display  = 'none';
-    document.getElementById('ge-ready').style.display = 'flex';
-
-    document.getElementById('ge-open-btn').href = geUrl;
-
-    const kmzBtn = document.getElementById('ge-kmz-btn');
-    kmzBtn.href     = kmzUrl;
-    kmzBtn.download = `output_${run_id}.kmz`;
-
-    document.getElementById('ge-coords').innerHTML =
-        `<strong>Centroid:</strong> ${lat.toFixed(5)}\u00b0 N, ${lon.toFixed(5)}\u00b0 E<br>` +
-        `<strong>View altitude:</strong> ${alt.toLocaleString()} m`;
-}
-/* ── RESIZABLE LAYOUT ──────────────────────────────────────────────────── */
-(function enableResizers(){
-    const container = document.getElementById('main-layout-container');
-    const workspace = document.getElementById('center-workspace-container');
-    const leftHandle = document.getElementById('left-col-handle');
-    const rightHandle = document.getElementById('right-col-handle');
-    const rowHandle = document.getElementById('center-row-handle');
-
-    let leftWidth = 280;
-    let rightWidth = 420;
-
-    function applyColumns(){
-        container.style.gridTemplateColumns = `${leftWidth}px 10px 1fr 10px ${rightWidth}px`;
-    }
-
-    function startDrag(handle, onMove){
-        handle.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            handle.classList.add('dragging');
-            document.body.style.cursor = getComputedStyle(handle).cursor;
-            const move = (ev) => onMove(ev);
-            const up = () => {
-                handle.classList.remove('dragging');
-                document.body.style.cursor = '';
-                document.removeEventListener('mousemove', move);
-                document.removeEventListener('mouseup', up);
-            };
-            document.addEventListener('mousemove', move);
-            document.addEventListener('mouseup', up);
-        });
-    }
-
-    if(leftHandle){
-        let startX, startWidth;
-        leftHandle.addEventListener('mousedown', e => { startX = e.clientX; startWidth = leftWidth; });
-        startDrag(leftHandle, (ev) => {
-            leftWidth = Math.min(Math.max(startWidth + (ev.clientX - startX), 220), 460);
-            applyColumns();
-        });
-    }
-
-    if(rightHandle){
-        let startX, startWidth;
-        rightHandle.addEventListener('mousedown', e => { startX = e.clientX; startWidth = rightWidth; });
-        startDrag(rightHandle, (ev) => {
-            rightWidth = Math.min(Math.max(startWidth - (ev.clientX - startX), 320), 640);
-            applyColumns();
-        });
-    }
-
-    if(rowHandle){
-        let startY, startTopHeight, totalHeight;
-        rowHandle.addEventListener('mousedown', e => {
-            const rect = workspace.getBoundingClientRect();
-            totalHeight = rect.height;
-            startTopHeight = workspace.children[0].getBoundingClientRect().height;
-            startY = e.clientY;
-        });
-        startDrag(rowHandle, (ev) => {
-            let newTop = Math.min(Math.max(startTopHeight + (ev.clientY - startY), 160), totalHeight - 90);
-            workspace.style.gridTemplateRows = `${newTop}px 6px ${totalHeight - newTop - 6}px`;
-        });
-    }
-})();
-
-/* ── DRAG-OVER HIGHLIGHT ───────────────────────────────────────────────── */
-document.querySelectorAll('.cyber-dropzone').forEach(zone => {
-    // Group F dropzones are wired separately in setupGroupF — skip here
-    if(zone.id === 'f-boundary-drop' || zone.id === 'f-dem-drop') return;
-    const input = zone.querySelector('input[type="file"]');
-    if(!input) return;
-    ['dragenter','dragover'].forEach(evt => {
-        zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('drag-over'); });
-    });
-    ['dragleave','drop'].forEach(evt => {
-        zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('drag-over'); });
-    });
-    zone.addEventListener('drop', e => {
-        if(e.dataTransfer?.files?.length){
-            input.files = e.dataTransfer.files;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-    });
+    // CSV column detection
+    let cols=["X","Y","Order","Forest","Compartment"];
+    const detected=await parseCSVCols(file);
+    if(detected&&detected.length>0) cols=detected;
+    fill(card,cols);
+  };
 });
 
-/* ── ANIMATED STATUS + PROGRESS ────────────────────────────────────────── */
-(function enableStatusAnimations(){
-    const headline = document.getElementById('status-headline');
-    const radialBox = document.querySelector('.radial-progress-box');
-    const radialBar = document.getElementById('radial-bar');
-    const canvasWrapper = document.getElementById('preview-static').querySelector('.canvas-wrapper');
-    const downloadBtn = document.getElementById('download-btn');
-    const emptyNotice = document.getElementById('empty-notice');
-
-    function refreshState(){
-        const text = headline.textContent.trim();
-        headline.classList.remove('is-processing', 'is-error');
-        radialBox.classList.remove('is-processing');
-        radialBar.classList.remove('is-error');
-        canvasWrapper.classList.remove('is-active');
-        if(text === 'Processing...'){
-            headline.classList.add('is-processing');
-            radialBox.classList.add('is-processing');
-        } else if(text === 'Error'){
-            headline.classList.add('is-error');
-            radialBar.classList.add('is-error');
-        } else if(text === 'Complete'){
-            canvasWrapper.classList.add('is-active');
-        }
+// Group F boundary file
+document.getElementById("file-f-boundary")?.addEventListener("change",async function(){
+  const file=this.files[0]; if(!file) return;
+  document.getElementById("f-boundary-label").textContent="📄 "+file.name;
+  const isZip=file.name.toLowerCase().endsWith(".zip");
+  document.getElementById("f-csv-fields").classList.toggle("hidden",isZip);
+  document.getElementById("f-zip-notice").classList.toggle("hidden",!isZip);
+  if(isZip){
+    await handleZipShpList(file,document.getElementById("f-shp-selector"),null);
+  } else {
+    const cols=await parseCSVCols(file);
+    if(cols&&cols.length){
+      const map=detect(cols);
+      ["f-x-col","f-y-col","f-order-col"].forEach(id=>{
+        const sel=document.getElementById(id);
+        const k={"f-x-col":"X","f-y-col":"Y","f-order-col":"Order"}[id];
+        sel.innerHTML=(k==="Order"?'<option value="">— none —</option>':"")+cols.map(c=>`<option>${c}</option>`).join("");
+        if(map[k]) sel.value=map[k];
+      });
+      const compSel=document.getElementById("f-csv-comp-col");
+      if(compSel){
+        compSel.innerHTML='<option value="">— auto detect —</option>'+cols.map(c=>`<option>${c}</option>`).join("");
+        if(map.Forest) compSel.value=map.Forest;
+        else if(map.Compartment) compSel.value=map.Compartment;
+      }
     }
+  }
+});
 
-    new MutationObserver(refreshState).observe(headline, { childList: true, characterData: true, subtree: true });
+document.getElementById("file-f-dem")?.addEventListener("change",function(){
+  const file=this.files[0]; if(file) document.getElementById("f-dem-label").textContent="🏔️ "+file.name;
+});
 
-    new MutationObserver(() => {
-        const img = document.getElementById('output-img');
-        if(img.style.display === 'block'){
-            emptyNotice.style.opacity = '0';
-            setTimeout(() => { emptyNotice.style.display = 'none'; }, 350);
-        }
-    }).observe(document.getElementById('output-img'), { attributes: true, attributeFilter: ['style'] });
+// Drag-over for all dropzones
+document.querySelectorAll(".cyber-dropzone").forEach(zone=>{
+  if(zone.id==="f-boundary-drop"||zone.id==="f-dem-drop") return;
+  const inp=zone.querySelector("input[type='file']"); if(!inp) return;
+  ["dragenter","dragover"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.add("drag-over");}));
+  ["dragleave","drop"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.remove("drag-over");}));
+  zone.addEventListener("drop",ev=>{if(ev.dataTransfer?.files?.length){inp.files=ev.dataTransfer.files;inp.dispatchEvent(new Event("change",{bubbles:true}));}});
+});
+["f-boundary-drop","f-dem-drop"].forEach(id=>{
+  const zone=document.getElementById(id); if(!zone) return;
+  const inp=zone.querySelector("input[type='file']"); if(!inp) return;
+  ["dragenter","dragover"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.add("drag-over");}));
+  ["dragleave","drop"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.remove("drag-over");}));
+  zone.addEventListener("drop",ev=>{if(ev.dataTransfer?.files?.length){inp.files=ev.dataTransfer.files;inp.dispatchEvent(new Event("change",{bubbles:true}));}});
+});
 
-    new MutationObserver(() => {
-        downloadBtn.classList.toggle('is-visible', downloadBtn.style.display === 'inline-block');
-    }).observe(downloadBtn, { attributes: true, attributeFilter: ['style'] });
+/* ── MAPPING PAYLOAD BUILDER ─────────────────────────────────────────── */
+function buildMapping(card){
+  const m={};
+  card.querySelectorAll("select[data-key]").forEach(sel=>{
+    let hidden=false; let el=sel.parentElement;
+    while(el&&el!==card){if(el.classList.contains("hidden")){hidden=true;break;}el=el.parentElement;}
+    if(!hidden&&sel.value) m[sel.dataset.key]=sel.value;
+  });
+  if(!m.X) m.X="X"; if(!m.Y) m.Y="Y";
+  if(card.id==="card-C"&&!document.getElementById("c-zip-notice").classList.contains("hidden"))
+    m.target_shp=document.getElementById("c-shp-selector").value;
+  if(card.id==="card-E"&&!document.getElementById("e-zip-notice").classList.contains("hidden"))
+    m.target_shp=document.getElementById("e-shp-selector").value;
+  return m;
+}
+
+/* ── RUN PIPELINE ────────────────────────────────────────────────────── */
+function setStatus(headline,sub,progress){
+  document.getElementById("status-headline").textContent=headline;
+  document.getElementById("status-sub").textContent=sub;
+  const circ=138.2; document.getElementById("radial-bar").style.strokeDashoffset=String(circ*(1-progress));
+}
+
+async function runPipeline(){
+  if(activeModule==="F"){
+    const bFile=document.getElementById("file-f-boundary")?.files?.[0];
+    const dFile=document.getElementById("file-f-dem")?.files?.[0];
+    if(!bFile){alert("Please upload a forest boundary file.");return;}
+    if(!dFile){alert("Please upload a DEM GeoTIFF file.");return;}
+
+    setStatus("Processing...","Running Slope Analysis",0.5);
+    const fd=new FormData();
+    fd.append("file",bFile);fd.append("dem_file",dFile);fd.append("module","F");
+    fd.append("f_mode",groupFMode);fd.append("zone",document.getElementById("zone").value);
+    fd.append("f_forest",document.getElementById("f-forest-name")?.value||"FOREST");
+    const faStr=document.getElementById("f-field-area")?.value?.trim();
+    if(faStr&&!isNaN(parseFloat(faStr))) fd.append("field_area_ha",faStr);
+
+    const mapping={};
+    const xv=document.getElementById("f-x-col")?.value; if(xv) mapping.X=xv;
+    const yv=document.getElementById("f-y-col")?.value; if(yv) mapping.Y=yv;
+    const ov=document.getElementById("f-order-col")?.value; if(ov) mapping.Order=ov;
+    const isFZip=!document.getElementById("f-zip-notice").classList.contains("hidden");
+    if(isFZip){
+      const sv=document.getElementById("f-shp-selector")?.value; if(sv) mapping.target_shp=sv;
+      const cv=document.getElementById("f-zip-comp-col")?.value; if(cv) fd.append("comp_col",cv);
+    } else {
+      const cv=document.getElementById("f-csv-comp-col")?.value; if(cv) fd.append("comp_col",cv);
+    }
+    fd.append("mapping",JSON.stringify(mapping));
+    await _send(fd); return;
+  }
+
+  const card=document.getElementById("card-"+activeModule);
+  const file=card.querySelector("input[type=file]")?.files?.[0];
+  if(!file){alert("Upload a file first.");return;}
+
+  setStatus("Processing...","Running GIS Engine",0.5);
+  const fd=new FormData();
+  fd.append("file",file);
+  fd.append("module",activeModule);
+  fd.append("mode",activeModule==="C"?groupCSubMode:activeModule);
+  if(activeModule==="D") fd.append("d_mode",groupDSubMode);
+  if(activeModule==="E"){
+    fd.append("e_mode",groupESubMode);
+    const n=document.getElementById("e-n-compartments"); if(n?.value) fd.append("n_compartments",n.value);
+    // Forest identifier column for ZIP multi-forest
+    const fcv=document.getElementById("e-zip-forest-col")?.value; if(fcv) fd.append("forest_col_name",fcv);
+  }
+  fd.append("zone",document.getElementById("zone").value);
+
+  const mapping=buildMapping(card);
+  const forestInput=card.querySelector('input[type="text"][data-key="forest"]');
+  if(forestInput?.value?.trim()) fd.append("forest",forestInput.value.trim());
+
+  if(activeModule==="C"){
+    const gf={"c-grid-w":"w","c-grid-h":"h","c-grid-rows":"rows","c-grid-cols":"cols"};
+    Object.entries(gf).forEach(([eid,fk])=>{const el=document.getElementById(eid);if(el?.value!==""&&!isNaN(+el.value))fd.append(fk,el.value);});
+  }
+
+  fd.append("mapping",JSON.stringify({X:mapping.X||"X",Y:mapping.Y||"Y",Order:mapping.Order||null,
+    Forest:mapping.Forest||null,Compartment:mapping.Compartment||null,target_shp:mapping.target_shp||null}));
+  await _send(fd);
+}
+
+async function _send(fd){
+  try{
+    const res=await fetch(`${BACKEND_URL}/upload`,{method:"POST",body:fd});
+    const data=await res.json();
+    if(data.error) throw new Error(data.error);
+    setStatus("Complete","Output Ready",1.0);
+    const img=document.getElementById("output-img");
+    img.src=`${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
+    img.style.display="block";
+    document.getElementById("empty-notice").style.display="none";
+    const dl=document.getElementById("download-btn");
+    dl.href=data.download.startsWith("http")?data.download:`${BACKEND_URL}${data.download}`;
+    dl.style.display="inline-block";
+    if(data.kmz_url) activateGoogleEarth(data.kmz_url,data.run_id);
+  }catch(e){
+    setStatus("Error","Pipeline failed",0);
+    document.getElementById("radial-bar").classList.add("is-error");
+    alert(e.message||"Backend error");
+  }
+}
+
+/* ── PREVIEW TABS ────────────────────────────────────────────────────── */
+function switchPreviewTab(tab){
+  const s=tab==="static";
+  document.getElementById("ptab-static").classList.toggle("active-toggle",s);
+  document.getElementById("ptab-ge").classList.toggle("active-toggle",!s);
+  document.getElementById("preview-static").style.display=s?"flex":"none";
+  document.getElementById("preview-ge").style.display=s?"none":"flex";
+}
+
+function activateGoogleEarth(kmzInfo,run_id){
+  const lat=kmzInfo.lat,lon=kmzInfo.lon,alt=kmzInfo.alt;
+  const kmzUrl=BACKEND_URL+kmzInfo.url;
+  document.getElementById("ge-idle").style.display="none";
+  document.getElementById("ge-ready").style.display="flex";
+  document.getElementById("ge-open-btn").href=`https://earth.google.com/web/@${lat},${lon},${alt}a,${alt}d,0y,0h,0t,0r`;
+  const btn=document.getElementById("ge-kmz-btn"); btn.href=kmzUrl; btn.download=`output_${run_id}.kmz`;
+  document.getElementById("ge-coords").innerHTML=`<strong>Centroid:</strong> ${lat.toFixed(5)}° N, ${lon.toFixed(5)}° E<br><strong>View altitude:</strong> ${alt.toLocaleString()} m`;
+}
+
+/* ── STATUS ANIMATIONS ───────────────────────────────────────────────── */
+(function(){
+  const hl=document.getElementById("status-headline");
+  const rb=document.querySelector(".radial-progress-box");
+  new MutationObserver(()=>{
+    const t=hl.textContent.trim();
+    hl.classList.remove("is-processing","is-error");rb.classList.remove("is-processing");
+    document.getElementById("radial-bar").classList.remove("is-error");
+    if(t==="Processing..."){hl.classList.add("is-processing");rb.classList.add("is-processing");}
+    else if(t==="Error"){hl.classList.add("is-error");document.getElementById("radial-bar").classList.add("is-error");}
+  }).observe(hl,{childList:true,characterData:true,subtree:true});
+})();
+
+/* ── RESIZABLE PANELS ────────────────────────────────────────────────── */
+(function(){
+  const container=document.getElementById("main-layout-container");
+  const workspace=document.getElementById("center-workspace-container");
+  let leftW=272,rightW=410;
+  function applyCol(){container.style.gridTemplateColumns=`${leftW}px 10px 1fr 10px ${rightW}px`;}
+  function startDrag(el,onMove){
+    el.addEventListener("mousedown",e=>{
+      e.preventDefault();el.classList.add("dragging");document.body.style.cursor=getComputedStyle(el).cursor;
+      const mv=ev=>onMove(ev);
+      const up=()=>{el.classList.remove("dragging");document.body.style.cursor="";document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
+      document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);
+    });
+  }
+  let sxL,swL; document.getElementById("left-col-handle").addEventListener("mousedown",e=>{sxL=e.clientX;swL=leftW;});
+  startDrag(document.getElementById("left-col-handle"),ev=>{leftW=Math.min(Math.max(swL+(ev.clientX-sxL),200),480);applyCol();});
+  let sxR,swR; document.getElementById("right-col-handle").addEventListener("mousedown",e=>{sxR=e.clientX;swR=rightW;});
+  startDrag(document.getElementById("right-col-handle"),ev=>{rightW=Math.min(Math.max(swR-(ev.clientX-sxR),300),660);applyCol();});
+  let syR,stH,totH; document.getElementById("center-row-handle").addEventListener("mousedown",e=>{
+    const r=workspace.getBoundingClientRect();totH=r.height;stH=workspace.children[0].getBoundingClientRect().height;syR=e.clientY;
+  });
+  startDrag(document.getElementById("center-row-handle"),ev=>{
+    const newTop=Math.min(Math.max(stH+(ev.clientY-syR),150),totH-80);
+    workspace.style.gridTemplateRows=`${newTop}px 6px ${totH-newTop-6}px`;
+  });
 })();
 </script>
 </body>
