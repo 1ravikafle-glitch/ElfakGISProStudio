@@ -609,8 +609,25 @@ def _area_balance(poly, cells, n, max_passes=12, tol=0.01):
             shared_len = 0.0
 
         if shared_len < 1e-3:
-            # Not adjacent — skip this pair
-            break
+            # Not adjacent — try next most-deviant pair instead of stopping
+            # Find second most oversized that IS adjacent to the smallest
+            found_adjacent = False
+            sorted_big = sorted(range(len(pieces)), key=lambda i: pieces[i].area, reverse=True)
+            for alt_big_i in sorted_big:
+                if alt_big_i == sml_i:
+                    continue
+                try:
+                    alt_shared = pieces[alt_big_i].intersection(sml).length
+                except Exception:
+                    alt_shared = 0.0
+                if alt_shared > 1e-3:
+                    big_i      = alt_big_i
+                    big        = pieces[big_i]
+                    shared_len = alt_shared
+                    found_adjacent = True
+                    break
+            if not found_adjacent:
+                break  # truly no adjacent pair can be balanced
 
         strip_w = min(transfer / (shared_len + 1e-10),
                       (big.area**0.5) * 0.15)
@@ -742,19 +759,23 @@ def _subdivide_polygon(poly, n):
 
     # Pad/trim to exactly n cells
     if len(cells) < n:
-        # Split the largest cell to make up the deficit
         deficit = n - len(cells)
         cells_sorted = sorted(cells, key=lambda t: t[0].area, reverse=True)
+        replacements = {}  # track which cells got replaced
         extra = []
         for i in range(deficit):
-            big_cell, big_seed = cells_sorted[i % len(cells_sorted)]
+            idx = i % len(cells_sorted)
+            big_cell, big_seed = cells_sorted[idx]
             seeds2 = _place_seeds_voronoi(big_cell, 2, rng_seed=i+1)
             sub = _lloyd_relax(big_cell, seeds2, n_iter=20)
-            if len(sub) == 2:
-                extra.extend(sub)
-                cells_sorted[i % len(cells_sorted)] = sub[0]
+            if len(sub) >= 2:
+                # Replace the original large cell with sub[0], add sub[1] as extra
+                replacements[idx] = sub[0]
+                extra.append(sub[1])
             else:
                 extra.append((big_cell, big_seed))
+        # Apply replacements
+        cells_sorted = [replacements.get(i, c) for i, c in enumerate(cells_sorted)]
         cells = cells_sorted + extra
     cells = cells[:n]
 
@@ -874,10 +895,22 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
             "Pct_Area": pct_area,
             "geometry": p,
         })
+        # Build line geometry safely — p must be a Polygon at this point
+        if p.geom_type == "Polygon":
+            line_geom = LineString(p.exterior.coords)
+        elif p.geom_type in ("MultiPolygon", "GeometryCollection"):
+            # Take the largest polygon's exterior
+            sub_polys = [g for g in p.geoms if g.geom_type == "Polygon"]
+            if sub_polys:
+                line_geom = LineString(max(sub_polys, key=lambda g: g.area).exterior.coords)
+            else:
+                line_geom = LineString([(0, 0), (0, 0)])  # degenerate fallback
+        else:
+            line_geom = LineString([(0, 0), (0, 0)])
         line_recs.append({
             "Forest":  forest_name,
             "Comp_ID": comp_id,
-            "geometry": LineString(p.exterior.coords) if p.geom_type == "Polygon" else LineString(list(p.geoms)[0].exterior.coords),
+            "geometry": line_geom,
         })
         pt_recs.append({
             "Forest":  forest_name,
@@ -1517,6 +1550,8 @@ def preview_compartments(poly_gdf, path):
     plt.tight_layout(pad=0.5)
     fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
+
+
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
             label_col=None, label_pts_gdf=None):
     """
