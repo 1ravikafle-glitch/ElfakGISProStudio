@@ -4,7 +4,222 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Elfak GIS Engine Pro — Premium Forest Studio</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js">
+
+/* ════════════════════════════════════════════════════════════════════
+   MULTI-USER LOGIN SYSTEM
+   ════════════════════════════════════════════════════════════════════ */
+let currentUser = null;
+
+// On load — check if already logged in
+(async function checkSession(){
+  try{
+    const res = await fetch(`${BACKEND_URL}/me`);
+    if(res.ok){
+      const data = await res.json();
+      if(data.username){ onLoginSuccess(data.username, data.runs||[]); return; }
+    }
+  }catch(e){}
+  // Not logged in — show overlay
+  document.getElementById("login-overlay").style.display = "flex";
+  setTimeout(()=>document.getElementById("login-username").focus(), 400);
+})();
+
+let _suggestedNames = [];
+
+function _generateSuggestions(base){
+  // Strip trailing numbers, then offer numbered variants + underscore variant
+  const clean = base.replace(/[_\-]?\d+$/, "").trim() || base;
+  const rand  = Math.floor(Math.random() * 89 + 10);
+  return [
+    clean + "_" + rand,
+    clean + (new Date().getFullYear() % 100),
+    clean + "_GIS"
+  ];
+}
+
+function tryName(idx){
+  const name = _suggestedNames[idx];
+  if(!name) return;
+  document.getElementById("login-username").value = name;
+  document.getElementById("login-username").classList.remove("is-taken");
+  document.getElementById("login-error").style.display = "none";
+  document.getElementById("login-suggestions").style.display = "none";
+  doLogin();
+}
+
+async function doLogin(){
+  const inp   = document.getElementById("login-username");
+  const errEl = document.getElementById("login-error");
+  const sugEl = document.getElementById("login-suggestions");
+  const btn   = document.getElementById("btn-login-go");
+  const name  = inp.value.trim();
+
+  // Reset state
+  inp.classList.remove("is-taken");
+  errEl.className = "login-error";
+  errEl.style.display = "none";
+  sugEl.style.display = "none";
+
+  if(!name){ errEl.textContent="Please enter a username."; errEl.style.display="block"; return; }
+
+  btn.disabled = true;
+  btn.textContent = "Checking…";
+
+  try{
+    const res  = await fetch(`${BACKEND_URL}/login`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({username: name})
+    });
+    const data = await res.json();
+
+    if(res.status === 409 || data.taken){
+      // ── USERNAME ALREADY TAKEN ────────────────────────────────────
+      inp.classList.add("is-taken");
+      errEl.className = "login-error is-taken-msg";
+      errEl.textContent = data.error || `"${name}" is already taken. Please choose a different name.`;
+      errEl.style.display = "block";
+
+      // Show clickable suggestions
+      _suggestedNames = _generateSuggestions(name);
+      const spans = sugEl.querySelectorAll("span");
+      _suggestedNames.forEach((s,i)=>{ if(spans[i]) spans[i].textContent = s; });
+      sugEl.style.display = "block";
+
+      // Shake and re-focus
+      inp.focus();
+      inp.select();
+      btn.disabled = false;
+      btn.textContent = "Enter Studio";
+      return;
+    }
+
+    if(!res.ok || data.error){ throw new Error(data.error||"Login failed"); }
+
+    onLoginSuccess(data.username, data.runs||[]);
+
+  }catch(e){
+    if(e.message && e.message.includes("taken")){
+      inp.classList.add("is-taken");
+      errEl.className = "login-error is-taken-msg";
+    }
+    errEl.textContent = e.message||"Login failed. Try again.";
+    errEl.style.display = "block";
+    btn.disabled = false;
+    btn.textContent = "Enter Studio";
+  }
+}
+
+function onLoginSuccess(username, runs){
+  currentUser = username;
+  // Hide overlay with fade
+  const overlay = document.getElementById("login-overlay");
+  overlay.style.transition = "opacity .4s";
+  overlay.style.opacity = "0";
+  setTimeout(()=>{ overlay.style.display="none"; }, 420);
+  // Show user bar
+  document.getElementById("user-bar").style.display = "flex";
+  document.getElementById("user-name-display").textContent = username;
+  document.getElementById("user-avatar").textContent = username.charAt(0).toUpperCase();
+  // Load history
+  renderHistory(runs);
+}
+
+async function doLogout(){
+  if(!confirm("Sign out of " + (currentUser||"this session") + "?")) return;
+  try{ await fetch(`${BACKEND_URL}/logout`, {method:"POST"}); }catch(e){}
+  currentUser = null;
+  document.getElementById("user-bar").style.display = "none";
+  document.getElementById("login-overlay").style.opacity = "1";
+  document.getElementById("login-overlay").style.display = "flex";
+  document.getElementById("login-username").value = "";
+  document.getElementById("login-error").style.display = "none";
+  document.getElementById("btn-login-go").disabled = false;
+  document.getElementById("btn-login-go").textContent = "Enter Studio";
+  renderHistory([]);
+  setTimeout(()=>document.getElementById("login-username").focus(), 200);
+}
+
+/* ── HISTORY DRAWER ─────────────────────────────────────────────────── */
+function toggleHistory(){
+  const drawer  = document.getElementById("history-drawer");
+  const backdrop= document.getElementById("history-overlay");
+  const isOpen  = drawer.classList.contains("open");
+  drawer.classList.toggle("open", !isOpen);
+  backdrop.style.display = isOpen ? "none" : "block";
+  if(!isOpen){
+    // Refresh history from server
+    fetch(`${BACKEND_URL}/history`).then(r=>r.ok?r.json():null).then(d=>{
+      if(d&&d.runs) renderHistory(d.runs);
+    }).catch(()=>{});
+  }
+}
+
+const MODULE_LABELS = {
+  A:"Group A — Boundary Whole", B:"Group B — Segment Forest",
+  C:"Group C — Sample Plot",    D:"Group D — Complex Version",
+  E:"Group E — Subdivider",     F:"Group F — Slope Analysis"
+};
+const MODULE_ICONS = {A:"🌲",B:"🌲",C:"🌲",D:"🌲",E:"✂️",F:"🏔️"};
+
+function renderHistory(runs){
+  const body = document.getElementById("drawer-body");
+  if(!runs||runs.length===0){
+    body.innerHTML='<div class="drawer-empty">No runs yet.<br>Execute a pipeline to see your history here.</div>';
+    return;
+  }
+  // Most recent first
+  const sorted = [...runs].reverse();
+  // Update count badge on history button
+  const hbtn = document.getElementById("btn-history-count");
+  if(hbtn) hbtn.textContent = runs.length > 0 ? ` (${runs.length})` : "";
+  // Update count
+  body.innerHTML = sorted.map((r,idx)=>{
+    const mod   = r.module || "?";
+    const icon  = MODULE_ICONS[mod] || "📄";
+    const label = MODULE_LABELS[mod] || ("Group "+mod);
+    let ts = "—";
+    if(r.timestamp){
+      const d = new Date(r.timestamp);
+      ts = d.toLocaleString(undefined,{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+    }
+    const short = r.run_id ? r.run_id.slice(0,8)+"…" : "—";
+    const isLatest = idx===0;
+    return `<div class="run-card" style="${isLatest?'border-color:rgba(16,185,129,0.45);background:rgba(16,185,129,0.04);':''}">
+      <div class="run-card-top">
+        <span class="run-module-badge">${icon} ${mod}</span>
+        <span class="run-time">${ts}</span>
+      </div>
+      <div style="font-family:var(--font-body);font-size:10.5px;color:var(--white-mist);font-weight:500;margin-bottom:2px;">${label}</div>
+      <div class="run-id-text">ID: ${short}</div>
+      <div class="run-actions">
+        <button class="run-action-btn run-prev-btn" onclick="loadRunPreview('${r.run_id}')">🗺 Preview</button>
+        <button class="run-action-btn run-dl-btn" onclick="triggerDownload('${r.run_id}')">⬇ Download</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function triggerDownload(runId){
+  const a=document.createElement("a");
+  a.href=`${BACKEND_URL}/download/${runId}`;
+  a.download=""; a.click();
+}
+
+function loadRunPreview(runId){
+  const img = document.getElementById("output-img");
+  img.src   = `${BACKEND_URL}/outputs/${runId}/output.png?t=${Date.now()}`;
+  img.style.display = "block";
+  document.getElementById("empty-notice").style.display = "none";
+  document.getElementById("download-btn").href   = `${BACKEND_URL}/download/${runId}`;
+  document.getElementById("download-btn").style.display = "inline-block";
+  // Switch to static preview tab
+  switchPreviewTab("static");
+  // Close drawer
+  toggleHistory();
+}
+
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -39,7 +254,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
 .pip{display:flex;align-items:center;gap:7px;}
 .pip-dot{width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 8px rgba(16,185,129,.6);animation:pulseGlow 2s infinite alternate;}
 .pip-value{color:var(--white-mist);font-weight:500;}
-.app-layout{display:grid;grid-template-columns:272px 10px 1fr 10px 410px;flex:1;min-height:0;padding:0 16px 16px;}
+.app-layout{display:grid;grid-template-columns:272px 10px 1fr 10px 410px;flex:1;min-height:0;padding:0 16px 16px;height:0;}
 .layout-resizer{position:relative;z-index:10;border-radius:4px;transition:background .25s;}
 .layout-resizer::after{content:'';position:absolute;border-radius:3px;background:rgba(16,185,129,0);transition:background .25s;}
 .layout-resizer.col-resizer{cursor:col-resize;width:6px;margin:0 2px;height:100%;}
@@ -51,7 +266,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
 .holo-panel{background:var(--bg-glass);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);
   border:1px solid var(--border-soft);border-radius:18px;display:flex;flex-direction:column;overflow:hidden;
   box-shadow:0 10px 40px rgba(28,60,45,.10);transition:border-color .4s,box-shadow .4s;position:relative;
-  height:100%;min-width:140px;min-height:60px;}
+  height:100%;min-width:140px;min-height:0;}
 .holo-panel:hover{border-color:rgba(16,185,129,.22);box-shadow:0 14px 50px rgba(28,60,45,.14);}
 .holo-panel::after{content:'';position:absolute;top:9px;left:9px;width:9px;height:9px;
   border-top:1.5px solid rgba(16,185,129,.35);border-left:1.5px solid rgba(16,185,129,.35);border-radius:3px 0 0 0;pointer-events:none;}
@@ -59,17 +274,11 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
   border-bottom:1.5px solid rgba(16,185,129,.35);border-right:1.5px solid rgba(16,185,129,.35);border-radius:0 0 3px 0;pointer-events:none;}
 .panel-title{font-family:var(--font-display);font-size:10px;text-transform:uppercase;letter-spacing:.16em;
   color:var(--white-mist);opacity:.85;padding:13px 20px;border-bottom:1px solid rgba(241,245,249,.04);
-  font-weight:600;display:flex;align-items:center;gap:9px;flex-shrink:0;}
+  font-weight:600;display:flex;align-items:center;gap:9px;flex-shrink:0;min-height:0;}
 .panel-title::before{content:'';display:inline-block;width:5px;height:5px;border-radius:1px;background:#10b981;
   box-shadow:0 0 6px rgba(16,185,129,.55);flex-shrink:0;transition:transform .4s,box-shadow .4s;}
 .holo-panel:hover .panel-title::before{transform:rotate(45deg) scale(1.15);box-shadow:0 0 10px rgba(16,185,129,.8);}
-.panel-scroll{
-  flex:1;
-  min-height:0;          /* IMPORTANT */
-  overflow-y:auto;
-  padding:16px 20px;
-  scroll-behavior:smooth;
-}
+.panel-scroll{flex:1;overflow-y:auto;padding:16px 20px;scroll-behavior:smooth;min-height:0;}
 .panel-scroll::-webkit-scrollbar,.config-stack::-webkit-scrollbar{width:5px;}
 .panel-scroll::-webkit-scrollbar-thumb,.config-stack::-webkit-scrollbar-thumb{background:rgba(16,185,129,.25);border-radius:10px;}
 .tree-node{padding:9px 12px;border-radius:7px;font-size:12px;color:var(--text-muted);cursor:pointer;
@@ -77,19 +286,9 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
   transition:background .3s,color .3s,transform .3s,box-shadow .3s;}
 .tree-node:hover{background:rgba(20,40,30,.05);color:var(--white-snow);transform:translateX(4px);}
 .tree-node.active{background:rgba(16,185,129,.12);color:var(--white-snow);font-weight:600;box-shadow:inset 1px 0 0 var(--border-active);}
-.workspace-split{
-  display:grid;
-  grid-template-rows:minmax(0,1fr) 6px 110px;
-  height:100%;
-  min-height:0;
-}
-.matrix-container{
-  display:flex;
-  gap:20px;
-  height:100%;
-  min-height:0;          /* IMPORTANT */
-}
-.matrix-selectors{display:flex;flex-direction:column;gap:10px;}
+.workspace-split{display:grid;grid-template-rows:1fr 6px minmax(96px,110px);height:100%;min-height:0;}
+.matrix-container{display:flex;gap:20px;height:100%;min-height:0;overflow:hidden;}
+.matrix-selectors{display:flex;flex-direction:column;gap:10px;flex-shrink:0;overflow-y:auto;}
 .matrix-tab{width:44px;height:44px;background:var(--bg-glass);border:1px solid var(--border-soft);border-radius:11px;
   display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:14px;font-weight:600;
   color:var(--text-muted);cursor:pointer;transition:all .35s var(--ease-smooth);}
@@ -97,14 +296,8 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
 .matrix-tab.active-tab{color:var(--white-snow);background:rgba(16,185,129,.15);border-color:var(--border-active);
   box-shadow:0 0 20px var(--glow-mint);animation:pulseGlow 2s infinite alternate;}
 @keyframes pulseGlow{0%{box-shadow:0 0 12px rgba(16,185,129,.2)}100%{box-shadow:0 0 24px rgba(16,185,129,.45)}}
-.config-stack{
-  flex:1;
-  min-height:0;           /* IMPORTANT */
-  overflow-y:auto;
-  padding-right:4px;
-  scroll-behavior:smooth;
-}
-.group-content-card{display:none;flex-direction:column;gap:13px;}
+.config-stack{flex:1;overflow-y:auto;padding-right:4px;padding-bottom:16px;scroll-behavior:smooth;min-height:0;}
+.group-content-card{display:none;flex-direction:column;gap:13px;padding-bottom:8px;}
 .group-content-card.active-card{display:flex;animation:cardEnter .4s var(--ease-smooth) both;}
 @keyframes cardEnter{from{opacity:0;transform:translateY(8px) scale(.992)}to{opacity:1;transform:none}}
 .hidden{display:none !important;pointer-events:none;}
@@ -135,6 +328,7 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
 .toggle-option:hover{color:var(--white-snow);}
 .toggle-option.active-toggle{background:var(--white-pure);color:var(--white-snow);box-shadow:0 2px 6px rgba(0,0,0,.05);}
 .console-layout{display:flex;align-items:center;justify-content:space-between;padding:0 22px;}
+.workspace-split>.holo-panel:last-of-type{flex-shrink:0;height:auto;min-height:90px;}
 .btn-cyber-run{background:var(--emerald-glow);border:none;color:var(--white-pure);padding:11px 24px;
   border-radius:11px;font-family:var(--font-display);font-weight:600;font-size:12px;letter-spacing:.03em;
   cursor:pointer;box-shadow:0 4px 15px rgba(16,185,129,.2);transition:transform .35s,box-shadow .35s,filter .3s;position:relative;overflow:hidden;}
@@ -154,7 +348,7 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
 @keyframes spinPulse{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.04)}100%{transform:rotate(360deg) scale(1)}}
 .fill-arc.is-error{stroke:#dc2626 !important;}
 @keyframes pulse{from{opacity:.6}to{opacity:1}}
-.visualizer-desk{padding:20px;display:flex;flex-direction:column;height:100%;}
+.visualizer-desk{padding:20px;display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;}
 .canvas-wrapper{flex:1;background-color:#0f0a12;
   background-image:linear-gradient(rgba(101,163,13,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(101,163,13,.045) 1px,transparent 1px);
   background-size:26px 26px;border:1px solid rgba(241,245,249,.02);border-radius:14px;position:relative;overflow:hidden;
@@ -174,9 +368,130 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
 .info-note{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:7px;
   padding:8px 11px;font-family:var(--font-mono);font-size:9.5px;color:#92400e;line-height:1.6;}
 .section-sep{height:1px;background:rgba(20,40,30,.07);margin:4px 0;}
+
+/* ─── LOGIN OVERLAY ──────────────────────────────────────────────────── */
+#login-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 50% 40%,#eef7f0 0%,#c7e8d4 50%,#0a1a0f 100%);
+  animation:shellEnter .5s var(--ease-smooth) both;}
+.login-card{background:rgba(255,255,255,0.72);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);
+  border:1px solid rgba(16,185,129,0.25);border-radius:22px;padding:40px 44px;width:340px;max-width:92vw;
+  box-shadow:0 24px 80px rgba(16,185,129,0.15),0 4px 20px rgba(0,0,0,0.08);
+  display:flex;flex-direction:column;gap:20px;align-items:center;}
+.login-logo{width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#059669,#10b981);
+  display:flex;align-items:center;justify-content:center;box-shadow:0 8px 28px rgba(16,185,129,0.35);}
+.login-title{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--white-snow);text-align:center;line-height:1.3;}
+.login-sub{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin-top:-10px;}
+.login-input-wrap{width:100%;}
+.login-input-wrap label{display:block;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--text-muted);margin-bottom:6px;font-weight:600;}
+.login-input{width:100%;height:42px;background:rgba(255,255,255,0.9);border:1.5px solid rgba(16,185,129,0.3);
+  border-radius:10px;padding:0 14px;font-family:var(--font-body);font-size:14px;font-weight:500;
+  color:var(--white-snow);outline:none;box-sizing:border-box;transition:border-color .25s,box-shadow .25s;}
+.login-input:focus{border-color:var(--border-active);box-shadow:0 0 0 3px rgba(16,185,129,0.15);}
+.login-input::placeholder{color:var(--text-muted);}
+.btn-login{width:100%;height:44px;background:var(--emerald-glow);border:none;border-radius:11px;
+  color:white;font-family:var(--font-display);font-weight:700;font-size:14px;cursor:pointer;
+  box-shadow:0 4px 18px rgba(16,185,129,0.3);transition:transform .3s,box-shadow .3s,filter .25s;
+  position:relative;overflow:hidden;}
+.btn-login:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(16,185,129,0.45);}
+.btn-login:active{transform:translateY(0) scale(.985);}
+.btn-login:disabled{opacity:.6;cursor:not-allowed;}
+.login-error{font-family:var(--font-mono);font-size:10.5px;color:#dc2626;background:rgba(220,38,38,.07);
+  border:1px solid rgba(220,38,38,.2);border-radius:7px;padding:8px 12px;width:100%;box-sizing:border-box;display:none;}
+.login-note{font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);text-align:center;line-height:1.6;}
+
+/* ─── USER BAR ───────────────────────────────────────────────────────── */
+#user-bar{display:flex;align-items:center;gap:12px;}
+.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--emerald-glow);
+  display:flex;align-items:center;justify-content:center;font-family:var(--font-display);
+  font-size:12px;font-weight:700;color:white;flex-shrink:0;box-shadow:0 2px 8px rgba(16,185,129,0.35);}
+#user-name-display{font-family:var(--font-mono);font-size:11px;color:var(--white-mist);font-weight:600;}
+.btn-logout{background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.2);color:#dc2626;
+  padding:4px 11px;border-radius:6px;font-family:var(--font-mono);font-size:9.5px;font-weight:600;
+  cursor:pointer;transition:background .25s,transform .2s;}
+.btn-logout:hover{background:rgba(220,38,38,.16);transform:translateY(-1px);}
+.btn-history{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);color:#0d9488;
+  padding:4px 11px;border-radius:6px;font-family:var(--font-mono);font-size:9.5px;font-weight:600;
+  cursor:pointer;transition:background .25s,transform .2s;}
+.btn-history:hover{background:rgba(16,185,129,.16);transform:translateY(-1px);}
+
+/* ─── HISTORY DRAWER ─────────────────────────────────────────────────── */
+#history-drawer{position:fixed;top:0;right:-360px;width:340px;height:100vh;z-index:8000;
+  background:rgba(255,255,255,0.88);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);
+  border-left:1px solid rgba(16,185,129,0.2);box-shadow:-8px 0 40px rgba(16,185,129,0.1);
+  display:flex;flex-direction:column;transition:right .4s var(--ease-smooth);}
+#history-drawer.open{right:0;}
+.drawer-header{padding:20px 20px 14px;border-bottom:1px solid rgba(20,40,30,0.08);display:flex;align-items:center;justify-content:space-between;}
+.drawer-title{font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--white-snow);}
+.btn-drawer-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);transition:color .2s;}
+.btn-drawer-close:hover{color:var(--white-snow);}
+.drawer-body{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:8px;}
+.run-card{background:rgba(255,255,255,0.7);border:1px solid rgba(16,185,129,0.15);border-radius:10px;
+  padding:11px 13px;cursor:pointer;transition:border-color .25s,box-shadow .25s,transform .2s;}
+.run-card:hover{border-color:rgba(16,185,129,0.4);box-shadow:0 4px 14px rgba(16,185,129,0.1);transform:translateX(-2px);}
+.run-card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+.run-module-badge{font-family:var(--font-mono);font-size:9px;font-weight:700;background:rgba(16,185,129,.12);
+  color:#065f46;border-radius:5px;padding:2px 7px;letter-spacing:.06em;}
+.run-time{font-family:var(--font-mono);font-size:9px;color:var(--text-muted);}
+.run-id-text{font-family:var(--font-mono);font-size:10px;color:var(--white-mist);margin-bottom:4px;word-break:break-all;}
+.run-actions{display:flex;gap:6px;margin-top:6px;}
+.run-action-btn{font-family:var(--font-mono);font-size:9px;padding:3px 9px;border-radius:5px;border:1px solid;cursor:pointer;transition:background .2s;}
+.run-dl-btn{background:rgba(28,43,34,.05);border-color:rgba(28,43,34,.15);color:var(--white-mist);}
+.run-dl-btn:hover{background:rgba(28,43,34,.12);}
+.run-prev-btn{background:rgba(16,185,129,.07);border-color:rgba(16,185,129,.25);color:#065f46;}
+.run-prev-btn:hover{background:rgba(16,185,129,.15);}
+.drawer-empty{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:center;padding:40px 0;}
+
+
+.login-input.is-taken{border-color:#dc2626 !important;box-shadow:0 0 0 3px rgba(220,38,38,0.15) !important;animation:shakeName .4s var(--ease-soft);}
+@keyframes shakeName{0%,100%{transform:translateX(0)}20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
+.login-error.is-taken-msg{background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);color:#b91c1c;}
+.login-suggestions{font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);text-align:center;margin-top:-8px;}
+.login-suggestions span{cursor:pointer;color:#0d9488;text-decoration:underline;margin:0 4px;}
+.login-suggestions span:hover{color:#065f46;}
+
 </style>
 </head>
 <body>
+<!-- ═══ LOGIN OVERLAY ════════════════════════════════════════════════ -->
+<div id="login-overlay">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9" stroke="white" stroke-width="1.8"/>
+        <path d="M12 4 L14.2 11 L20 12 L14.2 13 L12 20 L9.8 13 L4 12 L9.8 11 Z" fill="white"/>
+      </svg>
+    </div>
+    <div>
+      <div class="login-title">Elfak GIS Engine Pro</div>
+      <div class="login-sub">Premium Forest Studio</div>
+    </div>
+    <div class="login-input-wrap">
+      <label>Enter Your Username to Continue</label>
+      <input class="login-input" id="login-username" type="text" maxlength="40"
+             placeholder="e.g. John or Forest_Team_1"
+             onkeydown="if(event.key==='Enter')doLogin()" oninput="this.classList.remove('is-taken');document.getElementById('login-error').style.display='none';document.getElementById('login-suggestions').style.display='none';">
+    </div>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-suggestions" id="login-suggestions" style="display:none;">Try: <span onclick="tryName(0)"></span> <span onclick="tryName(1)"></span> <span onclick="tryName(2)"></span></div>
+    <button class="btn-login" id="btn-login-go" onclick="doLogin()">Enter Studio</button>
+    <div class="login-note">No password needed — your username links to your<br>personal run history on this server.</div>
+  </div>
+</div>
+
+<!-- ═══ HISTORY DRAWER ═══════════════════════════════════════════════ -->
+<div id="history-drawer">
+  <div class="drawer-header">
+    <div class="drawer-title">📋 My Run History</div>
+    <button class="btn-drawer-close" onclick="toggleHistory()">✕</button>
+  </div>
+  <div class="drawer-body" id="drawer-body">
+    <div class="drawer-empty">No runs yet — execute a pipeline to see history.</div>
+  </div>
+</div>
+<div id="history-overlay" onclick="toggleHistory()" style="display:none;position:fixed;inset:0;z-index:7999;background:rgba(0,0,0,0.18);"></div>
+
+
 <div class="app-shell">
 
 <header class="app-header">
@@ -196,6 +511,12 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
     <div class="pip"><span class="pip-dot"></span><span>Engine</span><span class="pip-value">Online</span></div>
     <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs">EPSG:32644</span></div>
     <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
+  </div>
+  <div id="user-bar" style="display:none;">
+    <div class="user-avatar" id="user-avatar">?</div>
+    <span id="user-name-display">Guest</span>
+    <button class="btn-history" onclick="toggleHistory()">📋 History<span id="btn-history-count" style="font-size:9px;opacity:.8;"></span></button>
+    <button class="btn-logout" onclick="doLogout()">Sign Out</button>
   </div>
 </header>
 
@@ -866,6 +1187,15 @@ async function _send(fd){
     dl.href=data.download.startsWith("http")?data.download:`${BACKEND_URL}${data.download}`;
     dl.style.display="inline-block";
     if(data.kmz_url) activateGoogleEarth(data.kmz_url,data.run_id);
+
+    // ── Refresh history drawer after every successful run ────────────
+    setTimeout(async ()=>{
+      try{
+        const hr=await fetch(`${BACKEND_URL}/history`);
+        if(hr.ok){ const hd=await hr.json(); if(hd.runs) renderHistory(hd.runs); }
+      }catch(e){}
+    }, 600);
+
   }catch(e){
     setStatus("Error","Pipeline failed",0);
     document.getElementById("radial-bar").classList.add("is-error");
@@ -931,6 +1261,222 @@ function activateGoogleEarth(kmzInfo,run_id){
     workspace.style.gridTemplateRows=`${newTop}px 6px ${totH-newTop-6}px`;
   });
 })();
+
+
+/* ════════════════════════════════════════════════════════════════════
+   MULTI-USER LOGIN SYSTEM
+   ════════════════════════════════════════════════════════════════════ */
+let currentUser = null;
+
+// On load — check if already logged in
+(async function checkSession(){
+  try{
+    const res = await fetch(`${BACKEND_URL}/me`);
+    if(res.ok){
+      const data = await res.json();
+      if(data.username){ onLoginSuccess(data.username, data.runs||[]); return; }
+    }
+  }catch(e){}
+  // Not logged in — show overlay
+  document.getElementById("login-overlay").style.display = "flex";
+  setTimeout(()=>document.getElementById("login-username").focus(), 400);
+})();
+
+let _suggestedNames = [];
+
+function _generateSuggestions(base){
+  // Strip trailing numbers, then offer numbered variants + underscore variant
+  const clean = base.replace(/[_\-]?\d+$/, "").trim() || base;
+  const rand  = Math.floor(Math.random() * 89 + 10);
+  return [
+    clean + "_" + rand,
+    clean + (new Date().getFullYear() % 100),
+    clean + "_GIS"
+  ];
+}
+
+function tryName(idx){
+  const name = _suggestedNames[idx];
+  if(!name) return;
+  document.getElementById("login-username").value = name;
+  document.getElementById("login-username").classList.remove("is-taken");
+  document.getElementById("login-error").style.display = "none";
+  document.getElementById("login-suggestions").style.display = "none";
+  doLogin();
+}
+
+async function doLogin(){
+  const inp   = document.getElementById("login-username");
+  const errEl = document.getElementById("login-error");
+  const sugEl = document.getElementById("login-suggestions");
+  const btn   = document.getElementById("btn-login-go");
+  const name  = inp.value.trim();
+
+  // Reset state
+  inp.classList.remove("is-taken");
+  errEl.className = "login-error";
+  errEl.style.display = "none";
+  sugEl.style.display = "none";
+
+  if(!name){ errEl.textContent="Please enter a username."; errEl.style.display="block"; return; }
+
+  btn.disabled = true;
+  btn.textContent = "Checking…";
+
+  try{
+    const res  = await fetch(`${BACKEND_URL}/login`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({username: name})
+    });
+    const data = await res.json();
+
+    if(res.status === 409 || data.taken){
+      // ── USERNAME ALREADY TAKEN ────────────────────────────────────
+      inp.classList.add("is-taken");
+      errEl.className = "login-error is-taken-msg";
+      errEl.textContent = data.error || `"${name}" is already taken. Please choose a different name.`;
+      errEl.style.display = "block";
+
+      // Show clickable suggestions
+      _suggestedNames = _generateSuggestions(name);
+      const spans = sugEl.querySelectorAll("span");
+      _suggestedNames.forEach((s,i)=>{ if(spans[i]) spans[i].textContent = s; });
+      sugEl.style.display = "block";
+
+      // Shake and re-focus
+      inp.focus();
+      inp.select();
+      btn.disabled = false;
+      btn.textContent = "Enter Studio";
+      return;
+    }
+
+    if(!res.ok || data.error){ throw new Error(data.error||"Login failed"); }
+
+    onLoginSuccess(data.username, data.runs||[]);
+
+  }catch(e){
+    if(e.message && e.message.includes("taken")){
+      inp.classList.add("is-taken");
+      errEl.className = "login-error is-taken-msg";
+    }
+    errEl.textContent = e.message||"Login failed. Try again.";
+    errEl.style.display = "block";
+    btn.disabled = false;
+    btn.textContent = "Enter Studio";
+  }
+}
+
+function onLoginSuccess(username, runs){
+  currentUser = username;
+  // Hide overlay with fade
+  const overlay = document.getElementById("login-overlay");
+  overlay.style.transition = "opacity .4s";
+  overlay.style.opacity = "0";
+  setTimeout(()=>{ overlay.style.display="none"; }, 420);
+  // Show user bar
+  document.getElementById("user-bar").style.display = "flex";
+  document.getElementById("user-name-display").textContent = username;
+  document.getElementById("user-avatar").textContent = username.charAt(0).toUpperCase();
+  // Load history
+  renderHistory(runs);
+}
+
+async function doLogout(){
+  if(!confirm("Sign out of " + (currentUser||"this session") + "?")) return;
+  try{ await fetch(`${BACKEND_URL}/logout`, {method:"POST"}); }catch(e){}
+  currentUser = null;
+  document.getElementById("user-bar").style.display = "none";
+  document.getElementById("login-overlay").style.opacity = "1";
+  document.getElementById("login-overlay").style.display = "flex";
+  document.getElementById("login-username").value = "";
+  document.getElementById("login-error").style.display = "none";
+  document.getElementById("btn-login-go").disabled = false;
+  document.getElementById("btn-login-go").textContent = "Enter Studio";
+  renderHistory([]);
+  setTimeout(()=>document.getElementById("login-username").focus(), 200);
+}
+
+/* ── HISTORY DRAWER ─────────────────────────────────────────────────── */
+function toggleHistory(){
+  const drawer  = document.getElementById("history-drawer");
+  const backdrop= document.getElementById("history-overlay");
+  const isOpen  = drawer.classList.contains("open");
+  drawer.classList.toggle("open", !isOpen);
+  backdrop.style.display = isOpen ? "none" : "block";
+  if(!isOpen){
+    // Refresh history from server
+    fetch(`${BACKEND_URL}/history`).then(r=>r.ok?r.json():null).then(d=>{
+      if(d&&d.runs) renderHistory(d.runs);
+    }).catch(()=>{});
+  }
+}
+
+const MODULE_LABELS = {
+  A:"Group A — Boundary Whole", B:"Group B — Segment Forest",
+  C:"Group C — Sample Plot",    D:"Group D — Complex Version",
+  E:"Group E — Subdivider",     F:"Group F — Slope Analysis"
+};
+const MODULE_ICONS = {A:"🌲",B:"🌲",C:"🌲",D:"🌲",E:"✂️",F:"🏔️"};
+
+function renderHistory(runs){
+  const body = document.getElementById("drawer-body");
+  if(!runs||runs.length===0){
+    body.innerHTML='<div class="drawer-empty">No runs yet.<br>Execute a pipeline to see your history here.</div>';
+    return;
+  }
+  // Most recent first
+  const sorted = [...runs].reverse();
+  // Update count badge on history button
+  const hbtn = document.getElementById("btn-history-count");
+  if(hbtn) hbtn.textContent = runs.length > 0 ? ` (${runs.length})` : "";
+  // Update count
+  body.innerHTML = sorted.map((r,idx)=>{
+    const mod   = r.module || "?";
+    const icon  = MODULE_ICONS[mod] || "📄";
+    const label = MODULE_LABELS[mod] || ("Group "+mod);
+    let ts = "—";
+    if(r.timestamp){
+      const d = new Date(r.timestamp);
+      ts = d.toLocaleString(undefined,{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+    }
+    const short = r.run_id ? r.run_id.slice(0,8)+"…" : "—";
+    const isLatest = idx===0;
+    return `<div class="run-card" style="${isLatest?'border-color:rgba(16,185,129,0.45);background:rgba(16,185,129,0.04);':''}">
+      <div class="run-card-top">
+        <span class="run-module-badge">${icon} ${mod}</span>
+        <span class="run-time">${ts}</span>
+      </div>
+      <div style="font-family:var(--font-body);font-size:10.5px;color:var(--white-mist);font-weight:500;margin-bottom:2px;">${label}</div>
+      <div class="run-id-text">ID: ${short}</div>
+      <div class="run-actions">
+        <button class="run-action-btn run-prev-btn" onclick="loadRunPreview('${r.run_id}')">🗺 Preview</button>
+        <button class="run-action-btn run-dl-btn" onclick="triggerDownload('${r.run_id}')">⬇ Download</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function triggerDownload(runId){
+  const a=document.createElement("a");
+  a.href=`${BACKEND_URL}/download/${runId}`;
+  a.download=""; a.click();
+}
+
+function loadRunPreview(runId){
+  const img = document.getElementById("output-img");
+  img.src   = `${BACKEND_URL}/outputs/${runId}/output.png?t=${Date.now()}`;
+  img.style.display = "block";
+  document.getElementById("empty-notice").style.display = "none";
+  document.getElementById("download-btn").href   = `${BACKEND_URL}/download/${runId}`;
+  document.getElementById("download-btn").style.display = "inline-block";
+  // Switch to static preview tab
+  switchPreviewTab("static");
+  // Close drawer
+  toggleHistory();
+}
+
+// After successful pipeline run, append to local history display
 </script>
 </body>
 </html>
