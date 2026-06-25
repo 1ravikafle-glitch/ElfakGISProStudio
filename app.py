@@ -1202,8 +1202,16 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     return first_cs, first_ca, first_tr, all_summary, vec_gdf, float(SLOPE_NODATA), boundary_gdf, f_mode
 
 
-def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
-                  boundary_gdf=None, f_mode="A"):
+def preview_slope(
+    clipped_slope,
+    class_arr,
+    summary_rows,
+    path,
+    nodata,
+    boundary_gdf=None,
+    f_mode="A",
+    slope_poly_gdf=None
+):
     import matplotlib.patches as mpatches
     import matplotlib.gridspec as gridspec
 
@@ -1227,11 +1235,32 @@ def preview_slope(clipped_slope, class_arr, summary_rows, path, nodata,
     ax1.axis("off")
 
     colors_map = {0:(1,1,1,0), 1:(0.18,0.8,0.44,1), 2:(0.95,0.61,0.07,1), 3:(0.91,0.29,0.24,1)}
-    rgb = np.zeros((*class_arr.shape, 4), dtype=np.float32)
-    for cid, rgba in colors_map.items():
-        rgb[class_arr == cid] = rgba
-    ax2.imshow(rgb, interpolation="nearest")
-    ax2.set_title("Slope Classification + Boundary", fontsize=10, fontweight="bold", pad=6)
+    ax2.set_facecolor("white")
+
+if slope_poly_gdf is not None and not slope_poly_gdf.empty:
+
+    color_lookup = {
+        1:"#2ecc71",
+        2:"#f39c12",
+        3:"#e74c3c"
+    }
+
+    for _, row in slope_poly_gdf.iterrows():
+
+        cid = int(row["Class"])
+
+        gpd.GeoDataFrame(
+            [row],
+            crs=slope_poly_gdf.crs
+        ).plot(
+            ax=ax2,
+            facecolor=color_lookup.get(cid,"gray"),
+            edgecolor="black",
+            linewidth=0.5
+        )
+
+    ax2.set_aspect("equal")
+    ax2.set_title("Slope Polygon Map", fontsize=10, fontweight="bold", pad=6)
     ax2.axis("off")
 
     if boundary_gdf is not None and not boundary_gdf.empty:
