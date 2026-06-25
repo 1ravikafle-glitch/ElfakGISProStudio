@@ -1213,6 +1213,7 @@ def preview_slope(
 ):
     import matplotlib.patches as mpatches
     import matplotlib.gridspec as gridspec
+    import matplotlib.patheffects as pe
 
     valid = (class_arr > 0)
     has_label = f_mode in ("B", "E")
@@ -1251,6 +1252,32 @@ if slope_poly_gdf is not None and not slope_poly_gdf.empty:
     }
 
     for _, row in slope_poly_gdf.iterrows():
+        if slope_poly_gdf is not None and not slope_poly_gdf.empty:
+
+    for _, row in slope_poly_gdf.iterrows():
+
+        geom = row.geometry
+
+        if geom is None or geom.is_empty:
+            continue
+
+        c = geom.centroid
+
+        ax2.annotate(
+            row["Slope_Range"],
+            (c.x, c.y),
+            fontsize=6,
+            ha="center",
+            fontweight="bold",
+            color="black",
+            path_effects=[
+                pe.Stroke(
+                    linewidth=2,
+                    foreground="white"
+                ),
+                pe.Normal()
+            ]
+        )
 
         cid = int(row["Class"])
 
