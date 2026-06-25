@@ -10,10 +10,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
+import matplotlib.patches as mpatches
+import matplotlib.gridspec as gridspec
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, session
 from shapely.geometry import Polygon, Point, LineString, MultiPolygon, MultiPoint
 from shapely.ops import unary_union
+from shapely.geometry import box as _shapely_box
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "elfak-gis-engine-2025-secret")
@@ -139,6 +142,29 @@ def _as_polygon(geom):
                  if g.geom_type == "Polygon" and not g.is_empty and g.area > 1e-10]
         return max(polys, key=lambda g: g.area) if polys else None
     return None
+
+
+def _enforce_polygon_gdf(gdf):
+    """
+    Ensure every geometry in a GeoDataFrame is a valid Polygon.
+    Drops or converts non-polygon geometries (LINESTRING, POINT, etc.)
+    This fixes: 'Attempt to write non-polygon (LINESTRING) geometry to POLYGON type shapefile'
+    """
+    if gdf is None or gdf.empty:
+        return gdf
+    keep = []
+    for i, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        pg = _as_polygon(_repair_geom(geom))
+        if pg is not None and not pg.is_empty and pg.area > 1e-10:
+            row = row.copy()
+            row["geometry"] = _close_polygon(pg)
+            keep.append(row)
+    if not keep:
+        return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
+    return gpd.GeoDataFrame(keep, crs=gdf.crs)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -456,15 +482,7 @@ def group_d(df, crs, out, mapping=None, mode="A"):
 
 # =============================================================================
 # GROUP E — STRAIGHT-LINE RECURSIVE BISECTION SUBDIVIDER
-# Range: 2–15 compartments
-# Area tolerance: target ± configurable (default 0.3 ha tolerance applied
-#   during the binary-search fraction so pieces stay within ±0.5 ha of ideal)
-# Polygon-closure fix: every piece is explicitly re-clipped to the parent
-#   polygon so exterior rings are guaranteed closed and valid.
 # =============================================================================
-
-from shapely.geometry import box as _shapely_box
-
 
 def _principal_axis_angle(poly):
     try:
@@ -539,7 +557,7 @@ def _bisect_polygon(poly, n, axis=None, _depth=0):
     dx = maxx - minx
     dy = maxy - miny
 
-    # ── Principal-axis rotation for strongly diagonal polygons ────────
+    # ── Principal-axis rotation for strongly diagonal polygons
     use_principal = False
     rot_angle     = 0.0
     cx0, cy0      = poly.centroid.x, poly.centroid.y
@@ -593,7 +611,7 @@ def _bisect_polygon(poly, n, axis=None, _depth=0):
                 return clipped
         use_principal = False
 
-    # ── Squarified axis selection ─────────────────────────────────────
+    # ── Squarified axis selection
     n_left  = n // 2
     n_right = n - n_left
     frac    = n_left / n
@@ -666,6 +684,10 @@ def _bisect_polygon(poly, n, axis=None, _depth=0):
     except Exception:
         pass
 
+    # Explicitly close both children before recursing
+    lp = _close_polygon(_repair_geom(lp) or lp)
+    rp = _close_polygon(_repair_geom(rp) or rp)
+
     return (_bisect_polygon(lp, n_left,  None, _depth=_depth+1) +
             _bisect_polygon(rp, n_right, None, _depth=_depth+1))
 
@@ -673,14 +695,10 @@ def _bisect_polygon(poly, n, axis=None, _depth=0):
 def _subdivide_polygon(poly, n, area_tol_ha=0.3):
     """
     Public entry point: subdivide poly into n near-equal-area compartments.
-    n: 2–15
+    n is not clamped here — caller controls range.
     area_tol_ha: acceptable ± deviation per compartment in ha (default 0.3 ha)
-
-    Returns a list of exactly n valid, closed Polygon objects whose union
-    covers the original polygon without gaps.
+    Returns a list of exactly n valid, closed Polygon objects.
     """
-    n = max(2, min(15, int(n)))  # Hard clamp to 2-15
-
     poly = _repair_geom(poly)
     if poly is None or poly.is_empty:
         return []
@@ -700,7 +718,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
     if not valid:
         return [_close_polygon(poly)]
 
-    # ── Merge excess slivers ──────────────────────────────────────────
+    # ── Merge excess slivers
     while len(valid) > n:
         smallest_i = min(range(len(valid)), key=lambda i: valid[i].area)
         sliver = valid.pop(smallest_i)
@@ -717,7 +735,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
         except Exception:
             valid.append(sliver)
 
-    # ── Split largest if short ────────────────────────────────────────
+    # ── Split largest if short
     while len(valid) < n:
         largest_i = max(range(len(valid)), key=lambda i: valid[i].area)
         big = valid.pop(largest_i)
@@ -729,7 +747,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
             valid.append(big)
             break
 
-    # ── Gap fill: assign any uncovered area to nearest neighbour ─────
+    # ── Gap fill: assign any uncovered area to nearest neighbour
     try:
         covered = _repair_geom(unary_union(valid))
         gap     = _repair_geom(poly.difference(covered))
@@ -746,11 +764,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
     except Exception:
         pass
 
-    # ── Final area-tolerance check & re-close all rings ──────────────
-    total_area = poly.area
-    ideal_ha   = (total_area / 10000) / n
-    tol_frac   = area_tol_ha / ideal_ha if ideal_ha > 0 else 0.5
-
+    # ── Final re-close all rings
     final = []
     for p in valid:
         p = _close_polygon(_repair_geom(p) or p)
@@ -759,8 +773,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
     return final
 
 
-# ── Compartment vertex points for Group E output ──────────────────────────
-
+# ── Compartment vertex points for Group E output
 def _extract_division_points(pieces, forest_name):
     records = []
     sn = 1
@@ -871,7 +884,7 @@ def _points_along_cut_lines(cut_lines, forest_name, sn_start=1):
 def _save_compartments(pieces, forest_name, crs, save_dir):
     os.makedirs(save_dir, exist_ok=True)
 
-    # Close all rings before saving
+    # Close all rings before saving — critical for valid shapefiles
     pieces = [_close_polygon(_repair_geom(p)) for p in pieces if p and not p.is_empty]
     pieces = [p for p in pieces if p and not p.is_empty]
 
@@ -911,10 +924,16 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
     line_gdf = gpd.GeoDataFrame(line_recs, crs=crs)
     pts_gdf  = gpd.GeoDataFrame(pt_recs,   crs=crs)
 
+    # Enforce polygon-only output before saving to prevent LINESTRING error
+    poly_gdf = _enforce_polygon_gdf(poly_gdf)
+
     prefix = _safe_dirname(forest_name)
-    poly_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_polygon.shp"))
-    line_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_line.shp"))
-    pts_gdf.to_file( os.path.join(save_dir, f"{prefix}_compartment_point.shp"))
+    if not poly_gdf.empty:
+        poly_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_polygon.shp"))
+    if not line_gdf.empty:
+        line_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_line.shp"))
+    if not pts_gdf.empty:
+        pts_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_point.shp"))
 
     summary_df = pd.DataFrame([{k: v for k, v in r.items() if k != "geometry"} for r in records])
     summary_df.to_excel(os.path.join(save_dir, f"{prefix}_compartment_summary.xlsx"), index=False)
@@ -1120,14 +1139,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
 
 
 # ================= GROUP F — DEM SLOPE ANALYSIS =================
-# Workflow:
-# 1. Extract rectangle from DEM (20% buffer)
-# 2. Calculate slope (Horn method)
-# 3. Reclassify: <19°, 19-31°, >31°
-# 4. Raster to polygon
-# 5. Dissolve by class
-# 6. Clip to forest boundary (per compartment/forest if multi-mode)
-# 7. Output per-group slope tables + combined Excel summary
 
 def _boundary_polygon_from_df(df, mapping):
     df = normalize_order(df)
@@ -1182,8 +1193,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
       A = Single forest, one table for whole boundary
       B = Multi-forest: groups by Forest/Name column, one table per forest
       E = Compartments: groups by Compartment column, one table per compartment
-    Returns (all_summary, vec_gdf, boundary_gdf, f_mode)
-    where all_summary rows include a 'Label' key in ALL modes.
+    Returns (all_summary, vec_gdf, boundary_gdf, f_mode, per_group_summaries)
     """
     try:
         import rasterio
@@ -1197,7 +1207,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     os.makedirs(out, exist_ok=True)
     prefix = _safe_dirname(forest_name)
 
-    # ── Load DEM ──────────────────────────────────────────────────────
+    # ── Load DEM
     dem_path = os.path.join(UPLOAD, f"{uuid.uuid4()}_dem.tif")
     dem_file.save(dem_path)
     with rasterio.open(dem_path) as src:
@@ -1211,7 +1221,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if nodata is not None:
         dem_arr[dem_arr == nodata] = np.nan
 
-    # ── Load boundary ─────────────────────────────────────────────────
+    # ── Load boundary
     if boundary_is_zip:
         target_shp = (mapping or {}).get("target_shp")
         boundary_poly, boundary_gdf = _boundary_polygon_from_zip(
@@ -1224,7 +1234,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         ).to_crs(str(dem_crs))
         boundary_poly = boundary_gdf.unary_union
 
-    # ── Step 1: Extract rectangular DEM (20% buffer) ──────────────────
+    # ── Step 1: Extract rectangular DEM (20% buffer)
     b = boundary_poly.bounds
     buf_x = (b[2] - b[0]) * 0.20
     buf_y = (b[3] - b[1]) * 0.20
@@ -1247,7 +1257,8 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     rect_res_x = abs(rect_tr.a)
     rect_res_y = abs(rect_tr.e)
 
-    # ── Step 2: Slope (Horn method) ───────────────────────────────────
+    # ── Step 2: Slope (Horn method)
+    import scipy.ndimage as ndimage
     valid_dem = ~np.isnan(rect_dem)
     filled    = np.nan_to_num(rect_dem, nan=0.0)
 
@@ -1271,7 +1282,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     with rasterio.open(slope_rect_path, "w", **rect_profile) as dst:
         dst.write(slope_rect, 1)
 
-    # ── Step 3: Reclassify ────────────────────────────────────────────
+    # ── Step 3: Reclassify
     valid_mask = (slope_rect != slope_nodata) & ~np.isnan(slope_rect)
     class_rect = np.zeros_like(slope_rect, dtype=np.uint8)
     class_rect[valid_mask & (slope_rect < 19)]                       = 1
@@ -1284,7 +1295,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     with rasterio.open(class_rect_path, "w", **cls_profile) as dst:
         dst.write(class_rect, 1)
 
-    # ── Step 4 & 5: Raster-to-polygon, dissolve by class ─────────────
+    # ── Step 4 & 5: Raster-to-polygon, dissolve by class
     class_defs = {
         1: ("< 19°",    "Gentle",   "#2ecc71"),
         2: ("19 - 31°", "Moderate", "#f39c12"),
@@ -1294,7 +1305,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     rtp_records = []
     with rasterio.open(class_rect_path) as src:
         cls_arr, cls_tr = src.read(1), src.transform
-        from rasterio.features import shapes as rio_shapes
         for shp, val in rio_shapes(cls_arr, mask=(cls_arr > 0).astype(np.uint8), transform=cls_tr):
             cid = int(val)
             if cid == 0: continue
@@ -1319,14 +1329,13 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     except Exception:
         dissolved = rtp_gdf.copy()
 
-    # ── Step 6: Clip dissolved polygons to boundary per group ─────────
+    # ── Step 6: Clip dissolved polygons to boundary per group
 
     def _clip_group_to_poly(clip_poly, label):
         """
         Clip dissolved slope polygons to clip_poly.
         Returns (summary_rows, vec_recs).
-        Each summary row has: Label, Class, Slope_Range, Description,
-        Area_ha, Pct_Area, Total_ha.
+        CRITICAL: All output geometries are guaranteed to be Polygons (no LINESTRING).
         """
         vec_recs = []
         total_valid_ha = 0.0
@@ -1342,7 +1351,27 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                 continue
             if clipped is None or clipped.is_empty:
                 continue
-            area_ha = round(clipped.area / 10000, 4)
+
+            # ── CRITICAL FIX: Force polygon-only output ──────────────────
+            # Intersection of two polygons can produce LINESTRING, POINT, or
+            # GeometryCollection containing non-polygon parts, causing the
+            # "non-polygon (LINESTRING) geometry to POLYGON type shapefile" error.
+            pg = _as_polygon(clipped)
+            if pg is None or pg.is_empty or pg.area < 1e-10:
+                # Try to extract all polygons from a collection
+                if hasattr(clipped, "geoms"):
+                    pg_parts = [_as_polygon(_repair_geom(g)) for g in clipped.geoms
+                                if g.geom_type in ("Polygon", "MultiPolygon")]
+                    pg_parts = [p for p in pg_parts if p and p.area > 1e-10]
+                    if pg_parts:
+                        pg = _close_polygon(max(pg_parts, key=lambda x: x.area))
+                    else:
+                        continue
+                else:
+                    continue
+
+            pg = _close_polygon(pg)
+            area_ha = round(pg.area / 10000, 4)
             total_valid_ha += area_ha
             vec_recs.append({
                 "Label":       label,
@@ -1350,7 +1379,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                 "Slope_Range": class_defs[cid][0],
                 "Descr":       class_defs[cid][1],
                 "Area_ha":     area_ha,
-                "geometry":    clipped,
+                "geometry":    pg,          # guaranteed Polygon
             })
 
         total_valid_ha = max(total_valid_ha, 1e-6)
@@ -1367,17 +1396,13 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             })
         return rows, vec_recs
 
-    # ── Build group polygon list based on f_mode ──────────────────────
-    # f_mode A: whole boundary as one group
-    # f_mode B: group by Forest / Name column
-    # f_mode E: group by Compartment column
-    comp_polygons = []  # list of (label, shapely_polygon)
+    # ── Build group polygon list based on f_mode
+    comp_polygons = []
 
     if f_mode == "A":
         comp_polygons = [(forest_name, boundary_poly)]
 
     else:
-        # Determine the grouping column
         grp_col = None
         if comp_col_name:
             for c in boundary_gdf.columns:
@@ -1394,7 +1419,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                     grp_col = _find_col(boundary_gdf, _FOREST_ALIASES)
 
         if grp_col is None:
-            # Fallback: treat whole boundary as single group
             comp_polygons = [(forest_name, boundary_poly)]
         else:
             for val, grp in boundary_gdf.groupby(grp_col):
@@ -1405,9 +1429,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         if not comp_polygons:
             comp_polygons = [(forest_name, boundary_poly)]
 
-    # ── Run clipping for every group ──────────────────────────────────
+    # ── Run clipping for every group
     all_summary, all_vec = [], []
-    per_group_summaries = {}  # label -> list of row dicts
+    per_group_summaries = {}
 
     for label, cpoly in comp_polygons:
         rows, vec_recs = _clip_group_to_poly(cpoly, label)
@@ -1415,7 +1439,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         all_vec.extend(vec_recs)
         per_group_summaries[label] = rows
 
-    # ── Recalibration ─────────────────────────────────────────────────
+    # ── Recalibration
     if field_area_ha and field_area_ha > 0:
         total_computed = sum(r["Area_ha"] for r in all_summary)
         factor = field_area_ha / max(total_computed, 1e-6)
@@ -1427,11 +1451,13 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             r["Recal_ha"]   = None
             r["Cal_Factor"] = None
 
-    # ── Save vector output ────────────────────────────────────────────
+    # ── Save vector output — enforce polygon-only before writing shp ───
     vec_crs = str(dem_crs)
     if all_vec:
         vec_gdf = gpd.GeoDataFrame(all_vec, crs=vec_crs)
-        vec_gdf.to_file(os.path.join(out, f"{prefix}_slope_polygon.shp"))
+        vec_gdf = _enforce_polygon_gdf(vec_gdf)   # ← CRITICAL FIX
+        if not vec_gdf.empty:
+            vec_gdf.to_file(os.path.join(out, f"{prefix}_slope_polygon.shp"))
     else:
         vec_gdf = gpd.GeoDataFrame(columns=["geometry"], crs=vec_crs)
 
@@ -1463,26 +1489,21 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     with rasterio.open(os.path.join(out, f"{prefix}_slope_classes.tif"), "w", **class_profile2) as dst:
         dst.write(first_ca, 1)
 
-    # ── Excel summary (multi-sheet for B/E modes) ─────────────────────
+    # ── Excel summary
     summary_df = pd.DataFrame(all_summary)
     excel_path = os.path.join(out, f"{prefix}_slope_summary.xlsx")
 
     if f_mode == "A":
-        # Single sheet, no Label column
         out_df = summary_df.drop(columns=["Label"], errors="ignore")
         out_df.to_excel(excel_path, index=False)
     else:
-        # Multi-sheet: one sheet per group + one combined sheet
         try:
             with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-                # Combined sheet (all groups)
                 summary_df.to_excel(writer, sheet_name="All_Groups", index=False)
-                # Per-group sheets
                 for label, group_rows in per_group_summaries.items():
                     if not group_rows:
                         continue
                     g_df = pd.DataFrame(group_rows)
-                    # Add a Total row per group
                     total_ha = sum(r["Area_ha"] for r in group_rows)
                     total_row = {
                         "Label": label, "Class": "", "Slope_Range": "TOTAL",
@@ -1492,7 +1513,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                     if group_rows[0].get("Recal_ha") is not None:
                         total_row["Recal_ha"]   = round(sum(r["Recal_ha"] for r in group_rows if r.get("Recal_ha")), 4)
                         total_row["Cal_Factor"] = group_rows[0].get("Cal_Factor", "")
-                    sheet_name = str(label)[:31]  # Excel sheet name max 31 chars
+                    sheet_name = str(label)[:31]
                     g_df_with_total = pd.concat([g_df, pd.DataFrame([total_row])], ignore_index=True)
                     g_df_with_total.to_excel(writer, sheet_name=sheet_name, index=False)
         except Exception:
@@ -1501,176 +1522,11 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     return all_summary, vec_gdf, boundary_gdf, f_mode, per_group_summaries
 
 
-def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
-                  f_mode="A", per_group_summaries=None):
-    """
-    Polygon-based slope preview.
-    - Mode A: map + single summary table
-    - Mode B/E: map + per-group tables (one sub-table per label, scrollable)
-    """
-    import matplotlib.patches as mpatches
-    import matplotlib.gridspec as gridspec
+# ================= PREVIEW HELPERS =================
+_A4_W  = 8.27   # A4 landscape width in inches
+_A4_H  = 11.69  # A4 portrait height in inches
+_DPI   = 200
 
-    class_colors = {1: "#2ecc71", 2: "#f39c12", 3: "#e74c3c"}
-    class_labels = {1: "< 19°  Gentle", 2: "19–31° Moderate", 3: "> 31°  Steep"}
-
-    has_groups = f_mode in ("B", "E") and per_group_summaries and len(per_group_summaries) > 1
-    n_groups   = len(per_group_summaries) if per_group_summaries else 1
-    n_rows_total = len(summary_rows)
-
-    # Height scaling: more groups = taller figure
-    table_ratio = max(0.25, min(0.55, 0.08 + n_rows_total * 0.028))
-    fig_h = max(8, 6 + n_rows_total * 0.22)
-
-    fig = plt.figure(figsize=(12 if has_groups else 10, fig_h), dpi=150, facecolor="white")
-    gs  = gridspec.GridSpec(2, 1, height_ratios=[1, table_ratio], hspace=0.18,
-                            left=0.03, right=0.97, top=0.95, bottom=0.03)
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-
-    # ── Map ───────────────────────────────────────────────────────────
-    if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
-        for cid, color in class_colors.items():
-            sub = vec_gdf[vec_gdf["Class"] == cid]
-            if not sub.empty:
-                sub.plot(ax=ax1, facecolor=color, edgecolor="#2c2c2c",
-                         linewidth=0.4, alpha=0.92, zorder=3)
-
-    if boundary_gdf is not None and not boundary_gdf.empty:
-        try:
-            boundary_gdf.boundary.plot(ax=ax1, color="black", linewidth=1.8, zorder=5)
-        except Exception:
-            pass
-
-    # Label each group on the map
-    if has_groups and boundary_gdf is not None and not boundary_gdf.empty:
-        grp_col = None
-        for c in boundary_gdf.columns:
-            if c.lower() not in ("geometry",):
-                grp_col = c
-                break
-        if grp_col:
-            for _, row in boundary_gdf.iterrows():
-                geom = row.geometry
-                if geom and not geom.is_empty:
-                    cx, cy = geom.centroid.x, geom.centroid.y
-                    ax1.annotate(str(row[grp_col]), xy=(cx, cy),
-                                 ha="center", va="center", fontsize=7,
-                                 fontweight="bold", color="#1a1a1a",
-                                 path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
-                                 zorder=8)
-
-    ax1.set_aspect("equal")
-    ax1.axis("off")
-    title = "Slope Classification"
-    if has_groups:
-        title += f" — {n_groups} Groups ({f_mode} mode)"
-    ax1.set_title(title, fontsize=10, fontweight="bold", pad=6)
-    legend_items = [mpatches.Patch(facecolor=c, edgecolor="#2c2c2c", label=class_labels[cid])
-                    for cid, c in class_colors.items()]
-    ax1.legend(handles=legend_items, loc="lower left", fontsize=8,
-               framealpha=0.92, title="Slope Class", title_fontsize=8)
-
-    # ── Table ─────────────────────────────────────────────────────────
-    ax2.axis("off")
-    ax2.set_title("Slope Area Summary", fontsize=10, fontweight="bold", pad=4)
-
-    if not summary_rows:
-        return
-
-    has_recal = any(r.get("Recal_ha") is not None for r in summary_rows)
-
-    if f_mode == "A":
-        # Simple table
-        total_ha = sum(r["Area_ha"] for r in summary_rows)
-        col_labels = ["Slope Range", "Description", "Area (ha)", "% of Total"]
-        if has_recal:
-            col_labels += ["Recal. Area (ha)", "Conv. Factor"]
-        table_data = []
-        for r in summary_rows:
-            row = [r["Slope_Range"], r["Description"],
-                   f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-            if has_recal:
-                row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—",
-                        f"{r.get('Cal_Factor','')}" if r.get("Cal_Factor") else "—"]
-            table_data.append(row)
-        total_row = ["TOTAL", "", f"{total_ha:.2f}", "100%"]
-        if has_recal:
-            total_recal = sum(r["Recal_ha"] for r in summary_rows if r.get("Recal_ha"))
-            total_row += [f"{total_recal:.2f}", ""]
-        table_data.append(total_row)
-        row_class_map = {i: summary_rows[i].get("Class", 0) for i in range(len(summary_rows))}
-    else:
-        # Combined table with Label column
-        col_labels = ["Group", "Slope Range", "Description", "Area (ha)", "% of Total"]
-        if has_recal:
-            col_labels += ["Recal. (ha)"]
-        table_data = []
-        row_class_map = {}
-        row_idx = 0
-
-        if per_group_summaries:
-            for label, group_rows in per_group_summaries.items():
-                for r in group_rows:
-                    row = [str(label), r["Slope_Range"], r["Description"],
-                           f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-                    if has_recal:
-                        row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
-                    table_data.append(row)
-                    row_class_map[row_idx] = r.get("Class", 0)
-                    row_idx += 1
-                # Sub-total row per group
-                g_total = sum(r["Area_ha"] for r in group_rows)
-                subtotal_row = [f"  ↳ {label} Total", "", "", f"{g_total:.2f}", ""]
-                if has_recal:
-                    g_recal = sum(r["Recal_ha"] for r in group_rows if r.get("Recal_ha"))
-                    subtotal_row += [f"{g_recal:.2f}"]
-                table_data.append(subtotal_row)
-                row_class_map[row_idx] = -1  # subtotal marker
-                row_idx += 1
-        else:
-            for r in summary_rows:
-                row = [r.get("Label",""), r["Slope_Range"], r["Description"],
-                       f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-                if has_recal:
-                    row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
-                table_data.append(row)
-                row_class_map[row_idx] = r.get("Class", 0)
-                row_idx += 1
-
-    if not table_data:
-        return
-
-    tbl = ax2.table(cellText=table_data, colLabels=col_labels,
-                    cellLoc="center", loc="center", bbox=[0.0, 0.0, 1.0, 1.0])
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(7.0 if has_groups else 8.5)
-    tbl.auto_set_column_width(list(range(len(col_labels))))
-
-    row_colors = {1: "#d5f5e3", 2: "#fdebd0", 3: "#fadbd8",
-                  0: "#f8f9fa", -1: "#ddeeff"}
-    for (r, c), cell in tbl.get_celld().items():
-        cell.set_edgecolor("#cccccc")
-        if r == 0:
-            cell.set_facecolor("#1a5276")
-            cell.set_text_props(color="white", fontweight="bold")
-        else:
-            ri = r - 1
-            cid = row_class_map.get(ri, 0)
-            if cid == -1:  # subtotal row
-                cell.set_facecolor("#ddeeff")
-                cell.set_text_props(fontweight="bold")
-            elif cid == 0 and ri >= len(summary_rows):  # grand total row
-                cell.set_facecolor("#ddeeff")
-                cell.set_text_props(fontweight="bold")
-            else:
-                cell.set_facecolor(row_colors.get(cid, "#f8f9fa"))
-
-    fig.savefig(path, dpi=180, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-
-
-# ================= PREVIEW =================
 _COMP_COLORS = [
     "#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7",
     "#DCEDC8","#B2EBF2","#FFF9C4","#D7CCC8","#CFD8DC",
@@ -1678,16 +1534,40 @@ _COMP_COLORS = [
 ]
 
 
-def preview_compartments(poly_gdf, path):
-    fig, ax = plt.subplots(figsize=(10, 10), dpi=180)
+def _style_map_axes(ax):
+    """
+    Apply clean cartographic style to a map axes:
+    - No internal grid
+    - Tick marks and labels visible on all four sides
+    - Scientific notation disabled
+    """
+    ax.set_aspect("equal")
+    ax.tick_params(axis="both", which="both",
+                   left=True, right=True, top=True, bottom=True,
+                   labelleft=True, labelright=False,
+                   labelbottom=True, labeltop=False,
+                   direction="out", length=4, width=0.7,
+                   labelsize=6, color="#555555")
+    ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.0f'))
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.0f'))
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.6)
+        spine.set_color("#888888")
+    ax.grid(False)   # No internal grid lines
+    ax.set_xlabel("Easting (m)", fontsize=6, color="#555555", labelpad=2)
+    ax.set_ylabel("Northing (m)", fontsize=6, color="#555555", labelpad=2)
+
+
+def preview_compartments(poly_gdf, path, title=""):
+    """A4-sized compartment preview — no internal grid, tick marks and labels."""
+    fig, ax = plt.subplots(figsize=(_A4_W, _A4_H), dpi=_DPI)
     fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
+    ax.set_facecolor("#f8faf8")
 
     for i, (_, row) in enumerate(poly_gdf.iterrows()):
         geom = row.geometry
         if geom is None or geom.is_empty:
             continue
-        # Close ring before plotting
         if geom.geom_type == "Polygon":
             ext = list(geom.exterior.coords)
             if ext[0] != ext[-1]:
@@ -1695,7 +1575,7 @@ def preview_compartments(poly_gdf, path):
             geom = Polygon(ext)
         color = _COMP_COLORS[i % len(_COMP_COLORS)]
         gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
-            ax=ax, facecolor=color, edgecolor="#1a1a1a", linewidth=1.8
+            ax=ax, facecolor=color, edgecolor="#1a1a1a", linewidth=1.6
         )
         cx, cy = geom.centroid.x, geom.centroid.y
         comp_id = row.get("Comp_ID", f"Comp_{i+1:03d}")
@@ -1706,25 +1586,30 @@ def preview_compartments(poly_gdf, path):
                     path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
                     zorder=10)
 
-    ax.set_aspect("equal")
-    ax.axis("off")
-    plt.tight_layout(pad=0.5)
-    fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
+    _style_map_axes(ax)
+    head = title.strip() if title.strip() else "Compartment Division Map"
+    ax.set_title(head, fontsize=11, fontweight="bold", color="#1a2b22", pad=8)
+
+    plt.tight_layout(pad=0.8)
+    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
-            label_col=None, label_pts_gdf=None, area_ha=None):
-    fig, ax = plt.subplots(figsize=(8, 8), dpi=180)
+            label_col=None, label_pts_gdf=None, area_ha=None, title=""):
+    """A4-sized general preview — no internal grid, tick marks and labels."""
+    fig, ax = plt.subplots(figsize=(_A4_W, _A4_H), dpi=_DPI)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("#f8faf8")
 
     if poly_gdf is not None and not poly_gdf.empty:
-        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc, linewidth=1.2)
+        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc, linewidth=1.4)
 
     if line_gdf is not None and not line_gdf.empty:
         line_gdf.plot(ax=ax, color=lc, linewidth=1.5)
 
     if pts_gdf is not None and not pts_gdf.empty:
-        pts_gdf.plot(ax=ax, color=ptc, markersize=6, zorder=5)
+        pts_gdf.plot(ax=ax, color=ptc, markersize=5, zorder=5)
 
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
     if label_col and lbl_src is not None and not lbl_src.empty and label_col in lbl_src.columns:
@@ -1747,12 +1632,181 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
                         path_effects=[pe.Stroke(linewidth=2, foreground="white"), pe.Normal()],
                         zorder=7)
 
-    if area_ha is not None:
-        ax.set_title(f"Total Area: {area_ha:.2f} ha", fontsize=11, fontweight="bold",
-                     color="#1a2b22", pad=8)
+    _style_map_axes(ax)
+    head = title.strip() if title.strip() else (
+        f"Total Area: {area_ha:.2f} ha" if area_ha is not None else "Forest Boundary Map"
+    )
+    ax.set_title(head, fontsize=11, fontweight="bold", color="#1a2b22", pad=8)
 
-    plt.axis("off")
-    fig.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
+    plt.tight_layout(pad=0.8)
+    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
+                  f_mode="A", per_group_summaries=None, title=""):
+    """
+    A4-sized slope preview.
+    - Mode A: map + single summary table
+    - Mode B/E: map + per-group tables (one sub-table per label)
+    """
+    import matplotlib.ticker
+
+    class_colors = {1: "#2ecc71", 2: "#f39c12", 3: "#e74c3c"}
+    class_labels = {1: "< 19°  Gentle", 2: "19–31° Moderate", 3: "> 31°  Steep"}
+
+    has_groups = f_mode in ("B", "E") and per_group_summaries and len(per_group_summaries) > 1
+    n_groups   = len(per_group_summaries) if per_group_summaries else 1
+    n_rows_total = len(summary_rows)
+
+    table_ratio = max(0.22, min(0.50, 0.07 + n_rows_total * 0.026))
+    fig_w = _A4_W
+    fig_h = _A4_H
+
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=_DPI, facecolor="white")
+    gs  = gridspec.GridSpec(2, 1, height_ratios=[1, table_ratio], hspace=0.22,
+                            left=0.10, right=0.96, top=0.94, bottom=0.04)
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+
+    # ── Map
+    if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
+        for cid, color in class_colors.items():
+            sub = vec_gdf[vec_gdf["Class"] == cid]
+            if not sub.empty:
+                sub.plot(ax=ax1, facecolor=color, edgecolor="#2c2c2c",
+                         linewidth=0.4, alpha=0.92, zorder=3)
+
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        try:
+            boundary_gdf.boundary.plot(ax=ax1, color="black", linewidth=1.8, zorder=5)
+        except Exception:
+            pass
+
+    if has_groups and boundary_gdf is not None and not boundary_gdf.empty:
+        grp_col = None
+        for c in boundary_gdf.columns:
+            if c.lower() not in ("geometry",):
+                grp_col = c
+                break
+        if grp_col:
+            for _, row in boundary_gdf.iterrows():
+                geom = row.geometry
+                if geom and not geom.is_empty:
+                    cx, cy = geom.centroid.x, geom.centroid.y
+                    ax1.annotate(str(row[grp_col]), xy=(cx, cy),
+                                 ha="center", va="center", fontsize=7,
+                                 fontweight="bold", color="#1a1a1a",
+                                 path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
+                                 zorder=8)
+
+    _style_map_axes(ax1)
+    map_title = title.strip() if title.strip() else "Slope Classification"
+    if has_groups:
+        map_title += f" — {n_groups} Groups ({f_mode} mode)"
+    ax1.set_title(map_title, fontsize=10, fontweight="bold", pad=6)
+    legend_items = [mpatches.Patch(facecolor=c, edgecolor="#2c2c2c", label=class_labels[cid])
+                    for cid, c in class_colors.items()]
+    ax1.legend(handles=legend_items, loc="lower left", fontsize=8,
+               framealpha=0.92, title="Slope Class", title_fontsize=8)
+
+    # ── Table
+    ax2.axis("off")
+    ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
+
+    if not summary_rows:
+        fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+        return
+
+    has_recal = any(r.get("Recal_ha") is not None for r in summary_rows)
+
+    if f_mode == "A":
+        total_ha = sum(r["Area_ha"] for r in summary_rows)
+        col_labels = ["Slope Range", "Description", "Area (ha)", "% of Total"]
+        if has_recal:
+            col_labels += ["Recal. Area (ha)", "Conv. Factor"]
+        table_data = []
+        for r in summary_rows:
+            row = [r["Slope_Range"], r["Description"],
+                   f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
+            if has_recal:
+                row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—",
+                        f"{r.get('Cal_Factor','')}" if r.get("Cal_Factor") else "—"]
+            table_data.append(row)
+        total_row = ["TOTAL", "", f"{total_ha:.2f}", "100%"]
+        if has_recal:
+            total_recal = sum(r["Recal_ha"] for r in summary_rows if r.get("Recal_ha"))
+            total_row += [f"{total_recal:.2f}", ""]
+        table_data.append(total_row)
+        row_class_map = {i: summary_rows[i].get("Class", 0) for i in range(len(summary_rows))}
+    else:
+        col_labels = ["Group", "Slope Range", "Description", "Area (ha)", "% of Total"]
+        if has_recal:
+            col_labels += ["Recal. (ha)"]
+        table_data = []
+        row_class_map = {}
+        row_idx = 0
+
+        if per_group_summaries:
+            for label, group_rows in per_group_summaries.items():
+                for r in group_rows:
+                    row = [str(label), r["Slope_Range"], r["Description"],
+                           f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
+                    if has_recal:
+                        row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
+                    table_data.append(row)
+                    row_class_map[row_idx] = r.get("Class", 0)
+                    row_idx += 1
+                g_total = sum(r["Area_ha"] for r in group_rows)
+                subtotal_row = [f"  ↳ {label} Total", "", "", f"{g_total:.2f}", ""]
+                if has_recal:
+                    g_recal = sum(r["Recal_ha"] for r in group_rows if r.get("Recal_ha"))
+                    subtotal_row += [f"{g_recal:.2f}"]
+                table_data.append(subtotal_row)
+                row_class_map[row_idx] = -1
+                row_idx += 1
+        else:
+            for r in summary_rows:
+                row = [r.get("Label",""), r["Slope_Range"], r["Description"],
+                       f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
+                if has_recal:
+                    row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
+                table_data.append(row)
+                row_class_map[row_idx] = r.get("Class", 0)
+                row_idx += 1
+
+    if not table_data:
+        fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+        return
+
+    tbl = ax2.table(cellText=table_data, colLabels=col_labels,
+                    cellLoc="center", loc="center", bbox=[0.0, 0.0, 1.0, 1.0])
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(7.0 if has_groups else 8.5)
+    tbl.auto_set_column_width(list(range(len(col_labels))))
+
+    row_colors = {1: "#d5f5e3", 2: "#fdebd0", 3: "#fadbd8",
+                  0: "#f8f9fa", -1: "#ddeeff"}
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor("#cccccc")
+        if r == 0:
+            cell.set_facecolor("#1a5276")
+            cell.set_text_props(color="white", fontweight="bold")
+        else:
+            ri = r - 1
+            cid = row_class_map.get(ri, 0)
+            if cid == -1:
+                cell.set_facecolor("#ddeeff")
+                cell.set_text_props(fontweight="bold")
+            elif cid == 0 and ri >= len(summary_rows):
+                cell.set_facecolor("#ddeeff")
+                cell.set_text_props(fontweight="bold")
+            else:
+                cell.set_facecolor(row_colors.get(cid, "#f8f9fa"))
+
+    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -1944,6 +1998,7 @@ def upload():
         mode   = request.form.get("mode",   "A")
         module = request.form.get("module", mode)
         zone   = request.form.get("zone",   "44")
+        title  = request.form.get("title",  "").strip()
 
         try:
             mapping = json.loads(request.form.get("mapping", "{}"))
@@ -1982,9 +2037,7 @@ def upload():
 
         elif module == "E":
             e_mode          = request.form.get("e_mode", "A")
-            # Clamp compartments to 2-15
             n_compartments  = max(2, min(15, int(request.form.get("n_compartments", 4))))
-            # Optional area tolerance (ha) from form
             area_tol_ha     = float(request.form.get("area_tol_ha", "0.3") or "0.3")
             is_zip          = file.filename.lower().endswith(".zip")
             forest_col_name = request.form.get("forest_col_name") or None
@@ -2009,7 +2062,7 @@ def upload():
                 )
 
             preview_path = os.path.join(out, "output.png")
-            preview_compartments(poly, preview_path)
+            preview_compartments(poly, preview_path, title=title)
 
             kmz_url = None
             try:
@@ -2050,12 +2103,12 @@ def upload():
                 comp_col_name   = comp_col_name,
                 field_area_ha   = field_area_ha,
             )
-            # group_f now returns 5 values
             summary_rows, vec_gdf, boundary_gdf, f_mode_out, per_group_summaries = result
 
             preview_path = os.path.join(out, "output.png")
             preview_slope(vec_gdf, boundary_gdf, summary_rows, preview_path,
-                          f_mode=f_mode_out, per_group_summaries=per_group_summaries)
+                          f_mode=f_mode_out, per_group_summaries=per_group_summaries,
+                          title=title)
 
             poly = vec_gdf if (vec_gdf is not None and not vec_gdf.empty) else gpd.GeoDataFrame()
             line = gpd.GeoDataFrame()
@@ -2080,7 +2133,7 @@ def upload():
         preview(poly, line, pts, preview_path,
                 pc="yellow", lc="black", ptc="red",
                 label_col=label_col, label_pts_gdf=label_pts_gdf,
-                area_ha=area_ha_display)
+                area_ha=area_ha_display, title=title)
 
         kmz_url = None
         try:
