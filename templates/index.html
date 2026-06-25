@@ -1,2183 +1,1201 @@
-import os
-import uuid
-import zipfile
-import shutil
-import json
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
-import matplotlib.patches as mpatches
-import matplotlib.gridspec as gridspec
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Elfak GIS Engine Pro — Premium Forest Studio</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-glass:rgba(255,255,255,0.55);--border-soft:rgba(20,40,30,0.09);--border-active:#10b981;
+  --glow-mint:rgba(16,185,129,0.18);--white-pure:#ffffff;--white-snow:#1c2b22;--white-mist:#33453a;
+  --text-muted:#74897d;--mint:#10b981;--emerald-glow:linear-gradient(135deg,#34d399 0%,#059669 100%);
+  --survey-blue:#65a30d;--gold-accent:#059669;
+  --font-display:'Space Grotesk',system-ui,sans-serif;--font-body:'Inter',system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,monospace;
+  --ease-smooth:cubic-bezier(0.22,1,0.36,1);--ease-soft:cubic-bezier(0.4,0,0.2,1);
+}
+*{scrollbar-width:thin;scrollbar-color:rgba(16,185,129,0.3) transparent;box-sizing:border-box;}
+body{margin:0;font-family:var(--font-body);background:radial-gradient(circle at 50% 0%,#ffffff 0%,#eef7f0 45%,#e0f0e8 100%);
+  color:var(--white-snow);height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;user-select:none;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opacity:0.55;mix-blend-mode:multiply;
+  background-image:repeating-radial-gradient(circle at 18% 22%,transparent 0,transparent 38px,rgba(101,163,13,.04) 39px,transparent 41px,transparent 78px),
+  repeating-radial-gradient(circle at 85% 78%,transparent 0,transparent 46px,rgba(16,185,129,.03) 47px,transparent 49px,transparent 92px);}
+.app-shell{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;
+  opacity:0;animation:shellEnter .7s var(--ease-smooth) forwards;}
+@keyframes shellEnter{from{opacity:0;transform:translateY(10px) scale(.995)}to{opacity:1;transform:none}}
+.app-header{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:12px 24px 8px;
+  animation:headerSlide .6s var(--ease-smooth) .05s both;border-bottom:1px solid rgba(16,185,129,0.08);}
+@keyframes headerSlide{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+.brand{display:flex;align-items:center;gap:12px;}
+.brand-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--gold-accent),var(--border-active));
+  display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px var(--glow-mint);
+  transition:box-shadow .4s,transform .4s;flex-shrink:0;}
+.brand:hover .brand-mark{box-shadow:0 8px 26px var(--glow-mint);transform:rotate(-6deg) scale(1.05);}
+.brand-name{font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:.04em;}
+.brand-sub{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--text-muted);}
+.header-readout{display:flex;align-items:center;gap:18px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);}
+.pip{display:flex;align-items:center;gap:6px;}
+.pip-dot{width:6px;height:6px;border-radius:50%;background:#10b981;box-shadow:0 0 7px rgba(16,185,129,.6);animation:pulseGlow 2s infinite alternate;}
+.pip-value{color:var(--white-mist);font-weight:500;}
+#user-bar{display:none;align-items:center;gap:10px;font-size:12px;font-family:var(--font-body);}
+.user-avatar{width:30px;height:30px;border-radius:50%;background:var(--emerald-glow);display:flex;align-items:center;
+  justify-content:center;font-family:var(--font-display);font-size:13px;font-weight:700;color:white;flex-shrink:0;}
+.btn-history,.btn-logout{background:rgba(255,255,255,0.7);border:1px solid var(--border-soft);padding:5px 11px;
+  border-radius:7px;font-size:11px;cursor:pointer;font-family:var(--font-body);color:var(--white-mist);
+  transition:background .25s,border-color .25s;}
+.btn-history:hover{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.3);}
+.btn-logout:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#b91c1c;}
+.app-layout{display:grid;grid-template-columns:262px 8px 1fr 8px 400px;flex:1;min-height:0;padding:0 14px 14px;height:0;}
+.layout-resizer{position:relative;z-index:10;border-radius:4px;transition:background .25s;}
+.layout-resizer::after{content:'';position:absolute;border-radius:3px;background:rgba(16,185,129,0);transition:background .25s;}
+.layout-resizer.col-resizer{cursor:col-resize;width:6px;margin:0 1px;height:100%;}
+.layout-resizer.col-resizer::after{top:50%;left:50%;width:3px;height:36px;transform:translate(-50%,-50%);}
+.layout-resizer.row-resizer{cursor:row-resize;height:6px;margin:2px 0;width:100%;}
+.layout-resizer.row-resizer::after{top:50%;left:50%;width:36px;height:3px;transform:translate(-50%,-50%);}
+.layout-resizer:hover,.layout-resizer.dragging{background:rgba(16,185,129,.15);}
+.layout-resizer:hover::after,.layout-resizer.dragging::after{background:rgba(16,185,129,.5);}
+.holo-panel{background:var(--bg-glass);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+  border:1px solid var(--border-soft);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 8px 32px rgba(28,60,45,.09);transition:border-color .4s,box-shadow .4s;position:relative;
+  height:100%;min-width:130px;min-height:0;}
+.holo-panel:hover{border-color:rgba(16,185,129,.2);box-shadow:0 12px 42px rgba(28,60,45,.13);}
+.holo-panel::after{content:'';position:absolute;top:8px;left:8px;width:8px;height:8px;
+  border-top:1.5px solid rgba(16,185,129,.3);border-left:1.5px solid rgba(16,185,129,.3);border-radius:3px 0 0 0;pointer-events:none;}
+.holo-panel::before{content:'';position:absolute;bottom:8px;right:8px;width:8px;height:8px;
+  border-bottom:1.5px solid rgba(16,185,129,.3);border-right:1.5px solid rgba(16,185,129,.3);border-radius:0 0 3px 0;pointer-events:none;}
+.panel-title{font-family:var(--font-display);font-size:9.5px;text-transform:uppercase;letter-spacing:.16em;
+  color:var(--white-mist);opacity:.85;padding:11px 18px;border-bottom:1px solid rgba(20,40,30,.05);
+  font-weight:600;display:flex;align-items:center;gap:8px;flex-shrink:0;min-height:0;}
+.panel-title::before{content:'';display:inline-block;width:5px;height:5px;border-radius:1px;background:#10b981;
+  box-shadow:0 0 6px rgba(16,185,129,.55);flex-shrink:0;transition:transform .4s,box-shadow .4s;}
+.holo-panel:hover .panel-title::before{transform:rotate(45deg) scale(1.15);box-shadow:0 0 10px rgba(16,185,129,.8);}
+.panel-scroll{flex:1;overflow-y:auto;padding:14px 18px;scroll-behavior:smooth;min-height:0;}
+.panel-scroll::-webkit-scrollbar,.config-stack::-webkit-scrollbar{width:4px;}
+.panel-scroll::-webkit-scrollbar-thumb,.config-stack::-webkit-scrollbar-thumb{background:rgba(16,185,129,.22);border-radius:10px;}
+.tree-node{padding:8px 11px;border-radius:7px;font-size:11.5px;color:var(--text-muted);cursor:pointer;
+  display:flex;align-items:center;gap:8px;margin-bottom:4px;
+  transition:background .3s,color .3s,transform .3s,box-shadow .3s;}
+.tree-node:hover{background:rgba(20,40,30,.05);color:var(--white-snow);transform:translateX(3px);}
+.tree-node.active{background:rgba(16,185,129,.12);color:var(--white-snow);font-weight:600;box-shadow:inset 2px 0 0 var(--border-active);}
+.section-sep{height:1px;background:rgba(16,185,129,.12);margin:8px 0;}
+.workspace-split{display:grid;grid-template-rows:1fr 6px minmax(88px,100px);height:100%;min-height:0;}
+.matrix-container{display:flex;gap:16px;height:100%;min-height:0;overflow:hidden;}
+.matrix-selectors{display:flex;flex-direction:column;gap:8px;flex-shrink:0;overflow-y:auto;padding:2px;}
+.matrix-tab{width:42px;height:42px;background:var(--bg-glass);border:1px solid var(--border-soft);border-radius:10px;
+  display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:13px;font-weight:600;
+  color:var(--text-muted);cursor:pointer;transition:all .3s var(--ease-smooth);}
+.matrix-tab:hover{color:var(--white-snow);border-color:rgba(28,60,45,.22);transform:scale(1.06);}
+.matrix-tab.active-tab{color:var(--white-snow);background:rgba(16,185,129,.14);border-color:var(--border-active);
+  box-shadow:0 0 18px var(--glow-mint);animation:pulseGlow 2s infinite alternate;}
+@keyframes pulseGlow{0%{box-shadow:0 0 10px rgba(16,185,129,.18)}100%{box-shadow:0 0 22px rgba(16,185,129,.42)}}
+.config-stack{flex:1;overflow-y:auto;padding-right:4px;padding-bottom:16px;scroll-behavior:smooth;min-height:0;}
+.group-content-card{display:none;flex-direction:column;gap:11px;padding-bottom:8px;}
+.group-content-card.active-card{display:flex;animation:cardEnter .35s var(--ease-smooth) both;}
+@keyframes cardEnter{from{opacity:0;transform:translateY(7px) scale(.993)}to{opacity:1;transform:none}}
+.hidden{display:none !important;pointer-events:none;}
+.cyber-dropzone{border:1px dashed rgba(28,60,45,.16);background:rgba(255,255,255,.32);border-radius:10px;
+  padding:13px;text-align:center;cursor:pointer;position:relative;
+  transition:border-color .3s,background .3s,transform .3s,box-shadow .3s;}
+.cyber-dropzone:hover{border-color:var(--border-active);background:rgba(16,185,129,.04);
+  box-shadow:0 5px 18px rgba(16,185,129,.09);transform:translateY(-1px);}
+.cyber-dropzone.drag-over{border-color:var(--border-active);background:rgba(16,185,129,.07);box-shadow:0 0 0 3px var(--glow-mint);}
+.cyber-dropzone input[type="file"]{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;}
+.cyber-dropzone span{font-size:10.5px;color:var(--white-mist);font-weight:500;}
+.input-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.field-group label{display:block;font-family:var(--font-mono);font-size:9px;text-transform:uppercase;
+  color:var(--text-muted);margin-bottom:3px;font-weight:500;letter-spacing:.08em;transition:color .3s;}
+.field-group:focus-within label{color:var(--mint);}
+.vector-badge{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.28);color:#0d9488;
+  padding:8px 11px;border-radius:8px;font-family:var(--font-mono);font-size:10px;display:flex;flex-direction:column;gap:6px;}
+select,input[type="number"],input[type="text"]{width:100%;background:rgba(255,255,255,.88);
+  border:1px solid rgba(20,40,30,.14);border-radius:7px;padding:6px 10px;font-size:11px;
+  color:var(--white-snow);font-family:var(--font-body);outline:none;
+  transition:border-color .25s,box-shadow .25s,background .25s;}
+select:focus,input[type="number"]:focus,input[type="text"]:focus{border-color:var(--border-active);
+  box-shadow:0 0 0 3px var(--glow-mint);background:rgba(255,255,255,.96);}
+select:hover,input:hover{border-color:rgba(16,185,129,.35);}
+.toggle-switch-container{display:flex;gap:0;border:1px solid rgba(20,40,30,.14);border-radius:8px;overflow:hidden;background:rgba(255,255,255,.6);}
+.toggle-option{flex:1;padding:5px 10px;text-align:center;font-size:10px;font-family:var(--font-mono);
+  font-weight:600;cursor:pointer;transition:background .25s,color .25s;color:var(--text-muted);}
+.toggle-option:hover:not(.active-toggle){background:rgba(16,185,129,.06);color:var(--white-mist);}
+.toggle-option.active-toggle{background:rgba(16,185,129,.18);color:#065f46;border-bottom:2px solid var(--border-active);}
+.info-note{font-size:9.5px;color:var(--text-muted);background:rgba(255,255,255,.5);border-radius:7px;
+  padding:6px 10px;border:1px solid rgba(20,40,30,.07);line-height:1.5;}
+/* Console bar */
+.console-layout{display:flex;align-items:center;padding:0 16px;gap:16px;flex-direction:row;}
+.btn-cyber-run{flex-shrink:0;background:var(--emerald-glow);color:white;border:none;padding:9px 22px;
+  border-radius:10px;font-family:var(--font-display);font-size:12px;font-weight:700;cursor:pointer;
+  box-shadow:0 4px 18px rgba(16,185,129,.35);transition:transform .25s,box-shadow .25s,opacity .25s;}
+.btn-cyber-run:hover{transform:translateY(-1px) scale(1.02);box-shadow:0 7px 26px rgba(16,185,129,.5);}
+.btn-cyber-run:active{transform:scale(.98);}
+.btn-cyber-run:disabled{opacity:.55;cursor:not-allowed;transform:none;}
+.radial-progress-box{position:relative;width:50px;height:50px;flex-shrink:0;}
+.radial-svg{transform:rotate(-90deg);}
+.track-arc{fill:none;stroke:rgba(16,185,129,.12);stroke-width:4;}
+.fill-arc{fill:none;stroke:#10b981;stroke-width:4;stroke-dasharray:138.2;stroke-dashoffset:138.2;
+  transition:stroke-dashoffset .6s var(--ease-smooth);stroke-linecap:round;}
+.fill-arc.is-error{stroke:#ef4444;}
+.radial-progress-box.is-processing .fill-arc{animation:spin .9s linear infinite;}
+@keyframes spin{to{stroke-dashoffset:0}}
+/* Preview panel */
+.visualizer-desk{padding:14px 16px;display:flex;flex-direction:column;gap:10px;}
+.canvas-wrapper{flex:1;position:relative;background:rgba(255,255,255,.5);border-radius:10px;
+  border:1px solid rgba(20,40,30,.08);overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:0;}
+#output-img{max-width:100%;max-height:100%;object-fit:contain;display:none;border-radius:8px;}
+#empty-notice{text-align:center;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;padding:20px;}
+#leaflet-map{width:100%;height:100%;border-radius:9px;display:none;}
+.meta-footer{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding-top:6px;
+  border-top:1px solid rgba(20,40,30,.06);margin-top:2px;}
+#run-meta{font-family:var(--font-mono);font-size:9px;color:var(--text-muted);}
+.btn-download{background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);color:#065f46;
+  padding:7px 16px;border-radius:8px;font-size:11px;font-weight:600;font-family:var(--font-display);
+  text-decoration:none;display:none;transition:background .25s,box-shadow .25s;}
+.btn-download:hover{background:rgba(16,185,129,.22);box-shadow:0 3px 12px rgba(16,185,129,.2);}
+/* Login overlay */
+#login-overlay{display:none;position:fixed;inset:0;z-index:9000;background:rgba(10,24,18,.6);
+  backdrop-filter:blur(18px);align-items:center;justify-content:center;}
+.login-card{background:white;border-radius:18px;padding:36px 40px;width:380px;max-width:90vw;
+  box-shadow:0 24px 64px rgba(10,24,18,.3);animation:cardEnter .4s var(--ease-smooth);}
+.login-card h2{font-family:var(--font-display);font-size:18px;font-weight:700;margin:0 0 4px;color:#0d1f17;}
+.login-card p{font-size:11.5px;color:var(--text-muted);margin:0 0 22px;font-family:var(--font-body);}
+.login-card input{width:100%;padding:10px 14px;border:1.5px solid rgba(20,40,30,.14);border-radius:9px;
+  font-size:13px;font-family:var(--font-body);outline:none;transition:border-color .25s,box-shadow .25s;}
+.login-card input:focus{border-color:var(--border-active);box-shadow:0 0 0 3px var(--glow-mint);}
+.login-card input.is-taken{border-color:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.12);}
+#btn-login-go{width:100%;margin-top:14px;padding:11px;background:var(--emerald-glow);color:white;
+  border:none;border-radius:10px;font-family:var(--font-display);font-size:13px;font-weight:700;
+  cursor:pointer;box-shadow:0 4px 16px rgba(16,185,129,.35);transition:transform .25s,box-shadow .25s;}
+#btn-login-go:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(16,185,129,.5);}
+#btn-login-go:disabled{opacity:.55;cursor:not-allowed;transform:none;}
+.login-error{font-size:11px;color:#dc2626;margin-top:8px;display:none;padding:6px 10px;
+  background:rgba(239,68,68,.07);border-radius:6px;border:1px solid rgba(239,68,68,.2);}
+.login-error.is-taken-msg{color:#b45309;background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.25);}
+#login-suggestions{display:none;margin-top:8px;font-size:10.5px;color:var(--text-muted);}
+#login-suggestions span{cursor:pointer;padding:2px 7px;border-radius:5px;background:rgba(16,185,129,.1);
+  color:#065f46;font-weight:600;margin:0 3px;transition:background .2s;}
+#login-suggestions span:hover{background:rgba(16,185,129,.22);}
+/* History drawer */
+#history-drawer{position:fixed;right:-340px;top:0;height:100%;width:320px;z-index:8500;
+  background:white;box-shadow:-4px 0 32px rgba(10,24,18,.16);display:flex;flex-direction:column;
+  transition:right .35s var(--ease-smooth);border-left:1px solid rgba(16,185,129,.1);}
+#history-drawer.open{right:0;}
+.drawer-header{padding:18px 20px;border-bottom:1px solid rgba(20,40,30,.07);display:flex;
+  align-items:center;justify-content:space-between;flex-shrink:0;}
+.drawer-title{font-family:var(--font-display);font-size:13px;font-weight:700;color:#0d1f17;}
+.btn-drawer-close{background:rgba(20,40,30,.06);border:none;border-radius:7px;padding:5px 10px;
+  cursor:pointer;font-size:13px;color:var(--text-muted);transition:background .2s;}
+.btn-drawer-close:hover{background:rgba(239,68,68,.1);color:#dc2626;}
+.drawer-body{flex:1;overflow-y:auto;padding:14px 16px;}
+.drawer-empty{text-align:center;color:var(--text-muted);font-size:11px;padding:40px 20px;font-family:var(--font-mono);}
+.run-card{border:1px solid rgba(20,40,30,.09);border-radius:10px;padding:11px 13px;margin-bottom:9px;
+  background:rgba(255,255,255,.7);transition:border-color .25s,box-shadow .25s;}
+.run-card:hover{border-color:rgba(16,185,129,.25);box-shadow:0 3px 12px rgba(16,185,129,.1);}
+.run-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;}
+.run-module-badge{font-family:var(--font-mono);font-size:10px;font-weight:700;color:#065f46;
+  background:rgba(16,185,129,.12);padding:2px 7px;border-radius:5px;}
+.run-time{font-family:var(--font-mono);font-size:9px;color:var(--text-muted);}
+.run-id-text{font-family:var(--font-mono);font-size:9px;color:var(--text-muted);margin-bottom:7px;}
+.run-actions{display:flex;gap:7px;}
+.run-action-btn{flex:1;padding:5px 0;border:1px solid rgba(20,40,30,.12);border-radius:6px;
+  background:rgba(255,255,255,.7);font-size:10px;cursor:pointer;font-family:var(--font-body);
+  color:var(--white-mist);transition:all .2s;}
+.run-prev-btn:hover{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.3);color:#065f46;}
+.run-dl-btn:hover{background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.3);color:#1d4ed8;}
+#history-overlay{display:none;position:fixed;inset:0;z-index:7999;background:rgba(0,0,0,.15);}
+/* Status text animations */
+#status-headline.is-processing{color:var(--mint);}
+#status-headline.is-error{color:#ef4444;}
+/* OSM map note */
+.osm-attribution{font-size:8px;color:var(--text-muted);text-align:right;padding:2px 6px;}
+</style>
+</head>
+<body>
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, session
-from shapely.geometry import Polygon, Point, LineString, MultiPolygon, MultiPoint
-from shapely.ops import unary_union
-from shapely.geometry import box as _shapely_box
+<!-- LOGIN OVERLAY -->
+<div id="login-overlay">
+  <div class="login-card">
+    <h2>🌲 Elfak GIS Engine</h2>
+    <p>Enter a username to access the Premium Forest Studio</p>
+    <input type="text" id="login-username" placeholder="Your username" maxlength="40"
+           onkeydown="if(event.key==='Enter') doLogin()">
+    <div class="login-error" id="login-error"></div>
+    <div id="login-suggestions">
+      Try: <span onclick="tryName(0)">…</span> <span onclick="tryName(1)">…</span> <span onclick="tryName(2)">…</span>
+    </div>
+    <button id="btn-login-go" onclick="doLogin()">Enter Studio</button>
+  </div>
+</div>
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "elfak-gis-engine-2025-secret")
+<!-- HISTORY DRAWER -->
+<div id="history-drawer">
+  <div class="drawer-header">
+    <div class="drawer-title">📋 My Run History</div>
+    <button class="btn-drawer-close" onclick="toggleHistory()">✕</button>
+  </div>
+  <div class="drawer-body" id="drawer-body">
+    <div class="drawer-empty">No runs yet — execute a pipeline to see history.</div>
+  </div>
+</div>
+<div id="history-overlay" onclick="toggleHistory()"></div>
 
-UPLOAD = "uploads"
-OUTPUT = "outputs"
-USERS_FILE = "users.json"
+<div class="app-shell">
 
-os.makedirs(UPLOAD, exist_ok=True)
-os.makedirs(OUTPUT, exist_ok=True)
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.6"/>
+        <path d="M12 4 L14.2 11 L20 12 L14.2 13 L12 20 L9.8 13 L4 12 L9.8 11 Z" fill="#fff"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand-name">Elfak GIS Engine Pro</div>
+      <div class="brand-sub">Premium Forest Studio</div>
+    </div>
+  </div>
+  <div class="header-readout">
+    <div class="pip"><span class="pip-dot"></span><span>Engine</span><span class="pip-value">Online</span></div>
+    <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs">EPSG:32644</span></div>
+    <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
+  </div>
+  <div id="user-bar">
+    <div class="user-avatar" id="user-avatar">?</div>
+    <span id="user-name-display" style="font-size:12px;font-weight:600;color:var(--white-mist);"></span>
+    <button class="btn-history" onclick="toggleHistory()">📋 History<span id="btn-history-count" style="font-size:9px;opacity:.8;"></span></button>
+    <button class="btn-logout" onclick="doLogout()">Sign Out</button>
+  </div>
+</header>
 
+<div class="app-layout" id="main-layout-container">
 
-# ================= USER STORE =================
-def _load_users():
-    if not os.path.exists(USERS_FILE):
-        return {}
-    try:
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+  <!-- LEFT NAV -->
+  <div class="holo-panel">
+    <div class="panel-title">Forest Map Navigator</div>
+    <div class="panel-scroll">
+      <div class="tree-node active" onclick="switchTab('A')">🌲 Group A — Boundary Whole</div>
+      <div class="tree-node" onclick="switchTab('B')">🌲 Group B — Segment Forest</div>
+      <div class="tree-node" onclick="switchTab('C')">🌲 Group C — Sample Plot</div>
+      <div class="tree-node" onclick="switchTab('D')">🌲 Group D — Complex Version</div>
+      <div class="tree-node" onclick="switchTab('E')">✂️ Group E — Polygon Subdivider</div>
+      <div class="tree-node" onclick="switchTab('F')">🏔️ Group F — Slope Analysis</div>
+      <div class="section-sep" style="margin-top:16px;"></div>
+      <div class="field-group" style="margin-top:12px;">
+        <label>Target GIS Projection</label>
+        <select id="zone" onchange="document.getElementById('header-crs').textContent='EPSG:326'+this.value">
+          <option value="44">UTM Zone 44N (EPSG:32644)</option>
+          <option value="45">UTM Zone 45N (EPSG:32645)</option>
+          <option value="43">UTM Zone 43N (EPSG:32643)</option>
+          <option value="46">UTM Zone 46N (EPSG:32646)</option>
+        </select>
+      </div>
+      <div class="field-group" style="margin-top:10px;">
+        <label>Map / PNG Title</label>
+        <input type="text" id="global-title" placeholder="e.g. Salghari Community Forest 2025" value="">
+      </div>
+    </div>
+  </div>
 
+  <div class="layout-resizer col-resizer" id="left-col-handle"></div>
 
-def _save_users(users):
-    try:
-        with open(USERS_FILE, "w") as f:
-            json.dump(users, f, indent=2)
-    except Exception:
-        pass
+  <!-- CENTER WORKSPACE -->
+  <div class="workspace-split" id="center-workspace-container">
+    <div class="holo-panel">
+      <div class="panel-title">Parameter Settings Matrix</div>
+      <div class="panel-scroll matrix-container">
 
+        <div class="matrix-selectors">
+          <div class="matrix-tab active-tab" id="tab-A" onclick="switchTab('A')">A</div>
+          <div class="matrix-tab" id="tab-B" onclick="switchTab('B')">B</div>
+          <div class="matrix-tab" id="tab-C" onclick="switchTab('C')">C</div>
+          <div class="matrix-tab" id="tab-D" onclick="switchTab('D')">D</div>
+          <div class="matrix-tab" id="tab-E" onclick="switchTab('E')">E</div>
+          <div class="matrix-tab" id="tab-F" onclick="switchTab('F')">F</div>
+        </div>
 
-def _user_exists(username):
-    return username.strip() in _load_users()
+        <div class="config-stack">
 
+          <!-- GROUP A -->
+          <div class="group-content-card active-card" id="card-A">
+            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel / CSV Data</span><input type="file" class="file"></div>
+            <div class="input-row">
+              <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+              <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+              <div class="field-group"><label>Forest Name</label><input type="text" data-key="forest" value="FOREST" placeholder="Enter name"></div>
+            </div>
+            <div class="vector-badge" style="background:rgba(101,163,13,.07);border-color:rgba(101,163,13,.28);">
+              <div style="font-weight:600;color:#3f6212;">ℹ️ Output includes total area (ha) in preview</div>
+            </div>
+          </div>
 
-def _create_user(username):
-    username = username.strip()
-    users = _load_users()
-    if username in users:
-        raise ValueError(f"Username '{username}' is already taken. Please choose a different name.")
-    users[username] = {
-        "username":   username,
-        "created_at": pd.Timestamp.now().isoformat(),
-        "runs":       []
+          <!-- GROUP B -->
+          <div class="group-content-card" id="card-B">
+            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel / CSV Data</span><input type="file" class="file"></div>
+            <div class="input-row">
+              <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+              <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+              <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
+            </div>
+            <div class="field-group"><label>Compartment Identifier</label><select data-key="Compartment"></select></div>
+          </div>
+
+          <!-- GROUP C -->
+          <div class="group-content-card" id="card-C">
+            <div class="cyber-dropzone"><span class="dz-text">✨ CSV / XLS or ZIP Shapefile</span><input type="file" class="file" id="file-c"></div>
+            <div class="field-group" id="c-mode-wrapper">
+              <label>Mode</label>
+              <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
+                <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
+              </div>
+            </div>
+            <div id="c-zip-notice" class="hidden">
+              <div class="vector-badge">
+                <div style="font-weight:600;">📦 Archive Detected</div>
+                <div class="field-group" style="width:100%;margin-top:4px;">
+                  <label style="color:#064e3b;">Target Layer (.shp)</label>
+                  <select id="c-shp-selector" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;"></select>
+                </div>
+              </div>
+            </div>
+            <div id="c-coord-fields">
+              <div class="input-row">
+                <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+                <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>Order</label><select data-key="Order"></select></div>
+                <div class="field-group hidden" id="c-forest-wrapper"><label>Forest ID</label><select data-key="Forest"></select></div>
+              </div>
+            </div>
+            <div class="section-sep"></div>
+            <div class="input-row">
+              <div class="field-group"><label>Cell Width w (m)</label><input type="number" id="c-grid-w" min="0.01" step="any" placeholder="50"></div>
+              <div class="field-group"><label>Cell Height h (m)</label><input type="number" id="c-grid-h" min="0.01" step="any" placeholder="50"></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Grid Rows</label><input type="number" id="c-grid-rows" min="1" step="1" placeholder="10"></div>
+              <div class="field-group"><label>Grid Cols</label><input type="number" id="c-grid-cols" min="1" step="1" placeholder="10"></div>
+            </div>
+          </div>
+
+          <!-- GROUP D -->
+          <div class="group-content-card" id="card-D">
+            <div class="cyber-dropzone"><span class="dz-text">✨ Multi-Forest File</span><input type="file" class="file"></div>
+            <div class="field-group">
+              <label>Mode</label>
+              <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="d-toggle-A" onclick="setGroupDSubMode('A')">Whole Forest</div>
+                <div class="toggle-option" id="d-toggle-B" onclick="setGroupDSubMode('B')">Segmented</div>
+              </div>
+            </div>
+            <div class="vector-badge" id="d-mode-hint">
+              <div style="font-weight:600;" id="d-hint-title">📂 One folder per Forest</div>
+              <div style="font-size:9.5px;opacity:.8;" id="d-hint-sub">Forest_A/ → Polygon.shp · Line.shp · Point.shp</div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+              <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+            </div>
+            <div class="input-row">
+              <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+              <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
+            </div>
+            <div class="field-group hidden" id="d-comp-wrapper">
+              <label>Compartment Identifier</label><select data-key="Compartment"></select>
+            </div>
+          </div>
+
+          <!-- GROUP E -->
+          <div class="group-content-card" id="card-E">
+            <div class="cyber-dropzone"><span class="dz-text">✂️ CSV / XLS or ZIP Shapefile</span><input type="file" class="file" id="file-e"></div>
+
+            <div id="e-zip-notice" class="hidden">
+              <div class="vector-badge">
+                <div style="font-weight:600;">📦 Archive Detected — Select polygon layer</div>
+                <div class="field-group" style="width:100%;margin-top:4px;">
+                  <label style="color:#064e3b;">Target Polygon Layer (.shp)</label>
+                  <select id="e-shp-selector" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;"></select>
+                </div>
+                <div class="field-group" style="width:100%;margin-top:6px;" id="e-zip-forest-col-wrapper">
+                  <label style="color:#064e3b;">Forest Identifier Column in SHP (Multi-Forest)</label>
+                  <select id="e-zip-forest-col" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;">
+                    <option value="">— auto detect —</option>
+                  </select>
+                </div>
+                <div style="font-size:9.5px;opacity:.7;margin-top:3px;">
+                  Each polygon → <span id="e-zip-n-display">4</span> compartments independently.
+                </div>
+              </div>
+            </div>
+
+            <div id="e-csv-fields">
+              <div class="field-group">
+                <label>Forest Input Mode</label>
+                <div class="toggle-switch-container">
+                  <div class="toggle-option active-toggle" id="e-toggle-A" onclick="setGroupESubMode('A')">Single Forest</div>
+                  <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
+                </div>
+              </div>
+              <div class="vector-badge" id="e-mode-hint">
+                <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
+                <div style="font-size:9.5px;opacity:.8;" id="e-hint-sub">division_points.xlsx exported for ArcGIS reconstruction</div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>X / Easting</label><select data-key="X"></select></div>
+                <div class="field-group"><label>Y / Northing</label><select data-key="Y"></select></div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
+                <div class="field-group hidden" id="e-forest-wrapper"><label>Forest Identifier</label><select data-key="Forest"></select></div>
+                <div class="field-group" id="e-forestname-wrapper"><label>Forest Name</label><input type="text" data-key="forest" value="FOREST" placeholder="Name"></div>
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="field-group">
+                <label>Compartments (2–15)</label>
+                <input type="number" id="e-n-compartments" min="2" max="15" step="1" value="4"
+                       oninput="this.value=Math.max(2,Math.min(15,parseInt(this.value)||4));document.getElementById('e-zip-n-display').textContent=this.value">
+              </div>
+              <div class="field-group">
+                <label>Area Tolerance ±ha</label>
+                <input type="number" id="e-area-tol" min="0.1" max="0.5" step="0.05" value="0.3" placeholder="0.3">
+              </div>
+            </div>
+            <div class="vector-badge" style="background:rgba(101,163,13,.07);border-color:rgba(101,163,13,.28);">
+              <div style="font-weight:600;color:#3f6212;">📐 Straight-Line Bisection Algorithm</div>
+              <div style="font-size:9.5px;color:#3f6212;opacity:.9;">2–15 compartments per forest. Polygon closing guaranteed. Division-points Excel + SHP exported for ArcGIS.</div>
+            </div>
+          </div>
+
+          <!-- GROUP F -->
+          <div class="group-content-card" id="card-F">
+            <div class="field-group">
+              <label>Analysis Mode</label>
+              <div class="toggle-switch-container">
+                <div class="toggle-option active-toggle" id="f-toggle-A" onclick="setGroupFMode('A')">Single Forest</div>
+                <div class="toggle-option" id="f-toggle-B" onclick="setGroupFMode('B')">Multi-Forest</div>
+                <div class="toggle-option" id="f-toggle-E" onclick="setGroupFMode('E')">Compartments</div>
+              </div>
+            </div>
+            <div class="vector-badge" id="f-mode-hint" style="padding:7px 11px;">
+              <div style="font-size:9.5px;color:#064e3b;" id="f-mode-hint-text">Single boundary → one slope table for the whole forest</div>
+            </div>
+
+            <div class="field-group"><label>Step 1 — Forest Boundary (CSV/XLS or ZIP/SHP)</label></div>
+            <div class="cyber-dropzone" id="f-boundary-drop">
+              <span class="dz-text" id="f-boundary-label">🌲 Upload Boundary File</span>
+              <input type="file" id="file-f-boundary" accept=".csv,.xlsx,.xls,.zip">
+            </div>
+
+            <div id="f-zip-notice" class="hidden">
+              <div class="vector-badge">
+                <div style="font-weight:600;margin-bottom:4px;">📦 Archive Detected</div>
+                <div class="field-group" style="width:100%;margin-bottom:6px;">
+                  <label style="color:#064e3b;">Boundary Polygon Layer (.shp)</label>
+                  <select id="f-shp-selector" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;"></select>
+                </div>
+                <div id="f-zip-comp-wrapper" class="field-group hidden" style="width:100%;">
+                  <label style="color:#064e3b;">Grouping Column Name</label>
+                  <input type="text" id="f-zip-comp-col" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;" placeholder="e.g. Forest or Compartment">
+                </div>
+              </div>
+            </div>
+
+            <div id="f-csv-fields">
+              <div class="input-row">
+                <div class="field-group"><label>X / Easting</label><select id="f-x-col"><option>X</option></select></div>
+                <div class="field-group"><label>Y / Northing</label><select id="f-y-col"><option>Y</option></select></div>
+              </div>
+              <div class="input-row">
+                <div class="field-group"><label>Point Order</label><select id="f-order-col"><option value="">— none —</option></select></div>
+                <div class="field-group"><label>Forest Name</label><input type="text" id="f-forest-name" value="FOREST" placeholder="Forest name"></div>
+              </div>
+              <div id="f-csv-comp-wrapper" class="field-group hidden">
+                <label>Grouping Column (Forest / Compartment)</label>
+                <select id="f-csv-comp-col"><option value="">— auto detect —</option></select>
+              </div>
+            </div>
+
+            <div class="field-group" style="margin-top:2px;"><label>Step 2 — Raw DEM GeoTIFF</label></div>
+            <div class="cyber-dropzone" id="f-dem-drop">
+              <span class="dz-text" id="f-dem-label">🏔️ Upload DEM (.tif / .tiff)</span>
+              <input type="file" id="file-f-dem" accept=".tif,.tiff">
+            </div>
+
+            <div class="field-group">
+              <label>Field Area (ha) — optional recalibration</label>
+              <input type="number" id="f-field-area" min="0" step="any" placeholder="e.g. 47.5 — leave blank to skip">
+            </div>
+
+            <div class="vector-badge" style="background:rgba(101,163,13,.07);border-color:rgba(101,163,13,.28);">
+              <div style="font-weight:600;color:#3f6212;">📊 Slope Classes</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:5px;">
+                <div style="background:#2ecc71;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9px;font-weight:600;">Class 1<br>&lt;19°<br>Gentle</div>
+                <div style="background:#f39c12;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9px;font-weight:600;">Class 2<br>19–31°<br>Moderate</div>
+                <div style="background:#e74c3c;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9px;font-weight:600;">Class 3<br>&gt;31°<br>Steep</div>
+              </div>
+            </div>
+            <div class="info-note">⚙️ Workflow: Rect DEM extract (20% buffer) → slope → reclassify → raster-to-poly → dissolve → clip to boundary → slope table per compartment/forest</div>
+          </div>
+
+        </div><!-- config-stack -->
+      </div><!-- matrix-container -->
+    </div><!-- holo-panel -->
+
+    <div class="layout-resizer row-resizer" id="center-row-handle"></div>
+
+    <!-- CONSOLE BAR -->
+    <div class="holo-panel console-layout">
+      <button class="btn-cyber-run" id="btn-run" onclick="runPipeline()">▶ Execute Process</button>
+      <div style="display:flex;align-items:center;gap:12px;flex:1;">
+        <div style="flex:1;text-align:right;">
+          <div id="status-headline" style="font-size:11.5px;font-weight:600;font-family:var(--font-display);">Core Standby</div>
+          <div id="status-sub" style="font-size:9px;font-family:var(--font-mono);letter-spacing:.04em;color:var(--text-muted);margin-top:1px;">Topology Balanced</div>
+        </div>
+        <div class="radial-progress-box">
+          <svg class="radial-svg" width="50" height="50">
+            <circle class="track-arc" cx="25" cy="25" r="21"></circle>
+            <circle class="fill-arc" id="radial-bar" cx="25" cy="25" r="21"></circle>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div><!-- workspace-split -->
+
+  <div class="layout-resizer col-resizer" id="right-col-handle"></div>
+
+  <!-- RIGHT PREVIEW PANEL -->
+  <div class="holo-panel visualizer-desk">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;margin-bottom:8px;">
+      <div class="panel-title" style="padding:0;">Dynamic Preview</div>
+      <div class="toggle-switch-container" style="width:auto;">
+        <div class="toggle-option active-toggle" id="ptab-static" onclick="switchPreviewTab('static')" style="padding:4px 11px;font-size:9px;">🗺 Static PNG</div>
+        <div class="toggle-option" id="ptab-osm" onclick="switchPreviewTab('osm')" style="padding:4px 11px;font-size:9px;">🌍 OpenStreetMap</div>
+      </div>
+    </div>
+
+    <!-- Static PNG view -->
+    <div id="preview-static" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+      <div class="canvas-wrapper" style="flex:1;">
+        <div id="empty-notice">Awaiting data rendering execution…</div>
+        <img id="output-img" alt="Output Preview">
+      </div>
+    </div>
+
+    <!-- OpenStreetMap view -->
+    <div id="preview-osm" style="flex:1;display:none;flex-direction:column;min-height:0;">
+      <div id="osm-idle" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(15,10,18,.03);border-radius:10px;border:1px dashed var(--border-soft);">
+        <div style="font-size:24px;">🌍</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-align:center;max-width:220px;line-height:1.6;">Run the pipeline first, then the map will appear here on OpenStreetMap.</div>
+      </div>
+      <div id="osm-map-wrapper" style="display:none;flex:1;flex-direction:column;min-height:0;border-radius:10px;overflow:hidden;">
+        <div id="leaflet-map" style="flex:1;height:100%;width:100%;display:block;"></div>
+        <div class="osm-attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" style="color:var(--mint);">OpenStreetMap</a> contributors</div>
+      </div>
+    </div>
+
+    <div class="meta-footer">
+      <div id="run-meta">Metrics: Ready</div>
+      <a id="download-btn" class="btn-download" href="#">Export Package (ZIP)</a>
+    </div>
+  </div>
+
+</div><!-- app-layout -->
+</div><!-- app-shell -->
+
+<script>
+const BACKEND_URL = window.location.origin;
+let activeModule = "A";
+let groupCSubMode = "A";
+let groupDSubMode = "A";
+let groupESubMode = "A";
+let groupFMode    = "A";
+let leafletMap    = null;
+let leafletLayers = [];
+
+/* ── COLUMN ALIAS RESOLVER ─────────────────────────────────────────────── */
+const COL_ALIASES = {
+  X:           new Set(["x","xcoord","xcoordinate","xcord","east","easting","eastings","lon","long","longitude","lng","pointx","coordx","utme","utmx"]),
+  Y:           new Set(["y","ycoord","ycoordinate","ycord","north","northing","northings","lat","latitude","pointy","coordy","utmn","utmy"]),
+  Order:       new Set(["order","id","sn","sno","serial","serialno","seq","sequence","index","rowid","fid","no","num","number","plotid","plotno","pointid","pointno","pid"]),
+  Forest:      new Set(["forest","forestname","forestid","forestno","fname","forestblock","block"]),
+  Compartment: new Set(["compartment","comp","compartmentno","compartmentid","compno","compid","section","sectionno"])
+};
+function norm(s){ return (s||"").toString().toLowerCase().replace(/[^a-z0-9]/g,""); }
+function detect(cols){
+  const map={X:null,Y:null,Order:null,Forest:null,Compartment:null};
+  cols.forEach(c=>{const n=norm(c);Object.entries(COL_ALIASES).forEach(([k,a])=>{if(!map[k]&&a.has(n))map[k]=c;});});
+  return map;
+}
+
+/* ── FILL DROPDOWNS ─────────────────────────────────────────────────────── */
+function fill(card, cols){
+  const map = detect(cols);
+  card.querySelectorAll("select[data-key]").forEach(sel=>{
+    const key = sel.dataset.key;
+    sel.innerHTML = "";
+    if(key==="Order"||key==="Compartment"){
+      const b=document.createElement("option"); b.value=""; b.textContent="— none —"; sel.appendChild(b);
     }
-    _save_users(users)
-    return users[username]
-
-
-def _get_user(username):
-    return _load_users().get(username.strip())
-
-
-def _append_run(username, run_id, module, description=""):
-    if not username:
-        return
-    users = _load_users()
-    if username in users:
-        users[username].setdefault("runs", []).append({
-            "run_id":      run_id,
-            "module":      module,
-            "description": description,
-            "timestamp":   pd.Timestamp.now().isoformat()
-        })
-        users[username]["runs"] = users[username]["runs"][-50:]
-        _save_users(users)
-
-
-def _require_login():
-    return session.get("username")
-
-
-# ================= CORS =================
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    return response
-
-
-# ================= UTIL =================
-def read_input(file):
-    name = file.filename.lower()
-    if name.endswith(".csv"):
-        return pd.read_csv(file, encoding="utf-8-sig")
-    elif name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(file)
-    else:
-        raise ValueError("Only CSV/Excel supported")
-
-
-def get_crs(zone):
-    return f"EPSG:326{zone}"
-
-
-def safe_polygon(coords):
-    poly = Polygon(coords)
-    if not poly.is_valid:
-        poly = poly.buffer(0)
-    return poly
-
-
-def _safe_dirname(s):
-    return str(s).strip().replace("/", "_").replace("\\", "_").replace(":", "_")
-
-
-def _repair_geom(g):
-    if g is None:
-        return None
-    if g.is_empty:
-        return None
-    return g if g.is_valid else g.buffer(0)
-
-
-def _as_polygon(geom):
-    if geom is None or geom.is_empty:
-        return None
-    if geom.geom_type == "Polygon":
-        return geom if not geom.is_empty else None
-    if geom.geom_type in ("MultiPolygon", "GeometryCollection"):
-        polys = [g for g in geom.geoms
-                 if g.geom_type == "Polygon" and not g.is_empty and g.area > 1e-10]
-        return max(polys, key=lambda g: g.area) if polys else None
-    return None
-
-
-def _enforce_polygon_gdf(gdf):
-    """
-    Ensure every geometry in a GeoDataFrame is a valid Polygon.
-    Drops or converts non-polygon geometries (LINESTRING, POINT, etc.)
-    This fixes: 'Attempt to write non-polygon (LINESTRING) geometry to POLYGON type shapefile'
-    """
-    if gdf is None or gdf.empty:
-        return gdf
-    keep = []
-    for i, row in gdf.iterrows():
-        geom = row.geometry
-        if geom is None or geom.is_empty:
-            continue
-        pg = _as_polygon(_repair_geom(geom))
-        if pg is not None and not pg.is_empty and pg.area > 1e-10:
-            row = row.copy()
-            row["geometry"] = _close_polygon(pg)
-            keep.append(row)
-    if not keep:
-        return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
-    return gpd.GeoDataFrame(keep, crs=gdf.crs)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# COLUMN ALIAS RESOLUTION
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _norm(s):
-    return "".join(c for c in str(s).lower() if c.isalnum())
-
-
-_X_ALIASES = {
-    "x", "xcoord", "xcoordinate", "xcord", "xcords", "xcoords",
-    "east", "easting", "eastings", "lon", "long", "longitude", "lng",
-    "pointx", "coordx", "utme", "utmx",
-}
-_Y_ALIASES = {
-    "y", "ycoord", "ycoordinate", "ycord", "ycords", "ycoords",
-    "north", "northing", "northings", "lat", "latitude",
-    "pointy", "coordy", "utmn", "utmy",
-}
-_ORDER_ALIASES = {
-    "order", "id", "sn", "sno", "serial", "serialno", "serialnumber",
-    "seq", "sequence", "index", "rowid", "fid", "no", "num", "number",
-    "plotid", "plotno", "pointid", "pointno", "pid",
-}
-_FOREST_ALIASES = {
-    "forest", "forestname", "forestid", "forestno", "fname",
-    "forestblock", "block",
-}
-_COMPARTMENT_ALIASES = {
-    "compartment", "comp", "compartmentno", "compartmentid",
-    "compno", "compid", "section", "sectionno",
+    cols.forEach(c=>{const o=document.createElement("option");o.value=c;o.textContent=c;sel.appendChild(o);});
+    if(map[key]) sel.value=map[key];
+    else if(key!=="Order"&&key!=="Compartment"&&cols.length>0) sel.value=cols[0];
+  });
 }
 
+/* ── TAB SWITCH ─────────────────────────────────────────────────────────── */
+function switchTab(t){
+  activeModule=t;
+  document.querySelectorAll(".group-content-card").forEach(c=>c.classList.remove("active-card"));
+  const card=document.getElementById("card-"+t);
+  if(card) card.classList.add("active-card");
+  document.querySelectorAll(".matrix-tab").forEach(tab=>tab.classList.toggle("active-tab",tab.id==="tab-"+t));
+  document.querySelectorAll(".tree-node").forEach(n=>n.classList.toggle("active",n.getAttribute("onclick")==="switchTab('"+t+"')"));
+  const labels={A:"A · Boundary Whole",B:"B · Segment Forest",C:"C · Sample Plot",D:"D · Complex Version",E:"E · Polygon Subdivider",F:"F · Slope Analysis"};
+  document.getElementById("header-module").textContent=labels[t];
+}
 
-def _find_col(df, aliases):
-    for col in df.columns:
-        if _norm(col) in aliases:
-            return col
-    return None
+/* ── GROUP C ─────────────────────────────────────────────────────────────── */
+function setGroupCSubMode(sub){
+  groupCSubMode=sub;
+  document.getElementById("c-toggle-A").classList.toggle("active-toggle",sub==="A");
+  document.getElementById("c-toggle-B").classList.toggle("active-toggle",sub==="B");
+  const isZip=document.getElementById("file-c")?.files?.[0]?.name?.toLowerCase().endsWith(".zip");
+  document.getElementById("c-forest-wrapper").classList.toggle("hidden",!(sub==="B"&&!isZip));
+}
 
+/* ── GROUP D ─────────────────────────────────────────────────────────────── */
+function setGroupDSubMode(sub){
+  groupDSubMode=sub;
+  document.getElementById("d-toggle-A").classList.toggle("active-toggle",sub==="A");
+  document.getElementById("d-toggle-B").classList.toggle("active-toggle",sub==="B");
+  document.getElementById("d-comp-wrapper").classList.toggle("hidden",sub!=="B");
+  document.getElementById("d-hint-title").textContent=sub==="B"?"📂 Forest → Compartment subfolders":"📂 One folder per Forest";
+  document.getElementById("d-hint-sub").textContent=sub==="B"?"Forest_A/Comp_1/ → Polygon.shp · Line.shp · Point.shp":"Forest_A/ → Polygon.shp · Line.shp · Point.shp";
+}
 
-def safe_col(df, mapping, key, fallback):
-    if mapping and mapping.get(key) and mapping[key] in df.columns:
-        return mapping[key]
-    if fallback in df.columns:
-        return fallback
-    for c in df.columns:
-        if c.lower() == fallback.lower():
-            return c
-    alias_map = {
-        "X":           _X_ALIASES,
-        "Y":           _Y_ALIASES,
-        "Order":       _ORDER_ALIASES,
-        "Forest":      _FOREST_ALIASES,
-        "Compartment": _COMPARTMENT_ALIASES,
+/* ── GROUP E ─────────────────────────────────────────────────────────────── */
+function setGroupESubMode(sub){
+  groupESubMode=sub;
+  document.getElementById("e-toggle-A").classList.toggle("active-toggle",sub==="A");
+  document.getElementById("e-toggle-B").classList.toggle("active-toggle",sub==="B");
+  document.getElementById("e-forest-wrapper").classList.toggle("hidden",sub!=="B");
+  document.getElementById("e-forestname-wrapper").classList.toggle("hidden",sub==="B");
+  document.getElementById("e-hint-title").textContent=sub==="B"?"✂️ Each Forest → N compartments (own folder)":"✂️ One forest → N compartments";
+  document.getElementById("e-hint-sub").textContent=sub==="B"?"Each forest gets its own folder with division_points.xlsx":"division_points.xlsx + SHP exported for ArcGIS";
+}
+
+/* ── GROUP F ─────────────────────────────────────────────────────────────── */
+function setGroupFMode(mode){
+  groupFMode=mode;
+  ["A","B","E"].forEach(m=>document.getElementById("f-toggle-"+m)?.classList.toggle("active-toggle",m===mode));
+  const needsComp=mode==="B"||mode==="E";
+  document.getElementById("f-csv-comp-wrapper")?.classList.toggle("hidden",!needsComp);
+  document.getElementById("f-zip-comp-wrapper")?.classList.toggle("hidden",!needsComp);
+  const hints={A:"Single boundary → one slope table for the whole forest",B:"Groups by Forest column → slope table per forest",E:"Groups by Compartment column → slope table per compartment"};
+  document.getElementById("f-mode-hint-text").textContent=hints[mode]||hints.A;
+}
+
+/* ── FILE HANDLERS ─────────────────────────────────────────────────────── */
+async function parseCSVCols(file){
+  if(!file) return null;
+  if(!file.name.toLowerCase().endsWith(".csv")) return null;
+  const txt=await file.text();
+  const clean=txt.replace(/^\uFEFF/,"").replace(/\r/g,"");
+  const line=clean.split("\n").find(l=>l.trim())||"";
+  let d=","; if(line.includes(";"))d=";"; else if(line.includes("\t"))d="\t";
+  return line.split(d).map(x=>x.trim()).filter(Boolean);
+}
+
+async function handleZipShpList(file, selEl, extraColSel){
+  const zip=await JSZip.loadAsync(await file.arrayBuffer());
+  const shpFiles=Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith(".shp"));
+  selEl.innerHTML=shpFiles.length?shpFiles.map(f=>`<option>${f}</option>`).join(""):"<option>No SHP found</option>";
+  if(extraColSel){
+    const dbfFiles=Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith(".dbf"));
+    if(dbfFiles.length){
+      try{
+        const dbfData=await zip.files[dbfFiles[0]].async("arraybuffer");
+        const cols=parseDbfColNames(dbfData);
+        if(cols.length){
+          extraColSel.innerHTML='<option value="">— auto detect —</option>'+cols.map(c=>`<option>${c}</option>`).join("");
+          const m=detect(cols);
+          if(m.Forest) extraColSel.value=m.Forest;
+        }
+      }catch(e){}
     }
-    if key in alias_map:
-        hit = _find_col(df, alias_map[key])
-        if hit:
-            return hit
-    return None
-
-
-def normalize_order(df):
-    for c in df.columns:
-        if _norm(c) in _ORDER_ALIASES and c != "Order":
-            df = df.rename(columns={c: "Order"})
-            break
-    return df
-
-
-# ================= GROUP A =================
-def group_a(df, forest, crs, out, mapping=None):
-    df = normalize_order(df)
-    x_col     = safe_col(df, mapping, "X", "X")
-    y_col     = safe_col(df, mapping, "Y", "Y")
-    order_col = safe_col(df, mapping, "Order", "Order")
-
-    if not x_col: raise ValueError("Could not find an X / Easting / Longitude column.")
-    if not y_col: raise ValueError("Could not find a Y / Northing / Latitude column.")
-
-    if order_col: df = df.sort_values(order_col)
-    coords = list(zip(df[x_col], df[y_col]))
-    if len(coords) < 3: raise ValueError("Not enough points to build a polygon (need at least 3).")
-    coords.append(coords[0])
-    poly = safe_polygon(coords)
-    line = LineString(coords)
-
-    area_ha = round(poly.area / 10000, 4)
-    poly_gdf = gpd.GeoDataFrame([{
-        "Forest": forest, "Area_ha": area_ha,
-        "Perim_m": round(poly.length, 2), "geometry": poly
-    }], crs=crs)
-    line_gdf = gpd.GeoDataFrame([{"Forest": forest, "geometry": line}], crs=crs)
-    pts_gdf  = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[x_col], df[y_col]), crs=crs)
-
-    poly_gdf.to_file(os.path.join(out, f"{_safe_dirname(forest)}_polygon.shp"))
-    line_gdf.to_file(os.path.join(out, f"{_safe_dirname(forest)}_line.shp"))
-    pts_gdf.to_file(os.path.join(out,  f"{_safe_dirname(forest)}_point.shp"))
-    return poly_gdf, line_gdf, pts_gdf
-
-
-# ================= GROUP B =================
-def group_b(df, crs, out, mapping=None):
-    df = normalize_order(df)
-    x_col      = safe_col(df, mapping, "X",           "X")
-    y_col      = safe_col(df, mapping, "Y",           "Y")
-    order_col  = safe_col(df, mapping, "Order",       "Order")
-    forest_col = safe_col(df, mapping, "Forest",      "Forest")
-    comp_col   = safe_col(df, mapping, "Compartment", "Compartment")
-
-    if not x_col:      raise ValueError("Could not find an X / Easting / Longitude column.")
-    if not y_col:      raise ValueError("Could not find a Y / Northing / Latitude column.")
-    if not forest_col: raise ValueError("Could not find a Forest column.")
-
-    polys, lines, pts = [], [], []
-    for f, g in df.groupby(forest_col):
-        if order_col: g = g.sort_values(order_col)
-        sub_groups = g.groupby(comp_col) if comp_col else [(None, g)]
-        for c, cg in sub_groups:
-            coords = list(zip(cg[x_col], cg[y_col]))
-            if len(coords) < 3: continue
-            coords.append(coords[0])
-            poly = safe_polygon(coords)
-            line = LineString(coords)
-            polys.append({"Forest": f, "Compartment": c, "Area_ha": round(poly.area/10000,4),
-                          "Perim_m": round(poly.length,2), "geometry": poly})
-            lines.append({"Forest": f, "Compartment": c, "geometry": line})
-            for _, r in cg.iterrows():
-                pts.append({"Forest": f, "Compartment": c,
-                            "Order": r[order_col] if order_col else None,
-                            "geometry": Point(r[x_col], r[y_col])})
-
-    poly_gdf = gpd.GeoDataFrame(polys, crs=crs)
-    line_gdf = gpd.GeoDataFrame(lines, crs=crs)
-    pts_gdf  = gpd.GeoDataFrame(pts,   crs=crs)
-    if not poly_gdf.empty: poly_gdf.to_file(os.path.join(out, "forest_polygon.shp"))
-    if not line_gdf.empty: line_gdf.to_file(os.path.join(out, "forest_line.shp"))
-    if not pts_gdf.empty:  pts_gdf.to_file(os.path.join(out, "forest_point.shp"))
-    return poly_gdf, line_gdf, pts_gdf
-
-
-# ================= GROUP C (MULTI-MODE) =================
-def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
-    polygons = []
-
-    if file.filename.lower().endswith(".zip"):
-        folder = os.path.join(UPLOAD, str(uuid.uuid4()))
-        os.makedirs(folder, exist_ok=True)
-        zip_path = os.path.join(folder, "input.zip")
-        file.save(zip_path)
-        with zipfile.ZipFile(zip_path, "r") as z:
-            z.extractall(folder)
-
-        shp_candidates = []
-        for root, _, files in os.walk(folder):
-            for f in files:
-                if f.endswith(".shp"):
-                    shp_candidates.append(os.path.join(root, f))
-
-        if not shp_candidates:
-            raise ValueError("No shapefile (.shp) found inside the ZIP archive.")
-
-        shp_path = shp_candidates[0]
-        target_shp = (mapping or {}).get("target_shp")
-        if target_shp:
-            target_name = os.path.basename(target_shp)
-            for cand in shp_candidates:
-                if os.path.basename(cand) == target_name:
-                    shp_path = cand
-                    break
-
-        gdf = gpd.read_file(shp_path)
-        if gdf.empty: raise ValueError("The selected shapefile contains no features.")
-        if gdf.crs is None: gdf = gdf.set_crs(crs)
-        else: gdf = gdf.to_crs(crs)
-
-        for geom in gdf.geometry:
-            if geom is None or geom.is_empty: continue
-            gtype = geom.geom_type
-            if gtype == "Polygon":
-                polygons.append(geom if geom.is_valid else geom.buffer(0))
-            elif gtype == "MultiPolygon":
-                for part in geom.geoms:
-                    polygons.append(part if part.is_valid else part.buffer(0))
-            else:
-                if hasattr(geom, "geoms"):
-                    for sub in geom.geoms:
-                        if sub.geom_type == "Polygon":
-                            polygons.append(sub if sub.is_valid else sub.buffer(0))
-        if not polygons: raise ValueError("No polygon geometries found in the shapefile.")
-
-    else:
-        df = read_input(file)
-        df = normalize_order(df)
-        x_col     = safe_col(df, mapping, "X",     "X")
-        y_col     = safe_col(df, mapping, "Y",     "Y")
-        order_col = safe_col(df, mapping, "Order", "Order")
-
-        if not x_col: raise ValueError("Could not find an X / Easting / Longitude column.")
-        if not y_col: raise ValueError("Could not find a Y / Northing / Latitude column.")
-
-        if mode == "A":
-            if order_col: df = df.sort_values(order_col)
-            coords = list(zip(df[x_col], df[y_col]))
-            if len(coords) < 3: raise ValueError("Not enough points for a polygon (need at least 3).")
-            coords.append(coords[0])
-            polygons = [safe_polygon(coords)]
-        else:
-            forest_col = safe_col(df, mapping, "Forest", "Forest")
-            comp_col   = safe_col(df, mapping, "Compartment", "Compartment")
-            if not forest_col: raise ValueError("Segmented mode requires a Forest column.")
-            group_keys = [forest_col, comp_col] if comp_col else [forest_col]
-            skipped = 0
-            for key, g in df.groupby(group_keys):
-                if order_col: g = g.sort_values(order_col)
-                coords = list(zip(g[x_col], g[y_col]))
-                if len(coords) < 3: skipped += 1; continue
-                coords.append(coords[0])
-                polygons.append(safe_polygon(coords))
-            if not polygons: raise ValueError("No valid polygons could be built from the data.")
-
-    if not polygons: raise ValueError("No valid polygons could be built from the input data.")
-
-    poly_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
-    line_gdf = gpd.GeoDataFrame([{"geometry": LineString(p.exterior.coords)} for p in polygons], crs=crs)
-
-    union = poly_gdf.unary_union
-    minx, miny, _, _ = union.bounds
-    pts  = []
-    sn   = 1
-    for r in range(rows):
-        for c_idx in range(cols):
-            x      = minx + c_idx * w
-            y      = miny + r * h
-            center = Point(x + w / 2, y + h / 2)
-            if union.contains(center):
-                pts.append({"SN": sn, "X": center.x, "Y": center.y, "geometry": center})
-                sn += 1
-
-    pts_gdf = gpd.GeoDataFrame(pts, crs=crs)
-    poly_gdf.to_file(os.path.join(out, "boundary_polygon.shp"))
-    line_gdf.to_file(os.path.join(out, "boundary_line.shp"))
-    if not pts_gdf.empty:
-        pts_gdf.to_file(os.path.join(out, "sampleplot_point.shp"))
-        pd.DataFrame(pts)[["SN", "X", "Y"]].to_excel(os.path.join(out, "sampleplot.xlsx"), index=False)
-
-    return poly_gdf, line_gdf, pts_gdf
-
-
-# ================= GROUP D =================
-def _save_forest_layer(poly_rec, line_rec, pt_recs, save_dir, crs):
-    os.makedirs(save_dir, exist_ok=True)
-    prefix = os.path.basename(save_dir)
-    gpd.GeoDataFrame([poly_rec], crs=crs).to_file(os.path.join(save_dir, f"{prefix}_polygon.shp"))
-    gpd.GeoDataFrame([line_rec], crs=crs).to_file(os.path.join(save_dir, f"{prefix}_line.shp"))
-    gpd.GeoDataFrame(pt_recs,    crs=crs).to_file(os.path.join(save_dir, f"{prefix}_point.shp"))
-
-
-def group_d(df, crs, out, mapping=None, mode="A"):
-    df = normalize_order(df)
-    x_col      = safe_col(df, mapping, "X",           "X")
-    y_col      = safe_col(df, mapping, "Y",           "Y")
-    order_col  = safe_col(df, mapping, "Order",       "Order")
-    forest_col = safe_col(df, mapping, "Forest",      "Forest")
-    comp_col   = safe_col(df, mapping, "Compartment", "Compartment")
-
-    if not x_col:      raise ValueError("Could not find an X / Easting / Longitude column.")
-    if not y_col:      raise ValueError("Could not find a Y / Northing / Latitude column.")
-    if not forest_col: raise ValueError("Could not find a Forest column.")
-    if mode == "B" and not comp_col:
-        raise ValueError("Segmented mode requires a Compartment column.")
-
-    all_polys, all_lines, all_pts = [], [], []
-    skipped = 0
-
-    for f, fg in df.groupby(forest_col):
-        forest_dir = os.path.join(out, _safe_dirname(f))
-
-        if mode == "B":
-            for c, cg in fg.groupby(comp_col):
-                if order_col: cg = cg.sort_values(order_col)
-                coords = list(zip(cg[x_col], cg[y_col]))
-                if len(coords) < 3: skipped += 1; continue
-                coords.append(coords[0])
-                poly = safe_polygon(coords)
-                line = LineString(coords)
-                poly_rec = {"Forest": f, "Compartment": c, "Area_ha": round(poly.area/10000,4), "Perim_m": round(poly.length,4), "geometry": poly}
-                line_rec = {"Forest": f, "Compartment": c, "geometry": line}
-                pt_recs  = [{"Forest": f, "Compartment": c, "Order": r[order_col] if order_col else None, "geometry": Point(r[x_col], r[y_col])} for _, r in cg.iterrows()]
-                comp_dir = os.path.join(forest_dir, _safe_dirname(c))
-                _save_forest_layer(poly_rec, line_rec, pt_recs, comp_dir, crs)
-                all_polys.append(poly_rec); all_lines.append(line_rec); all_pts.extend(pt_recs)
-        else:
-            if order_col: fg = fg.sort_values(order_col)
-            coords = list(zip(fg[x_col], fg[y_col]))
-            if len(coords) < 3: skipped += 1; continue
-            coords.append(coords[0])
-            poly = safe_polygon(coords)
-            line = LineString(coords)
-            poly_rec = {"Forest": f, "Area_ha": round(poly.area/10000,4), "Perim_m": round(poly.length,4), "geometry": poly}
-            line_rec = {"Forest": f, "geometry": line}
-            pt_recs  = [{"Forest": f, "Order": r[order_col] if order_col else None, "geometry": Point(r[x_col], r[y_col])} for _, r in fg.iterrows()]
-            _save_forest_layer(poly_rec, line_rec, pt_recs, forest_dir, crs)
-            all_polys.append(poly_rec); all_lines.append(line_rec); all_pts.extend(pt_recs)
-
-    if not all_polys:
-        raise ValueError(f"No valid polygons could be built from the data.")
-
-    return (gpd.GeoDataFrame(all_polys, crs=crs),
-            gpd.GeoDataFrame(all_lines, crs=crs),
-            gpd.GeoDataFrame(all_pts,   crs=crs))
-
-
-# =============================================================================
-# GROUP E — STRAIGHT-LINE RECURSIVE BISECTION SUBDIVIDER
-# =============================================================================
-
-def _principal_axis_angle(poly):
-    try:
-        coords = np.array(poly.exterior.coords[:-1])
-        coords -= coords.mean(axis=0)
-        cov = np.cov(coords.T)
-        eigvals, eigvecs = np.linalg.eigh(cov)
-        principal = eigvecs[:, np.argmax(eigvals)]
-        angle = np.arctan2(principal[1], principal[0])
-        return angle
-    except Exception:
-        return 0.0
-
-
-def _elongation_ratio(poly):
-    minx, miny, maxx, maxy = poly.bounds
-    dx, dy = maxx - minx, maxy - miny
-    short = min(dx, dy)
-    if short < 1e-9:
-        return 999.0
-    return max(dx, dy) / short
-
-
-def _rotate_polygon(poly, angle):
-    from shapely import affinity
-    cx, cy = poly.centroid.x, poly.centroid.y
-    return affinity.rotate(poly, -np.degrees(angle), origin=(cx, cy))
-
-
-def _unrotate_polygon(poly, angle, cx, cy):
-    from shapely import affinity
-    return affinity.rotate(poly, np.degrees(angle), origin=(cx, cy))
-
-
-def _close_polygon(poly):
-    """
-    Guarantee the polygon exterior ring is explicitly closed
-    (first coord == last coord) and rebuild as a valid Polygon.
-    Fixes the 'unclosed ring' artefact seen with 8+ bisections.
-    """
-    if poly is None or poly.is_empty:
-        return poly
-    ext = list(poly.exterior.coords)
-    if ext[0] != ext[-1]:
-        ext.append(ext[0])
-    holes = [list(interior.coords) for interior in poly.interiors]
-    for h in holes:
-        if h[0] != h[-1]:
-            h.append(h[0])
-    try:
-        closed = Polygon(ext, holes)
-        if not closed.is_valid:
-            closed = closed.buffer(0)
-        return closed if not closed.is_empty else poly
-    except Exception:
-        return poly
-
-
-def _bisect_polygon(poly, n, axis=None, _depth=0):
-    """
-    Recursively split poly into exactly n near-equal-area pieces.
-    Each resulting piece is explicitly closed and clipped to the parent
-    to prevent open-ring geometry artefacts on deep recursion (8+ parts).
-    """
-    poly = _repair_geom(poly)
-    if poly is None or poly.is_empty or poly.area < 1e-10:
-        return []
-    if n <= 1:
-        return [_close_polygon(poly)]
-
-    minx, miny, maxx, maxy = poly.bounds
-    dx = maxx - minx
-    dy = maxy - miny
-
-    # ── Principal-axis rotation for strongly diagonal polygons
-    use_principal = False
-    rot_angle     = 0.0
-    cx0, cy0      = poly.centroid.x, poly.centroid.y
-
-    if axis == 'principal' or (axis is None and _depth < 2):
-        elong = _elongation_ratio(poly)
-        if elong > 1.6:
-            rot_angle = _principal_axis_angle(poly)
-            abs_deg   = abs(np.degrees(rot_angle)) % 90
-            if 10 < abs_deg < 80:
-                use_principal = True
-
-    if use_principal:
-        poly_rot = _rotate_polygon(poly, rot_angle)
-        poly_rot = _repair_geom(poly_rot)
-        if poly_rot and not poly_rot.is_empty:
-            pieces_rot = _bisect_polygon(poly_rot, n, axis='x', _depth=_depth+1)
-            pieces = []
-            for p in pieces_rot:
-                p_back = _unrotate_polygon(p, rot_angle, cx0, cy0)
-                p_back = _repair_geom(p_back)
-                pg = _as_polygon(p_back)
-                if pg and not pg.is_empty and pg.area > 1e-10:
-                    pieces.append(pg)
-            clipped = []
-            remaining = _repair_geom(poly)
-            try:
-                pieces.sort(key=lambda p: p.centroid.x)
-            except Exception:
-                pass
-            for i, p in enumerate(pieces):
-                if remaining is None or remaining.is_empty:
-                    break
-                if i == len(pieces) - 1:
-                    last = _as_polygon(_repair_geom(remaining))
-                    if last and last.area > 1e-10:
-                        clipped.append(_close_polygon(last))
-                else:
-                    try:
-                        c = _repair_geom(p.intersection(remaining))
-                        c = _as_polygon(c)
-                    except Exception:
-                        c = None
-                    if c and c.area > 1e-10:
-                        clipped.append(_close_polygon(c))
-                        try:
-                            remaining = _repair_geom(remaining.difference(c))
-                        except Exception:
-                            pass
-            if clipped:
-                return clipped
-        use_principal = False
-
-    # ── Squarified axis selection
-    n_left  = n // 2
-    n_right = n - n_left
-    frac    = n_left / n
-
-    def _cut_along(cand_axis):
-        lo, hi      = (minx, maxx) if cand_axis == 'x' else (miny, maxy)
-        target_area = poly.area * frac
-        best_mid    = (lo + hi) / 2
-        for _ in range(80):
-            mid = (lo + hi) / 2
-            try:
-                if cand_axis == 'x':
-                    left_half = _shapely_box(minx - 1, miny - 1, mid, maxy + 1)
-                else:
-                    left_half = _shapely_box(minx - 1, miny - 1, maxx + 1, mid)
-                left_piece = _repair_geom(poly.intersection(left_half))
-                got = left_piece.area if (left_piece and not left_piece.is_empty) else 0.0
-            except Exception:
-                return None
-            err = abs(got - target_area) / (target_area + 1e-12)
-            if err < 5e-4:
-                best_mid = mid
-                break
-            if got < target_area:
-                lo = mid
-            else:
-                hi = mid
-            best_mid = mid
-        try:
-            if cand_axis == 'x':
-                left_box = _shapely_box(minx - 1, miny - 1, best_mid, maxy + 1)
-            else:
-                left_box = _shapely_box(minx - 1, miny - 1, maxx + 1, best_mid)
-            left_piece  = _repair_geom(poly.intersection(left_box))
-            right_piece = _repair_geom(poly.difference(left_piece))
-        except Exception:
-            return None
-        lp = _as_polygon(left_piece)
-        rp = _as_polygon(right_piece)
-        if lp is None or lp.is_empty or rp is None or rp.is_empty:
-            return None
-        return lp, rp
-
-    def _bbox_aspect(p):
-        b = p.bounds
-        w, h  = b[2] - b[0], b[3] - b[1]
-        short = min(w, h) or 1e-9
-        return max(w, h) / short
-
-    candidate_axes = [axis] if axis in ('x', 'y') else ['x', 'y']
-    best = None
-    for cand_axis in candidate_axes:
-        cut = _cut_along(cand_axis)
-        if cut is None:
-            continue
-        lp_c, rp_c = cut
-        score = max(_bbox_aspect(lp_c), _bbox_aspect(rp_c))
-        if best is None or score < best[0]:
-            best = (score, lp_c, rp_c)
-
-    if best is None:
-        return [_close_polygon(poly)]
-
-    _, lp, rp = best
-
-    # Clip each child back to parent before recursing — prevents open rings
-    try:
-        lp = _as_polygon(_repair_geom(lp.intersection(poly))) or lp
-        rp = _as_polygon(_repair_geom(rp.intersection(poly))) or rp
-    except Exception:
-        pass
-
-    # Explicitly close both children before recursing
-    lp = _close_polygon(_repair_geom(lp) or lp)
-    rp = _close_polygon(_repair_geom(rp) or rp)
-
-    return (_bisect_polygon(lp, n_left,  None, _depth=_depth+1) +
-            _bisect_polygon(rp, n_right, None, _depth=_depth+1))
-
-
-def _subdivide_polygon(poly, n, area_tol_ha=0.3):
-    """
-    Public entry point: subdivide poly into n near-equal-area compartments.
-    n is not clamped here — caller controls range.
-    area_tol_ha: acceptable ± deviation per compartment in ha (default 0.3 ha)
-    Returns a list of exactly n valid, closed Polygon objects.
-    """
-    poly = _repair_geom(poly)
-    if poly is None or poly.is_empty:
-        return []
-
-    pieces = _bisect_polygon(poly, n)
-
-    # Remove empties, close all rings
-    valid = []
-    for p in pieces:
-        p = _repair_geom(p)
-        if p is None or p.is_empty or p.area < 1e-10:
-            continue
-        pg = _as_polygon(p)
-        if pg:
-            valid.append(_close_polygon(pg))
-
-    if not valid:
-        return [_close_polygon(poly)]
-
-    # ── Merge excess slivers
-    while len(valid) > n:
-        smallest_i = min(range(len(valid)), key=lambda i: valid[i].area)
-        sliver = valid.pop(smallest_i)
-        best_j, best_len = 0, -1.0
-        for j, vp in enumerate(valid):
-            try: s = sliver.intersection(vp).length
-            except: s = 0.0
-            if s > best_len:
-                best_len, best_j = s, j
-        try:
-            merged = _repair_geom(unary_union([valid[best_j], sliver]))
-            mp = _as_polygon(merged)
-            if mp: valid[best_j] = _close_polygon(mp)
-        except Exception:
-            valid.append(sliver)
-
-    # ── Split largest if short
-    while len(valid) < n:
-        largest_i = max(range(len(valid)), key=lambda i: valid[i].area)
-        big = valid.pop(largest_i)
-        sub = _bisect_polygon(big, 2)
-        sub_valid = [_close_polygon(s) for s in sub if s and not s.is_empty and s.area > 1e-10]
-        if len(sub_valid) == 2:
-            valid.extend(sub_valid)
-        else:
-            valid.append(big)
-            break
-
-    # ── Gap fill: assign any uncovered area to nearest neighbour
-    try:
-        covered = _repair_geom(unary_union(valid))
-        gap     = _repair_geom(poly.difference(covered))
-        if gap and not gap.is_empty and gap.area > 1e-8:
-            best_i, best_len = 0, -1.0
-            for i, vp in enumerate(valid):
-                try: s = gap.buffer(1e-4).intersection(vp).length
-                except: s = 0.0
-                if s > best_len:
-                    best_len, best_i = s, i
-            merged = _repair_geom(unary_union([valid[best_i], gap]))
-            p = _as_polygon(merged)
-            if p: valid[best_i] = _close_polygon(p)
-    except Exception:
-        pass
-
-    # ── Final re-close all rings
-    final = []
-    for p in valid:
-        p = _close_polygon(_repair_geom(p) or p)
-        final.append(p)
-
-    return final
-
-
-# ── Compartment vertex points for Group E output
-def _extract_division_points(pieces, forest_name):
-    records = []
-    sn = 1
-    for i, p in enumerate(pieces, start=1):
-        comp_id = f"Comp_{i:03d}"
-        p = _close_polygon(_repair_geom(p))
-        if p is None or p.is_empty:
-            continue
-        coords = list(p.exterior.coords)
-        if len(coords) > 1 and coords[0] == coords[-1]:
-            coords = coords[:-1]
-        edge_lengths = [
-            ((coords[(j+1) % len(coords)][0] - coords[j][0])**2 +
-             (coords[(j+1) % len(coords)][1] - coords[j][1])**2) ** 0.5
-            for j in range(len(coords))
-        ]
-        avg_edge = (sum(edge_lengths) / len(edge_lengths)) if edge_lengths else 1.0
-        mid_thresh = avg_edge * 1.5
-
-        for j, (cx, cy) in enumerate(coords):
-            records.append({
-                "SN":      sn,
-                "Forest":  forest_name,
-                "Comp_ID": comp_id,
-                "Type":    "Vertex",
-                "X":       round(cx, 4),
-                "Y":       round(cy, 4),
-            })
-            sn += 1
-            nx, ny = coords[(j + 1) % len(coords)]
-            elen = ((nx - cx)**2 + (ny - cy)**2) ** 0.5
-            if elen > mid_thresh:
-                mx, my = (cx + nx) / 2, (cy + ny) / 2
-                records.append({
-                    "SN":      sn,
-                    "Forest":  forest_name,
-                    "Comp_ID": comp_id,
-                    "Type":    "Midpoint",
-                    "X":       round(mx, 4),
-                    "Y":       round(my, 4),
-                })
-                sn += 1
-    return records
-
-
-def _extract_internal_cut_lines(pieces):
-    lines = []
-    n = len(pieces)
-    for i in range(n):
-        pi = pieces[i]
-        if pi is None or pi.is_empty:
-            continue
-        bi = pi.bounds
-        for j in range(i + 1, n):
-            pj = pieces[j]
-            if pj is None or pj.is_empty:
-                continue
-            bj = pj.bounds
-            if bi[2] < bj[0] or bj[2] < bi[0] or bi[3] < bj[1] or bj[3] < bi[1]:
-                continue
-            try:
-                shared = pi.exterior.intersection(pj.exterior)
-            except Exception:
-                continue
-            if shared is None or shared.is_empty or shared.length < 1e-6:
-                continue
-            lines.append({"comp_i": i + 1, "comp_j": j + 1, "geometry": shared})
-    return lines
-
-
-def _points_along_cut_lines(cut_lines, forest_name, sn_start=1):
-    records = []
-    sn = sn_start
-    for cl in cut_lines:
-        geom = cl["geometry"]
-        between = f"Comp_{cl['comp_i']:03d} / Comp_{cl['comp_j']:03d}"
-        parts = list(geom.geoms) if hasattr(geom, "geoms") else [geom]
-        for part in parts:
-            if part.geom_type != "LineString" or part.is_empty:
-                continue
-            coords = list(part.coords)
-            if len(coords) < 2:
-                continue
-            seg_lens = [
-                ((coords[k+1][0]-coords[k][0])**2 + (coords[k+1][1]-coords[k][1])**2) ** 0.5
-                for k in range(len(coords) - 1)
-            ]
-            avg_len    = (sum(seg_lens) / len(seg_lens)) if seg_lens else 1.0
-            mid_thresh = avg_len * 1.5
-            for k, (cx, cy) in enumerate(coords):
-                records.append({
-                    "SN": sn, "Forest": forest_name, "Between_Comp": between,
-                    "Type": "Cut_Vertex", "X": round(cx, 4), "Y": round(cy, 4),
-                })
-                sn += 1
-                if k < len(coords) - 1:
-                    nx, ny = coords[k + 1]
-                    if seg_lens[k] > mid_thresh:
-                        mx, my = (cx + nx) / 2, (cy + ny) / 2
-                        records.append({
-                            "SN": sn, "Forest": forest_name, "Between_Comp": between,
-                            "Type": "Cut_Midpoint", "X": round(mx, 4), "Y": round(my, 4),
-                        })
-                        sn += 1
-    return records
-
-
-def _save_compartments(pieces, forest_name, crs, save_dir):
-    os.makedirs(save_dir, exist_ok=True)
-
-    # Close all rings before saving — critical for valid shapefiles
-    pieces = [_close_polygon(_repair_geom(p)) for p in pieces if p and not p.is_empty]
-    pieces = [p for p in pieces if p and not p.is_empty]
-
-    total_area = sum(p.area for p in pieces)
-    records, line_recs, pt_recs = [], [], []
-
-    for i, p in enumerate(pieces, start=1):
-        comp_id   = f"Comp_{i:03d}"
-        area_ha   = round(p.area / 10000, 4)
-        perim_m   = round(p.length, 4)
-        pct_area  = round(p.area / total_area * 100, 2) if total_area > 0 else 0
-        centroid  = p.centroid
-
-        records.append({
-            "Forest":   forest_name,
-            "Comp_ID":  comp_id,
-            "Area_ha":  area_ha,
-            "Perim_m":  perim_m,
-            "Pct_Area": pct_area,
-            "geometry": p,
-        })
-        # Use explicitly closed exterior for line geometry
-        ext_coords = list(p.exterior.coords)
-        if ext_coords[0] != ext_coords[-1]:
-            ext_coords.append(ext_coords[0])
-        line_geom = LineString(ext_coords)
-        line_recs.append({"Forest": forest_name, "Comp_ID": comp_id, "geometry": line_geom})
-        pt_recs.append({
-            "Forest":   forest_name,
-            "Comp_ID":  comp_id,
-            "Area_ha":  area_ha,
-            "Pct_Area": pct_area,
-            "geometry": centroid,
-        })
-
-    poly_gdf = gpd.GeoDataFrame(records,   crs=crs)
-    line_gdf = gpd.GeoDataFrame(line_recs, crs=crs)
-    pts_gdf  = gpd.GeoDataFrame(pt_recs,   crs=crs)
-
-    # Enforce polygon-only output before saving to prevent LINESTRING error
-    poly_gdf = _enforce_polygon_gdf(poly_gdf)
-
-    prefix = _safe_dirname(forest_name)
-    if not poly_gdf.empty:
-        poly_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_polygon.shp"))
-    if not line_gdf.empty:
-        line_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_line.shp"))
-    if not pts_gdf.empty:
-        pts_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_point.shp"))
-
-    summary_df = pd.DataFrame([{k: v for k, v in r.items() if k != "geometry"} for r in records])
-    summary_df.to_excel(os.path.join(save_dir, f"{prefix}_compartment_summary.xlsx"), index=False)
-
-    div_pts = _extract_division_points(pieces, forest_name)
-    if div_pts:
-        div_df = pd.DataFrame(div_pts)
-        div_df.to_excel(os.path.join(save_dir, f"{prefix}_division_points.xlsx"), index=False)
-        div_gdf = gpd.GeoDataFrame(
-            div_df,
-            geometry=gpd.points_from_xy(div_df["X"], div_df["Y"]),
-            crs=crs
-        )
-        div_gdf.to_file(os.path.join(save_dir, f"{prefix}_division_points.shp"))
-
-    if div_pts:
-        vt_df = pd.DataFrame(div_pts).rename(columns={
-            "SN": "S.N.", "Comp_ID": "Sub_compartment", "X": "x", "Y": "y",
-        })[["S.N.", "Sub_compartment", "x", "y", "Forest", "Type"]]
-        vt_path = os.path.join(save_dir, f"{prefix}_subcompartment_vertices_table.xlsx")
-        try:
-            with pd.ExcelWriter(vt_path, engine="openpyxl") as writer:
-                vt_df.to_excel(writer, index=False, sheet_name="Vertices Table", startrow=1)
-                writer.sheets["Vertices Table"]["A1"] = (
-                    f"{forest_name} Sub-compartment Vertices Table"
-                )
-        except Exception:
-            vt_df.to_excel(vt_path, index=False)
-
-    cut_lines = _extract_internal_cut_lines(pieces)
-    cut_pts   = _points_along_cut_lines(cut_lines, forest_name)
-    if cut_pts:
-        cut_df = pd.DataFrame(cut_pts)
-        cut_df.to_excel(os.path.join(save_dir, f"{prefix}_division_line_points.xlsx"), index=False)
-        cut_gdf = gpd.GeoDataFrame(
-            cut_df,
-            geometry=gpd.points_from_xy(cut_df["X"], cut_df["Y"]),
-            crs=crs
-        )
-        cut_gdf.to_file(os.path.join(save_dir, f"{prefix}_division_line_points.shp"))
-
-    return poly_gdf, line_gdf, pts_gdf
-
-
-def _df_to_polygon(df, x_col, y_col, order_col):
-    if order_col and order_col in df.columns:
-        df = df.sort_values(order_col)
-    coords = list(zip(df[x_col], df[y_col]))
-    if len(coords) < 3:
-        raise ValueError("Need at least 3 points to build a polygon.")
-    coords.append(coords[0])
-    return _close_polygon(_repair_geom(Polygon(coords)))
-
-
-def _load_polygons_from_zip(file, target_shp, crs, forest_col_name=None):
-    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
-    os.makedirs(folder, exist_ok=True)
-    zip_path = os.path.join(folder, "input.zip")
-    file.save(zip_path)
-
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(folder)
-
-    shp_candidates = []
-    for root, _, files in os.walk(folder):
-        for f in files:
-            if f.endswith(".shp"):
-                shp_candidates.append(os.path.join(root, f))
-
-    if not shp_candidates:
-        raise ValueError("No shapefile (.shp) found inside the ZIP archive.")
-
-    shp_path = shp_candidates[0]
-    if target_shp:
-        target_name = os.path.basename(target_shp)
-        for cand in shp_candidates:
-            if os.path.basename(cand) == target_name:
-                shp_path = cand
-                break
-
-    gdf = gpd.read_file(shp_path)
-    if gdf.empty:
-        raise ValueError("The selected shapefile contains no features.")
-    if gdf.crs is None:
-        gdf = gdf.set_crs(crs)
-    else:
-        gdf = gdf.to_crs(crs)
-
-    name_col = None
-    if forest_col_name:
-        for col in gdf.columns:
-            if col.lower() == forest_col_name.lower():
-                name_col = col
-                break
-    if name_col is None:
-        for candidate in ["Forest", "forest", "Name", "name", "NAME",
-                           "Label", "label", "LABEL", "ID", "id"]:
-            if candidate in gdf.columns:
-                name_col = candidate
-                break
-    if name_col is None:
-        for col in gdf.columns:
-            if col == "geometry": continue
-            if gdf[col].dtype == object:
-                name_col = col
-                break
-
-    results = []
-    for i, row in gdf.iterrows():
-        geom = row.geometry
-        if geom is None or geom.is_empty:
-            continue
-        feat_name = str(row[name_col]) if name_col else f"Feature_{i+1}"
-
-        if geom.geom_type == "Polygon":
-            polys = [_repair_geom(geom)]
-        elif geom.geom_type == "MultiPolygon":
-            polys = [_repair_geom(g) for g in geom.geoms]
-        else:
-            polys = ([_repair_geom(g) for g in geom.geoms if g.geom_type == "Polygon"]
-                     if hasattr(geom, "geoms") else [])
-
-        if len(polys) > 1:
-            merged = unary_union(polys)
-            polys = [_repair_geom(merged)]
-
-        for p in polys:
-            if p and p.area > 1e-6:
-                results.append((feat_name, _close_polygon(p)))
-
-    if not results:
-        raise ValueError("No polygon geometries found in the selected shapefile.")
-
-    return results, shp_candidates
-
-
-def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
-            is_zip=False, forest_col_name=None, area_tol_ha=0.3):
-    """
-    Group E — Polygon Subdivider (2–15 compartments per polygon).
-    area_tol_ha: acceptable ±ha deviation per compartment (default 0.3 ha).
-    """
-    n_compartments = max(2, min(15, int(n_compartments)))  # Enforce 2-15
-
-    all_poly_gdfs, all_line_gdfs, all_pts_gdfs = [], [], []
-
-    if is_zip:
-        target_shp = (mapping or {}).get("target_shp")
-        features, _ = _load_polygons_from_zip(
-            file_or_df, target_shp, crs, forest_col_name=forest_col_name)
-
-        if len(features) == 1:
-            feat_name, poly = features[0]
-            pieces = _subdivide_polygon(poly, n_compartments, area_tol_ha)
-            pg, lg, ptg = _save_compartments(pieces, feat_name, crs, out)
-            all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
-        else:
-            for feat_name, poly in features:
-                pieces   = _subdivide_polygon(poly, n_compartments, area_tol_ha)
-                feat_dir = os.path.join(out, _safe_dirname(feat_name))
-                pg, lg, ptg = _save_compartments(pieces, feat_name, crs, feat_dir)
-                all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
-
-    else:
-        df = file_or_df
-        df = normalize_order(df)
-
-        x_col      = safe_col(df, mapping, "X",      "X")
-        y_col      = safe_col(df, mapping, "Y",      "Y")
-        order_col  = safe_col(df, mapping, "Order",  "Order")
-        forest_col = safe_col(df, mapping, "Forest", "Forest")
-
-        if not x_col: raise ValueError("Could not find an X / Easting / Longitude column.")
-        if not y_col: raise ValueError("Could not find a Y / Northing / Latitude column.")
-        if e_mode == "B" and not forest_col:
-            raise ValueError("Multi-Forest mode requires a Forest column.")
-
-        if e_mode == "A":
-            forest_name = (mapping or {}).get("forest") or "FOREST"
-            poly   = _df_to_polygon(df, x_col, y_col, order_col)
-            pieces = _subdivide_polygon(poly, n_compartments, area_tol_ha)
-            pg, lg, ptg = _save_compartments(pieces, forest_name, crs, out)
-            all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
-        else:
-            for f, fg in df.groupby(forest_col):
-                try:
-                    poly = _df_to_polygon(fg, x_col, y_col, order_col)
-                except ValueError:
-                    continue
-                pieces     = _subdivide_polygon(poly, n_compartments, area_tol_ha)
-                forest_dir = os.path.join(out, _safe_dirname(str(f)))
-                pg, lg, ptg = _save_compartments(pieces, str(f), crs, forest_dir)
-                all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
-
-    if not all_poly_gdfs:
-        raise ValueError("No valid polygons could be built from the data.")
-
-    poly_gdf = gpd.GeoDataFrame(pd.concat(all_poly_gdfs, ignore_index=True), crs=crs)
-    line_gdf = gpd.GeoDataFrame(pd.concat(all_line_gdfs, ignore_index=True), crs=crs)
-    pts_gdf  = gpd.GeoDataFrame(pd.concat(all_pts_gdfs,  ignore_index=True), crs=crs)
-
-    return poly_gdf, line_gdf, pts_gdf
-
-
-# ================= GROUP F — DEM SLOPE ANALYSIS =================
-
-def _boundary_polygon_from_df(df, mapping):
-    df = normalize_order(df)
-    x_col     = safe_col(df, mapping, "X",     "X")
-    y_col     = safe_col(df, mapping, "Y",     "Y")
-    order_col = safe_col(df, mapping, "Order", "Order")
-    if not x_col: raise ValueError("Could not find X column for boundary.")
-    if not y_col: raise ValueError("Could not find Y column for boundary.")
-    if order_col: df = df.sort_values(order_col)
-    coords = list(zip(df[x_col], df[y_col]))
-    if len(coords) < 3: raise ValueError("Need at least 3 points for boundary polygon.")
-    coords.append(coords[0])
-    return safe_polygon(coords)
-
-
-def _boundary_polygon_from_zip(zip_file, target_shp, src_crs, dem_crs):
-    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
-    os.makedirs(folder, exist_ok=True)
-    zip_path = os.path.join(folder, "boundary.zip")
-    zip_file.save(zip_path)
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(folder)
-
-    shp_candidates = []
-    for root, _, files in os.walk(folder):
-        for f in files:
-            if f.endswith(".shp"):
-                shp_candidates.append(os.path.join(root, f))
-    if not shp_candidates:
-        raise ValueError("No .shp found in boundary ZIP.")
-
-    shp_path = shp_candidates[0]
-    if target_shp:
-        for cand in shp_candidates:
-            if os.path.basename(cand) == os.path.basename(target_shp):
-                shp_path = cand; break
-
-    gdf = gpd.read_file(shp_path)
-    if gdf.empty: raise ValueError("Boundary shapefile has no features.")
-    if gdf.crs is None: gdf = gdf.set_crs(src_crs)
-    gdf = gdf.to_crs(dem_crs)
-    union = gdf.unary_union
-    return _repair_geom(union), gdf
-
-
-def group_f(boundary_file, dem_file, crs, out, mapping=None,
-            boundary_is_zip=False, forest_name="FOREST",
-            f_mode="A", comp_col_name=None, field_area_ha=None):
-    """
-    Group F — DEM Slope Analysis.
-    f_mode:
-      A = Single forest, one table for whole boundary
-      B = Multi-forest: groups by Forest/Name column, one table per forest
-      E = Compartments: groups by Compartment column, one table per compartment
-    Returns (all_summary, vec_gdf, boundary_gdf, f_mode, per_group_summaries)
-    """
-    try:
-        import rasterio
-        from rasterio.mask import mask as rio_mask
-        from rasterio.features import shapes as rio_shapes
-        from rasterio.transform import from_bounds
-        import scipy.ndimage as ndimage
-    except ImportError:
-        raise ValueError("Group F requires rasterio and scipy. Install: pip install rasterio scipy")
-
-    os.makedirs(out, exist_ok=True)
-    prefix = _safe_dirname(forest_name)
-
-    # ── Load DEM
-    dem_path = os.path.join(UPLOAD, f"{uuid.uuid4()}_dem.tif")
-    dem_file.save(dem_path)
-    with rasterio.open(dem_path) as src:
-        dem_crs   = src.crs
-        dem_arr   = src.read(1).astype(np.float32)
-        nodata    = src.nodata
-        transform = src.transform
-        profile   = src.profile.copy()
-        res_x     = abs(transform.a)
-        res_y     = abs(transform.e)
-    if nodata is not None:
-        dem_arr[dem_arr == nodata] = np.nan
-
-    # ── Load boundary
-    if boundary_is_zip:
-        target_shp = (mapping or {}).get("target_shp")
-        boundary_poly, boundary_gdf = _boundary_polygon_from_zip(
-            boundary_file, target_shp, crs, str(dem_crs))
-    else:
-        df = read_input(boundary_file)
-        boundary_poly = _boundary_polygon_from_df(df, mapping)
-        boundary_gdf = gpd.GeoDataFrame(
-            [{"Forest": forest_name, "geometry": boundary_poly}], crs=crs
-        ).to_crs(str(dem_crs))
-        boundary_poly = boundary_gdf.unary_union
-
-    # ── Step 1: Extract rectangular DEM (20% buffer)
-    b = boundary_poly.bounds
-    buf_x = (b[2] - b[0]) * 0.20
-    buf_y = (b[3] - b[1]) * 0.20
-    rect_poly = _shapely_box(b[0]-buf_x, b[1]-buf_y, b[2]+buf_x, b[3]+buf_y)
-
-    try:
-        with rasterio.open(dem_path) as src:
-            rect_arr, rect_tr = rio_mask(
-                src, [rect_poly.__geo_interface__],
-                crop=True, filled=True, nodata=nodata if nodata is not None else -9999
-            )
-        rect_dem = rect_arr[0].astype(np.float32)
-        rect_nodata = nodata if nodata is not None else -9999
-        rect_dem[rect_dem == rect_nodata] = np.nan
-    except Exception:
-        rect_dem = dem_arr
-        rect_tr  = transform
-        rect_nodata = nodata if nodata is not None else -9999
-
-    rect_res_x = abs(rect_tr.a)
-    rect_res_y = abs(rect_tr.e)
-
-    # ── Step 2: Slope (Horn method)
-    import scipy.ndimage as ndimage
-    valid_dem = ~np.isnan(rect_dem)
-    filled    = np.nan_to_num(rect_dem, nan=0.0)
-
-    dzdx = ndimage.sobel(filled, axis=1) / (8 * max(rect_res_x, 1e-9))
-    dzdy = ndimage.sobel(filled, axis=0) / (8 * max(rect_res_y, 1e-9))
-    slope_rect = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2))).astype(np.float32)
-
-    full_neighborhood_valid = ndimage.binary_erosion(
-        valid_dem, structure=np.ones((3, 3), dtype=bool), border_value=0
-    )
-    slope_nodata = -9999.0
-    slope_rect[~full_neighborhood_valid] = slope_nodata
-
-    rect_profile = profile.copy()
-    rect_profile.update(
-        dtype="float32", nodata=slope_nodata, count=1,
-        height=slope_rect.shape[0], width=slope_rect.shape[1],
-        transform=rect_tr
-    )
-    slope_rect_path = os.path.join(out, f"{prefix}_slope_rect.tif")
-    with rasterio.open(slope_rect_path, "w", **rect_profile) as dst:
-        dst.write(slope_rect, 1)
-
-    # ── Step 3: Reclassify
-    valid_mask = (slope_rect != slope_nodata) & ~np.isnan(slope_rect)
-    class_rect = np.zeros_like(slope_rect, dtype=np.uint8)
-    class_rect[valid_mask & (slope_rect < 19)]                       = 1
-    class_rect[valid_mask & (slope_rect >= 19) & (slope_rect <= 31)] = 2
-    class_rect[valid_mask & (slope_rect > 31)]                       = 3
-
-    class_rect_path = os.path.join(out, f"{prefix}_class_rect.tif")
-    cls_profile = rect_profile.copy()
-    cls_profile.update(dtype="uint8", nodata=0)
-    with rasterio.open(class_rect_path, "w", **cls_profile) as dst:
-        dst.write(class_rect, 1)
-
-    # ── Step 4 & 5: Raster-to-polygon, dissolve by class
-    class_defs = {
-        1: ("< 19°",    "Gentle",   "#2ecc71"),
-        2: ("19 - 31°", "Moderate", "#f39c12"),
-        3: ("> 31°",    "Steep",    "#e74c3c"),
+  }
+}
+
+function parseDbfColNames(buf){
+  try{
+    const view=new DataView(buf);
+    const numCols=Math.floor((view.getUint16(8,true)-32)/32);
+    const cols=[];
+    for(let i=0;i<numCols;i++){
+      let name="";
+      for(let j=0;j<11;j++){const b=view.getUint8(32+i*32+j);if(b===0)break;name+=String.fromCharCode(b);}
+      if(name) cols.push(name.trim());
+    }
+    return cols;
+  }catch(e){return [];}
+}
+
+document.querySelectorAll(".file").forEach(inp=>{
+  inp.onchange=async function(){
+    const file=this.files[0]; if(!file) return;
+    const card=this.closest(".group-content-card");
+    const dzText=card.querySelector(".dz-text");
+    if(dzText) dzText.textContent="📄 "+file.name;
+
+    if(card.id==="card-C"){
+      const isZip=file.name.toLowerCase().endsWith(".zip");
+      document.getElementById("c-coord-fields").classList.toggle("hidden",isZip);
+      document.getElementById("c-zip-notice").classList.toggle("hidden",!isZip);
+      if(isZip){ await handleZipShpList(file,document.getElementById("c-shp-selector"),null); return; }
     }
 
-    rtp_records = []
-    with rasterio.open(class_rect_path) as src:
-        cls_arr, cls_tr = src.read(1), src.transform
-        for shp, val in rio_shapes(cls_arr, mask=(cls_arr > 0).astype(np.uint8), transform=cls_tr):
-            cid = int(val)
-            if cid == 0: continue
-            try:
-                rings    = shp["coordinates"]
-                exterior = rings[0]
-                holes    = rings[1:] if len(rings) > 1 else None
-                geom = _repair_geom(Polygon(exterior, holes=holes))
-                if geom and not geom.is_empty and geom.area > 1e-10:
-                    rtp_records.append({"gridcode": cid, "geometry": geom})
-            except Exception:
-                continue
-
-    if not rtp_records:
-        raise ValueError("No slope polygons could be extracted from the DEM.")
-
-    rtp_gdf = gpd.GeoDataFrame(rtp_records, crs=str(dem_crs))
-
-    try:
-        dissolved = rtp_gdf.dissolve(by="gridcode", as_index=False)
-        dissolved["gridcode"] = dissolved["gridcode"].astype(int)
-    except Exception:
-        dissolved = rtp_gdf.copy()
-
-    # ── Step 6: Clip dissolved polygons to boundary per group
-
-    def _clip_group_to_poly(clip_poly, label):
-        """
-        Clip dissolved slope polygons to clip_poly.
-        Returns (summary_rows, vec_recs).
-        CRITICAL: All output geometries are guaranteed to be Polygons (no LINESTRING).
-        """
-        vec_recs = []
-        total_valid_ha = 0.0
-
-        for _, drow in dissolved.iterrows():
-            cid   = int(drow["gridcode"])
-            dgeom = _repair_geom(drow.geometry)
-            if dgeom is None or dgeom.is_empty:
-                continue
-            try:
-                clipped = _repair_geom(dgeom.intersection(clip_poly))
-            except Exception:
-                continue
-            if clipped is None or clipped.is_empty:
-                continue
-
-            # ── CRITICAL FIX: Force polygon-only output ──────────────────
-            # Intersection of two polygons can produce LINESTRING, POINT, or
-            # GeometryCollection containing non-polygon parts, causing the
-            # "non-polygon (LINESTRING) geometry to POLYGON type shapefile" error.
-            pg = _as_polygon(clipped)
-            if pg is None or pg.is_empty or pg.area < 1e-10:
-                # Try to extract all polygons from a collection
-                if hasattr(clipped, "geoms"):
-                    pg_parts = [_as_polygon(_repair_geom(g)) for g in clipped.geoms
-                                if g.geom_type in ("Polygon", "MultiPolygon")]
-                    pg_parts = [p for p in pg_parts if p and p.area > 1e-10]
-                    if pg_parts:
-                        pg = _close_polygon(max(pg_parts, key=lambda x: x.area))
-                    else:
-                        continue
-                else:
-                    continue
-
-            pg = _close_polygon(pg)
-            area_ha = round(pg.area / 10000, 4)
-            total_valid_ha += area_ha
-            vec_recs.append({
-                "Label":       label,
-                "Class":       cid,
-                "Slope_Range": class_defs[cid][0],
-                "Descr":       class_defs[cid][1],
-                "Area_ha":     area_ha,
-                "geometry":    pg,          # guaranteed Polygon
-            })
-
-        total_valid_ha = max(total_valid_ha, 1e-6)
-        rows = []
-        for vr in vec_recs:
-            rows.append({
-                "Label":       vr["Label"],
-                "Class":       vr["Class"],
-                "Slope_Range": vr["Slope_Range"],
-                "Description": vr["Descr"],
-                "Area_ha":     vr["Area_ha"],
-                "Pct_Area":    round(vr["Area_ha"] / total_valid_ha * 100, 2),
-                "Total_ha":    round(total_valid_ha, 4),
-            })
-        return rows, vec_recs
-
-    # ── Build group polygon list based on f_mode
-    comp_polygons = []
-
-    if f_mode == "A":
-        comp_polygons = [(forest_name, boundary_poly)]
-
-    else:
-        grp_col = None
-        if comp_col_name:
-            for c in boundary_gdf.columns:
-                if c.lower() == comp_col_name.lower():
-                    grp_col = c
-                    break
-
-        if grp_col is None:
-            if f_mode == "B":
-                grp_col = _find_col(boundary_gdf, _FOREST_ALIASES)
-            else:  # E
-                grp_col = _find_col(boundary_gdf, _COMPARTMENT_ALIASES)
-                if grp_col is None:
-                    grp_col = _find_col(boundary_gdf, _FOREST_ALIASES)
-
-        if grp_col is None:
-            comp_polygons = [(forest_name, boundary_poly)]
-        else:
-            for val, grp in boundary_gdf.groupby(grp_col):
-                union_poly = _repair_geom(grp.unary_union)
-                if union_poly and not union_poly.is_empty:
-                    comp_polygons.append((str(val), union_poly))
-
-        if not comp_polygons:
-            comp_polygons = [(forest_name, boundary_poly)]
-
-    # ── Run clipping for every group
-    all_summary, all_vec = [], []
-    per_group_summaries = {}
-
-    for label, cpoly in comp_polygons:
-        rows, vec_recs = _clip_group_to_poly(cpoly, label)
-        all_summary.extend(rows)
-        all_vec.extend(vec_recs)
-        per_group_summaries[label] = rows
-
-    # ── Recalibration
-    if field_area_ha and field_area_ha > 0:
-        total_computed = sum(r["Area_ha"] for r in all_summary)
-        factor = field_area_ha / max(total_computed, 1e-6)
-        for r in all_summary:
-            r["Recal_ha"]   = round(r["Area_ha"] * factor, 4)
-            r["Cal_Factor"] = round(factor, 6)
-    else:
-        for r in all_summary:
-            r["Recal_ha"]   = None
-            r["Cal_Factor"] = None
-
-    # ── Save vector output — enforce polygon-only before writing shp ───
-    vec_crs = str(dem_crs)
-    if all_vec:
-        vec_gdf = gpd.GeoDataFrame(all_vec, crs=vec_crs)
-        vec_gdf = _enforce_polygon_gdf(vec_gdf)   # ← CRITICAL FIX
-        if not vec_gdf.empty:
-            vec_gdf.to_file(os.path.join(out, f"{prefix}_slope_polygon.shp"))
-    else:
-        vec_gdf = gpd.GeoDataFrame(columns=["geometry"], crs=vec_crs)
-
-    boundary_gdf.to_file(os.path.join(out, f"{prefix}_boundary_polygon.shp"))
-
-    # Bonus: clipped raster deliverables (first group)
-    try:
-        with rasterio.open(slope_rect_path) as src:
-            first_cs, first_tr = rio_mask(
-                src, [comp_polygons[0][1].__geo_interface__],
-                crop=True, filled=True, nodata=slope_nodata)
-        first_cs = first_cs[0].astype(np.float32)
-    except Exception:
-        first_cs = slope_rect
-        first_tr = rect_tr
-
-    valid_mask2 = (first_cs != slope_nodata) & ~np.isnan(first_cs)
-    first_ca = np.zeros_like(first_cs, dtype=np.uint8)
-    first_ca[valid_mask2 & (first_cs < 19)]                       = 1
-    first_ca[valid_mask2 & (first_cs >= 19) & (first_cs <= 31)]   = 2
-    first_ca[valid_mask2 & (first_cs > 31)]                       = 3
-
-    clipped_profile = rect_profile.copy()
-    clipped_profile.update(height=first_cs.shape[0], width=first_cs.shape[1], transform=first_tr)
-    with rasterio.open(os.path.join(out, f"{prefix}_slope_clipped.tif"), "w", **clipped_profile) as dst:
-        dst.write(first_cs, 1)
-    class_profile2 = clipped_profile.copy()
-    class_profile2.update(dtype="uint8", nodata=0)
-    with rasterio.open(os.path.join(out, f"{prefix}_slope_classes.tif"), "w", **class_profile2) as dst:
-        dst.write(first_ca, 1)
-
-    # ── Excel summary
-    summary_df = pd.DataFrame(all_summary)
-    excel_path = os.path.join(out, f"{prefix}_slope_summary.xlsx")
-
-    if f_mode == "A":
-        out_df = summary_df.drop(columns=["Label"], errors="ignore")
-        out_df.to_excel(excel_path, index=False)
-    else:
-        try:
-            with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-                summary_df.to_excel(writer, sheet_name="All_Groups", index=False)
-                for label, group_rows in per_group_summaries.items():
-                    if not group_rows:
-                        continue
-                    g_df = pd.DataFrame(group_rows)
-                    total_ha = sum(r["Area_ha"] for r in group_rows)
-                    total_row = {
-                        "Label": label, "Class": "", "Slope_Range": "TOTAL",
-                        "Description": "", "Area_ha": round(total_ha, 4),
-                        "Pct_Area": 100.0, "Total_ha": round(total_ha, 4),
-                    }
-                    if group_rows[0].get("Recal_ha") is not None:
-                        total_row["Recal_ha"]   = round(sum(r["Recal_ha"] for r in group_rows if r.get("Recal_ha")), 4)
-                        total_row["Cal_Factor"] = group_rows[0].get("Cal_Factor", "")
-                    sheet_name = str(label)[:31]
-                    g_df_with_total = pd.concat([g_df, pd.DataFrame([total_row])], ignore_index=True)
-                    g_df_with_total.to_excel(writer, sheet_name=sheet_name, index=False)
-        except Exception:
-            summary_df.to_excel(excel_path, index=False)
-
-    return all_summary, vec_gdf, boundary_gdf, f_mode, per_group_summaries
-
-
-# ================= PREVIEW HELPERS =================
-_A4_W  = 8.27   # A4 landscape width in inches
-_A4_H  = 11.69  # A4 portrait height in inches
-_DPI   = 200
-
-_COMP_COLORS = [
-    "#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7",
-    "#DCEDC8","#B2EBF2","#FFF9C4","#D7CCC8","#CFD8DC",
-    "#C5CAE9","#F0F4C3","#FFCCBC","#B2DFDB","#E8EAF6",
-]
-
-
-def _style_map_axes(ax):
-    """
-    Apply clean cartographic style to a map axes:
-    - No internal grid
-    - Tick marks and labels visible on all four sides
-    - Scientific notation disabled
-    """
-    ax.set_aspect("equal")
-    ax.tick_params(axis="both", which="both",
-                   left=True, right=True, top=True, bottom=True,
-                   labelleft=True, labelright=False,
-                   labelbottom=True, labeltop=False,
-                   direction="out", length=4, width=0.7,
-                   labelsize=6, color="#555555")
-    ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.0f'))
-    ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.0f'))
-    for spine in ax.spines.values():
-        spine.set_linewidth(0.6)
-        spine.set_color("#888888")
-    ax.grid(False)   # No internal grid lines
-    ax.set_xlabel("Easting (m)", fontsize=6, color="#555555", labelpad=2)
-    ax.set_ylabel("Northing (m)", fontsize=6, color="#555555", labelpad=2)
-
-
-def preview_compartments(poly_gdf, path, title=""):
-    """A4-sized compartment preview — no internal grid, tick marks and labels."""
-    fig, ax = plt.subplots(figsize=(_A4_W, _A4_H), dpi=_DPI)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("#f8faf8")
-
-    for i, (_, row) in enumerate(poly_gdf.iterrows()):
-        geom = row.geometry
-        if geom is None or geom.is_empty:
-            continue
-        if geom.geom_type == "Polygon":
-            ext = list(geom.exterior.coords)
-            if ext[0] != ext[-1]:
-                ext.append(ext[0])
-            geom = Polygon(ext)
-        color = _COMP_COLORS[i % len(_COMP_COLORS)]
-        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
-            ax=ax, facecolor=color, edgecolor="#1a1a1a", linewidth=1.6
-        )
-        cx, cy = geom.centroid.x, geom.centroid.y
-        comp_id = row.get("Comp_ID", f"Comp_{i+1:03d}")
-        area_ha = row.get("Area_ha", "")
-        label   = f"{comp_id}\n{area_ha:.2f} ha" if isinstance(area_ha, float) else comp_id
-        ax.annotate(label, xy=(cx, cy), ha="center", va="center",
-                    fontsize=7, fontweight="bold", color="#1a1a1a",
-                    path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
-                    zorder=10)
-
-    _style_map_axes(ax)
-    head = title.strip() if title.strip() else "Compartment Division Map"
-    ax.set_title(head, fontsize=11, fontweight="bold", color="#1a2b22", pad=8)
-
-    plt.tight_layout(pad=0.8)
-    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-
-
-def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
-            label_col=None, label_pts_gdf=None, area_ha=None, title=""):
-    """A4-sized general preview — no internal grid, tick marks and labels."""
-    fig, ax = plt.subplots(figsize=(_A4_W, _A4_H), dpi=_DPI)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("#f8faf8")
-
-    if poly_gdf is not None and not poly_gdf.empty:
-        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc, linewidth=1.4)
-
-    if line_gdf is not None and not line_gdf.empty:
-        line_gdf.plot(ax=ax, color=lc, linewidth=1.5)
-
-    if pts_gdf is not None and not pts_gdf.empty:
-        pts_gdf.plot(ax=ax, color=ptc, markersize=5, zorder=5)
-
-    lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
-    if label_col and lbl_src is not None and not lbl_src.empty and label_col in lbl_src.columns:
-        for _, row in lbl_src.iterrows():
-            ax.annotate(str(int(row[label_col])),
-                        xy=(row.geometry.x, row.geometry.y),
-                        xytext=(0, 7), textcoords="offset points",
-                        ha="center", va="bottom", fontsize=5, fontweight="bold", color="black",
-                        path_effects=[pe.Stroke(linewidth=1.8, foreground="white"), pe.Normal()],
-                        zorder=6)
-
-    if poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns:
-        for _, row in poly_gdf.iterrows():
-            cx = row.geometry.centroid.x
-            cy = row.geometry.centroid.y
-            area_txt = f"{row['Area_ha']:.2f} ha" if "Area_ha" in row else ""
-            ax.annotate(f"{row['Comp_ID']}\n{area_txt}",
-                        xy=(cx, cy), ha="center", va="center", fontsize=5.5,
-                        fontweight="bold", color="black",
-                        path_effects=[pe.Stroke(linewidth=2, foreground="white"), pe.Normal()],
-                        zorder=7)
-
-    _style_map_axes(ax)
-    head = title.strip() if title.strip() else (
-        f"Total Area: {area_ha:.2f} ha" if area_ha is not None else "Forest Boundary Map"
-    )
-    ax.set_title(head, fontsize=11, fontweight="bold", color="#1a2b22", pad=8)
-
-    plt.tight_layout(pad=0.8)
-    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-
-
-def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
-                  f_mode="A", per_group_summaries=None, title=""):
-    """
-    A4-sized slope preview.
-    - Mode A: map + single summary table
-    - Mode B/E: map + per-group tables (one sub-table per label)
-    """
-    import matplotlib.ticker
-
-    class_colors = {1: "#2ecc71", 2: "#f39c12", 3: "#e74c3c"}
-    class_labels = {1: "< 19°  Gentle", 2: "19–31° Moderate", 3: "> 31°  Steep"}
-
-    has_groups = f_mode in ("B", "E") and per_group_summaries and len(per_group_summaries) > 1
-    n_groups   = len(per_group_summaries) if per_group_summaries else 1
-    n_rows_total = len(summary_rows)
-
-    table_ratio = max(0.22, min(0.50, 0.07 + n_rows_total * 0.026))
-    fig_w = _A4_W
-    fig_h = _A4_H
-
-    fig = plt.figure(figsize=(fig_w, fig_h), dpi=_DPI, facecolor="white")
-    gs  = gridspec.GridSpec(2, 1, height_ratios=[1, table_ratio], hspace=0.22,
-                            left=0.10, right=0.96, top=0.94, bottom=0.04)
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-
-    # ── Map
-    if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
-        for cid, color in class_colors.items():
-            sub = vec_gdf[vec_gdf["Class"] == cid]
-            if not sub.empty:
-                sub.plot(ax=ax1, facecolor=color, edgecolor="#2c2c2c",
-                         linewidth=0.4, alpha=0.92, zorder=3)
-
-    if boundary_gdf is not None and not boundary_gdf.empty:
-        try:
-            boundary_gdf.boundary.plot(ax=ax1, color="black", linewidth=1.8, zorder=5)
-        except Exception:
-            pass
-
-    if has_groups and boundary_gdf is not None and not boundary_gdf.empty:
-        grp_col = None
-        for c in boundary_gdf.columns:
-            if c.lower() not in ("geometry",):
-                grp_col = c
-                break
-        if grp_col:
-            for _, row in boundary_gdf.iterrows():
-                geom = row.geometry
-                if geom and not geom.is_empty:
-                    cx, cy = geom.centroid.x, geom.centroid.y
-                    ax1.annotate(str(row[grp_col]), xy=(cx, cy),
-                                 ha="center", va="center", fontsize=7,
-                                 fontweight="bold", color="#1a1a1a",
-                                 path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
-                                 zorder=8)
-
-    _style_map_axes(ax1)
-    map_title = title.strip() if title.strip() else "Slope Classification"
-    if has_groups:
-        map_title += f" — {n_groups} Groups ({f_mode} mode)"
-    ax1.set_title(map_title, fontsize=10, fontweight="bold", pad=6)
-    legend_items = [mpatches.Patch(facecolor=c, edgecolor="#2c2c2c", label=class_labels[cid])
-                    for cid, c in class_colors.items()]
-    ax1.legend(handles=legend_items, loc="lower left", fontsize=8,
-               framealpha=0.92, title="Slope Class", title_fontsize=8)
-
-    # ── Table
-    ax2.axis("off")
-    ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
-
-    if not summary_rows:
-        fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
-        plt.close(fig)
-        return
-
-    has_recal = any(r.get("Recal_ha") is not None for r in summary_rows)
-
-    if f_mode == "A":
-        total_ha = sum(r["Area_ha"] for r in summary_rows)
-        col_labels = ["Slope Range", "Description", "Area (ha)", "% of Total"]
-        if has_recal:
-            col_labels += ["Recal. Area (ha)", "Conv. Factor"]
-        table_data = []
-        for r in summary_rows:
-            row = [r["Slope_Range"], r["Description"],
-                   f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-            if has_recal:
-                row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—",
-                        f"{r.get('Cal_Factor','')}" if r.get("Cal_Factor") else "—"]
-            table_data.append(row)
-        total_row = ["TOTAL", "", f"{total_ha:.2f}", "100%"]
-        if has_recal:
-            total_recal = sum(r["Recal_ha"] for r in summary_rows if r.get("Recal_ha"))
-            total_row += [f"{total_recal:.2f}", ""]
-        table_data.append(total_row)
-        row_class_map = {i: summary_rows[i].get("Class", 0) for i in range(len(summary_rows))}
-    else:
-        col_labels = ["Group", "Slope Range", "Description", "Area (ha)", "% of Total"]
-        if has_recal:
-            col_labels += ["Recal. (ha)"]
-        table_data = []
-        row_class_map = {}
-        row_idx = 0
-
-        if per_group_summaries:
-            for label, group_rows in per_group_summaries.items():
-                for r in group_rows:
-                    row = [str(label), r["Slope_Range"], r["Description"],
-                           f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-                    if has_recal:
-                        row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
-                    table_data.append(row)
-                    row_class_map[row_idx] = r.get("Class", 0)
-                    row_idx += 1
-                g_total = sum(r["Area_ha"] for r in group_rows)
-                subtotal_row = [f"  ↳ {label} Total", "", "", f"{g_total:.2f}", ""]
-                if has_recal:
-                    g_recal = sum(r["Recal_ha"] for r in group_rows if r.get("Recal_ha"))
-                    subtotal_row += [f"{g_recal:.2f}"]
-                table_data.append(subtotal_row)
-                row_class_map[row_idx] = -1
-                row_idx += 1
-        else:
-            for r in summary_rows:
-                row = [r.get("Label",""), r["Slope_Range"], r["Description"],
-                       f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-                if has_recal:
-                    row += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
-                table_data.append(row)
-                row_class_map[row_idx] = r.get("Class", 0)
-                row_idx += 1
-
-    if not table_data:
-        fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
-        plt.close(fig)
-        return
-
-    tbl = ax2.table(cellText=table_data, colLabels=col_labels,
-                    cellLoc="center", loc="center", bbox=[0.0, 0.0, 1.0, 1.0])
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(7.0 if has_groups else 8.5)
-    tbl.auto_set_column_width(list(range(len(col_labels))))
-
-    row_colors = {1: "#d5f5e3", 2: "#fdebd0", 3: "#fadbd8",
-                  0: "#f8f9fa", -1: "#ddeeff"}
-    for (r, c), cell in tbl.get_celld().items():
-        cell.set_edgecolor("#cccccc")
-        if r == 0:
-            cell.set_facecolor("#1a5276")
-            cell.set_text_props(color="white", fontweight="bold")
-        else:
-            ri = r - 1
-            cid = row_class_map.get(ri, 0)
-            if cid == -1:
-                cell.set_facecolor("#ddeeff")
-                cell.set_text_props(fontweight="bold")
-            elif cid == 0 and ri >= len(summary_rows):
-                cell.set_facecolor("#ddeeff")
-                cell.set_text_props(fontweight="bold")
-            else:
-                cell.set_facecolor(row_colors.get(cid, "#f8f9fa"))
-
-    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-
-
-# ================= KMZ GENERATOR =================
-def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
-    lines = []
-    for i, row in gdf.iterrows():
-        geom = row.geometry
-        if geom is None or geom.is_empty:
-            continue
-        if name_col and name_col in row.index and row[name_col]:
-            label = str(row[name_col])
-        elif "Comp_ID" in row.index and row["Comp_ID"]:
-            parts = [str(row["Comp_ID"])]
-            if "Area_ha" in row.index:
-                parts.append(f"{row['Area_ha']} ha")
-            label = " · ".join(parts)
-        elif "Forest" in row.index and row["Forest"]:
-            label = str(row["Forest"])
-        else:
-            label = f"Feature {i+1}"
-
-        desc_parts = []
-        for col in row.index:
-            if col == "geometry": continue
-            val = row[col]
-            if val is not None and str(val) not in ("None", "nan", ""):
-                desc_parts.append(f"{col}: {val}")
-        description = " | ".join(desc_parts)
-
-        def coords_str(coords):
-            return " ".join(f"{x},{y},0" for x, y in coords)
-
-        def polygon_kml(geom):
-            outer = coords_str(list(geom.exterior.coords))
-            rings = [f"<outerBoundaryIs><LinearRing><coordinates>{outer}</coordinates></LinearRing></outerBoundaryIs>"]
-            for interior in geom.interiors:
-                inner = coords_str(list(interior.coords))
-                rings.append(f"<innerBoundaryIs><LinearRing><coordinates>{inner}</coordinates></LinearRing></innerBoundaryIs>")
-            return f"<Polygon>{''.join(rings)}</Polygon>"
-
-        if geom.geom_type == "Polygon":
-            geo_kml = polygon_kml(geom)
-        elif geom.geom_type == "MultiPolygon":
-            parts = "".join(polygon_kml(g) for g in geom.geoms)
-            geo_kml = f"<MultiGeometry>{parts}</MultiGeometry>"
-        elif geom.geom_type == "LineString":
-            geo_kml = f"<LineString><coordinates>{coords_str(list(geom.coords))}</coordinates></LineString>"
-        elif geom.geom_type == "Point":
-            geo_kml = f"<Point><coordinates>{geom.x},{geom.y},0</coordinates></Point>"
-        else:
-            continue
-
-        lines.append(f"<Placemark><name>{label}</name><description>{description}</description>"
-                     f"<styleUrl>#{style_id}</styleUrl>{geo_kml}</Placemark>")
-    return "\n".join(lines)
-
-
-def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
-    import zipfile as zf
-
-    def to_wgs84(gdf):
-        if gdf is None or gdf.empty: return None
-        try:
-            if gdf.crs is None: return None
-            return gdf.to_crs("EPSG:4326")
-        except Exception:
-            return None
-
-    poly_w = to_wgs84(poly_gdf)
-    line_w = to_wgs84(line_gdf)
-    pts_w  = to_wgs84(pts_gdf)
-
-    ref_gdf = poly_w if poly_w is not None and not poly_w.empty else line_w
-    if ref_gdf is not None and not ref_gdf.empty:
-        union = ref_gdf.unary_union
-        cx, cy = union.centroid.x, union.centroid.y
-        minx, miny, maxx, maxy = union.bounds
-        span_deg = max(maxx - minx, maxy - miny)
-        alt_m = max(500, int(span_deg * 111_000 * 2))
-    else:
-        cx, cy, alt_m = 0, 0, 10000
-
-    kml_styles = """
-  <Style id="poly_style">
-    <LineStyle><color>ff00ff00</color><width>2</width></LineStyle>
-    <PolyStyle><color>4400cc00</color></PolyStyle>
-  </Style>
-  <Style id="line_style">
-    <LineStyle><color>ff0000ff</color><width>2</width></LineStyle>
-  </Style>
-  <Style id="point_style">
-    <IconStyle><color>ff0000ff</color><scale>0.8</scale>
-      <Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
-    </IconStyle>
-    <LabelStyle><scale>0.7</scale></LabelStyle>
-  </Style>"""
-
-    folders = []
-    if poly_w is not None and not poly_w.empty:
-        folders.append(f"<Folder><name>Polygons</name>{_gdf_to_kml_placemarks(poly_w, 'poly_style', 'Forest')}</Folder>")
-    if line_w is not None and not line_w.empty:
-        folders.append(f"<Folder><name>Lines</name>{_gdf_to_kml_placemarks(line_w, 'line_style', 'Forest')}</Folder>")
-    if pts_w is not None and not pts_w.empty:
-        folders.append(f"<Folder><name>Points</name>{_gdf_to_kml_placemarks(pts_w, 'point_style', 'SN')}</Folder>")
-
-    kml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-<Document>
-  <name>Elfak GIS Output</name>
-  <LookAt><longitude>{cx}</longitude><latitude>{cy}</latitude><altitude>0</altitude>
-    <range>{alt_m}</range><tilt>0</tilt><heading>0</heading>
-    <altitudeMode>relativeToGround</altitudeMode></LookAt>
-  {kml_styles}
-  {"".join(folders)}
-</Document></kml>"""
-
-    kmz_path = os.path.join(out_dir, "output.kmz")
-    with zf.ZipFile(kmz_path, "w", zf.ZIP_DEFLATED) as kmz:
-        kmz.writestr("doc.kml", kml.encode("utf-8"))
-
-    return {"url": f"/outputs/{run_id}/output.kmz", "lat": round(cy, 6), "lon": round(cx, 6), "alt": alt_m}
-
-
-# ================= AUTH ROUTES =================
-@app.route("/login", methods=["POST"])
-def login():
-    import re
-    data     = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-
-    if not username or len(username) < 2:
-        return jsonify({"error": "Username must be at least 2 characters."}), 400
-    if len(username) > 40:
-        return jsonify({"error": "Username too long (max 40 characters)."}), 400
-    if not re.match(r'^[A-Za-z0-9 _\-]+$', username):
-        return jsonify({"error": "Username may only contain letters, numbers, spaces, - and _."}), 400
-
-    if _user_exists(username):
-        return jsonify({
-            "error": f"Username \"{username}\" is already taken. Please choose a different name.",
-            "taken": True
-        }), 409
-
-    try:
-        user = _create_user(username)
-    except ValueError as e:
-        return jsonify({"error": str(e), "taken": True}), 409
-
-    session["username"]  = username
-    session.permanent    = True
-    return jsonify({"ok": True, "username": username, "runs": []})
-
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    session.clear()
-    return jsonify({"ok": True})
-
-
-@app.route("/me")
-def me():
-    username = _require_login()
-    if not username:
-        return jsonify({"error": "Not logged in"}), 401
-    users = _load_users()
-    user  = users.get(username, {})
-    return jsonify({"username": username, "runs": user.get("runs", [])[-20:]})
-
-
-@app.route("/history")
-def history():
-    username = _require_login()
-    if not username:
-        return jsonify({"error": "Not logged in"}), 401
-    users = _load_users()
-    user  = users.get(username, {})
-    return jsonify({"runs": user.get("runs", [])})
-
-
-# ================= UPLOAD ROUTE =================
-@app.route("/upload", methods=["POST"])
-def upload():
-    try:
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
-
-        file   = request.files["file"]
-        mode   = request.form.get("mode",   "A")
-        module = request.form.get("module", mode)
-        zone   = request.form.get("zone",   "44")
-        title  = request.form.get("title",  "").strip()
-
-        try:
-            mapping = json.loads(request.form.get("mapping", "{}"))
-        except (TypeError, ValueError):
-            mapping = {}
-
-        w      = float(request.form.get("w",    50))
-        h      = float(request.form.get("h",    50))
-        rows   = int(  request.form.get("rows", 10))
-        cols   = int(  request.form.get("cols", 10))
-        forest = request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
-
-        run_id   = str(uuid.uuid4())
-        username = _require_login() or "guest"
-        out      = os.path.join(OUTPUT, run_id)
-        os.makedirs(out, exist_ok=True)
-        crs = get_crs(zone)
-
-        label_col      = None
-        label_pts_gdf  = None
-        area_ha_display = None
-
-        if module == "B":
-            df = read_input(file)
-            poly, line, pts = group_b(df, crs, out, mapping)
-
-        elif module == "C":
-            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
-            label_col     = "SN"
-            label_pts_gdf = pts
-
-        elif module == "D":
-            df = read_input(file)
-            d_mode = request.form.get("d_mode", "A")
-            poly, line, pts = group_d(df, crs, out, mapping, mode=d_mode)
-
-        elif module == "E":
-            e_mode          = request.form.get("e_mode", "A")
-            n_compartments  = max(2, min(15, int(request.form.get("n_compartments", 4))))
-            area_tol_ha     = float(request.form.get("area_tol_ha", "0.3") or "0.3")
-            is_zip          = file.filename.lower().endswith(".zip")
-            forest_col_name = request.form.get("forest_col_name") or None
-
-            if mapping and "forest" not in mapping:
-                mapping["forest"] = forest
-
-            if is_zip:
-                poly, line, pts = group_e(
-                    file, crs, out, mapping,
-                    e_mode=e_mode, n_compartments=n_compartments,
-                    is_zip=True, forest_col_name=forest_col_name,
-                    area_tol_ha=area_tol_ha
-                )
-            else:
-                df = read_input(file)
-                poly, line, pts = group_e(
-                    df, crs, out, mapping,
-                    e_mode=e_mode, n_compartments=n_compartments,
-                    is_zip=False, forest_col_name=forest_col_name,
-                    area_tol_ha=area_tol_ha
-                )
-
-            preview_path = os.path.join(out, "output.png")
-            preview_compartments(poly, preview_path, title=title)
-
-            kmz_url = None
-            try:
-                kmz_url = generate_kmz(poly, line, pts, out, run_id)
-            except Exception:
-                pass
-
-            _append_run(username, run_id, "E")
-            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
-
-        elif module == "F":
-            dem_file_upload = request.files.get("dem_file")
-            if not dem_file_upload:
-                return jsonify({"error": "No DEM file uploaded. Please upload a GeoTIFF DEM."}), 400
-
-            f_forest        = request.form.get("f_forest") or forest
-            f_mode          = request.form.get("f_mode", "A")
-            comp_col_name   = request.form.get("comp_col") or None
-            boundary_is_zip = file.filename.lower().endswith(".zip")
-
-            field_area_ha = None
-            fa_str = request.form.get("field_area_ha", "").strip()
-            if fa_str:
-                try:
-                    field_area_ha = float(fa_str)
-                except ValueError:
-                    pass
-
-            result = group_f(
-                boundary_file   = file,
-                dem_file        = dem_file_upload,
-                crs             = crs,
-                out             = out,
-                mapping         = mapping,
-                boundary_is_zip = boundary_is_zip,
-                forest_name     = f_forest,
-                f_mode          = f_mode,
-                comp_col_name   = comp_col_name,
-                field_area_ha   = field_area_ha,
-            )
-            summary_rows, vec_gdf, boundary_gdf, f_mode_out, per_group_summaries = result
-
-            preview_path = os.path.join(out, "output.png")
-            preview_slope(vec_gdf, boundary_gdf, summary_rows, preview_path,
-                          f_mode=f_mode_out, per_group_summaries=per_group_summaries,
-                          title=title)
-
-            poly = vec_gdf if (vec_gdf is not None and not vec_gdf.empty) else gpd.GeoDataFrame()
-            line = gpd.GeoDataFrame()
-            pts  = gpd.GeoDataFrame()
-
-            kmz_url = None
-            try:
-                kmz_url = generate_kmz(poly, line, pts, out, run_id)
-            except Exception:
-                pass
-
-            _append_run(username, run_id, "F")
-            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
-
-        else:  # module == "A"
-            df = read_input(file)
-            poly, line, pts = group_a(df, forest, crs, out, mapping)
-            if not poly.empty and "Area_ha" in poly.columns:
-                area_ha_display = float(poly["Area_ha"].sum())
-
-        preview_path = os.path.join(out, "output.png")
-        preview(poly, line, pts, preview_path,
-                pc="yellow", lc="black", ptc="red",
-                label_col=label_col, label_pts_gdf=label_pts_gdf,
-                area_ha=area_ha_display, title=title)
-
-        kmz_url = None
-        try:
-            kmz_url = generate_kmz(poly, line, pts, out, run_id)
-        except Exception:
-            pass
-
-        _append_run(username, run_id, module)
-        return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
-
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": f"Unexpected error: {e}"}), 500
-
-
-# ================= STATIC OUTPUT FILES =================
-@app.route("/outputs/<run_id>/<path:filename>")
-def serve_output(run_id, filename):
-    folder = os.path.join(OUTPUT, run_id)
-    if not os.path.exists(os.path.join(folder, filename)):
-        return jsonify({"error": "File not found"}), 404
-    return send_from_directory(folder, filename)
-
-
-# ================= DOWNLOAD =================
-def zip_folder(folder):
-    return shutil.make_archive(folder, "zip", folder)
-
-
-@app.route("/download/<run_id>")
-def download(run_id):
-    folder = os.path.join(OUTPUT, run_id)
-    if not os.path.exists(folder):
-        return jsonify({"error": "Run not found"}), 404
-    zip_path = zip_folder(folder)
-    return send_file(zip_path, as_attachment=True)
-
-
-# ================= HOME =================
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    if(card.id==="card-E"){
+      const isZip=file.name.toLowerCase().endsWith(".zip");
+      document.getElementById("e-csv-fields").classList.toggle("hidden",isZip);
+      document.getElementById("e-zip-notice").classList.toggle("hidden",!isZip);
+      if(isZip){
+        await handleZipShpList(file,document.getElementById("e-shp-selector"),document.getElementById("e-zip-forest-col"));
+        return;
+      }
+    }
+
+    let cols=["X","Y","Order","Forest","Compartment"];
+    const detected=await parseCSVCols(file);
+    if(detected&&detected.length>0) cols=detected;
+    fill(card,cols);
+  };
+});
+
+document.getElementById("file-f-boundary")?.addEventListener("change",async function(){
+  const file=this.files[0]; if(!file) return;
+  document.getElementById("f-boundary-label").textContent="📄 "+file.name;
+  const isZip=file.name.toLowerCase().endsWith(".zip");
+  document.getElementById("f-csv-fields").classList.toggle("hidden",isZip);
+  document.getElementById("f-zip-notice").classList.toggle("hidden",!isZip);
+  if(isZip){
+    await handleZipShpList(file,document.getElementById("f-shp-selector"),null);
+  } else {
+    const cols=await parseCSVCols(file);
+    if(cols&&cols.length){
+      const map=detect(cols);
+      ["f-x-col","f-y-col","f-order-col"].forEach(id=>{
+        const sel=document.getElementById(id);
+        const k={"f-x-col":"X","f-y-col":"Y","f-order-col":"Order"}[id];
+        sel.innerHTML=(k==="Order"?'<option value="">— none —</option>':"")+cols.map(c=>`<option>${c}</option>`).join("");
+        if(map[k]) sel.value=map[k];
+      });
+      const compSel=document.getElementById("f-csv-comp-col");
+      if(compSel){
+        compSel.innerHTML='<option value="">— auto detect —</option>'+cols.map(c=>`<option>${c}</option>`).join("");
+        if(map.Forest) compSel.value=map.Forest;
+        else if(map.Compartment) compSel.value=map.Compartment;
+      }
+    }
+  }
+});
+
+document.getElementById("file-f-dem")?.addEventListener("change",function(){
+  const file=this.files[0]; if(file) document.getElementById("f-dem-label").textContent="🏔️ "+file.name;
+});
+
+document.querySelectorAll(".cyber-dropzone").forEach(zone=>{
+  if(zone.id==="f-boundary-drop"||zone.id==="f-dem-drop") return;
+  const inp=zone.querySelector("input[type='file']"); if(!inp) return;
+  ["dragenter","dragover"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.add("drag-over");}));
+  ["dragleave","drop"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.remove("drag-over");}));
+  zone.addEventListener("drop",ev=>{if(ev.dataTransfer?.files?.length){inp.files=ev.dataTransfer.files;inp.dispatchEvent(new Event("change",{bubbles:true}));}});
+});
+["f-boundary-drop","f-dem-drop"].forEach(id=>{
+  const zone=document.getElementById(id); if(!zone) return;
+  const inp=zone.querySelector("input[type='file']"); if(!inp) return;
+  ["dragenter","dragover"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.add("drag-over");}));
+  ["dragleave","drop"].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.remove("drag-over");}));
+  zone.addEventListener("drop",ev=>{if(ev.dataTransfer?.files?.length){inp.files=ev.dataTransfer.files;inp.dispatchEvent(new Event("change",{bubbles:true}));}});
+});
+
+/* ── MAPPING PAYLOAD BUILDER ───────────────────────────────────────────── */
+function buildMapping(card){
+  const m={};
+  card.querySelectorAll("select[data-key]").forEach(sel=>{
+    let hidden=false; let el=sel.parentElement;
+    while(el&&el!==card){if(el.classList.contains("hidden")){hidden=true;break;}el=el.parentElement;}
+    if(!hidden&&sel.value) m[sel.dataset.key]=sel.value;
+  });
+  if(!m.X) m.X="X"; if(!m.Y) m.Y="Y";
+  if(card.id==="card-C"&&!document.getElementById("c-zip-notice").classList.contains("hidden"))
+    m.target_shp=document.getElementById("c-shp-selector").value;
+  if(card.id==="card-E"&&!document.getElementById("e-zip-notice").classList.contains("hidden"))
+    m.target_shp=document.getElementById("e-shp-selector").value;
+  return m;
+}
+
+/* ── RUN PIPELINE ──────────────────────────────────────────────────────── */
+function setStatus(headline,sub,progress){
+  document.getElementById("status-headline").textContent=headline;
+  document.getElementById("status-sub").textContent=sub;
+  const circ=132; document.getElementById("radial-bar").style.strokeDashoffset=String(circ*(1-progress));
+}
+
+async function runPipeline(){
+  const title = document.getElementById("global-title")?.value?.trim() || "";
+
+  if(activeModule==="F"){
+    const bFile=document.getElementById("file-f-boundary")?.files?.[0];
+    const dFile=document.getElementById("file-f-dem")?.files?.[0];
+    if(!bFile){alert("Please upload a forest boundary file.");return;}
+    if(!dFile){alert("Please upload a DEM GeoTIFF file.");return;}
+
+    setStatus("Processing...","Running Slope Analysis",0.5);
+    document.getElementById("btn-run").disabled=true;
+    const fd=new FormData();
+    fd.append("file",bFile);fd.append("dem_file",dFile);fd.append("module","F");
+    fd.append("f_mode",groupFMode);fd.append("zone",document.getElementById("zone").value);
+    fd.append("f_forest",document.getElementById("f-forest-name")?.value||"FOREST");
+    fd.append("title",title);
+    const faStr=document.getElementById("f-field-area")?.value?.trim();
+    if(faStr&&!isNaN(parseFloat(faStr))) fd.append("field_area_ha",faStr);
+
+    const mapping={};
+    const xv=document.getElementById("f-x-col")?.value; if(xv) mapping.X=xv;
+    const yv=document.getElementById("f-y-col")?.value; if(yv) mapping.Y=yv;
+    const ov=document.getElementById("f-order-col")?.value; if(ov) mapping.Order=ov;
+    const isFZip=!document.getElementById("f-zip-notice").classList.contains("hidden");
+    if(isFZip){
+      const sv=document.getElementById("f-shp-selector")?.value; if(sv) mapping.target_shp=sv;
+      const cv=document.getElementById("f-zip-comp-col")?.value; if(cv) fd.append("comp_col",cv);
+    } else {
+      const cv=document.getElementById("f-csv-comp-col")?.value; if(cv) fd.append("comp_col",cv);
+    }
+    fd.append("mapping",JSON.stringify(mapping));
+    await _send(fd); return;
+  }
+
+  const card=document.getElementById("card-"+activeModule);
+  const file=card.querySelector("input[type=file]")?.files?.[0];
+  if(!file){alert("Upload a file first.");return;}
+
+  setStatus("Processing...","Running GIS Engine",0.5);
+  document.getElementById("btn-run").disabled=true;
+  const fd=new FormData();
+  fd.append("file",file);
+  fd.append("module",activeModule);
+  fd.append("mode",activeModule==="C"?groupCSubMode:activeModule);
+  fd.append("title",title);
+  if(activeModule==="D") fd.append("d_mode",groupDSubMode);
+  if(activeModule==="E"){
+    fd.append("e_mode",groupESubMode);
+    const n=document.getElementById("e-n-compartments"); if(n?.value) fd.append("n_compartments",n.value);
+    const tol=document.getElementById("e-area-tol"); if(tol?.value) fd.append("area_tol_ha",tol.value);
+    const fcv=document.getElementById("e-zip-forest-col")?.value; if(fcv) fd.append("forest_col_name",fcv);
+  }
+  fd.append("zone",document.getElementById("zone").value);
+
+  const mapping=buildMapping(card);
+  const forestInput=card.querySelector('input[type="text"][data-key="forest"]');
+  if(forestInput?.value?.trim()) fd.append("forest",forestInput.value.trim());
+
+  if(activeModule==="C"){
+    const gf={"c-grid-w":"w","c-grid-h":"h","c-grid-rows":"rows","c-grid-cols":"cols"};
+    Object.entries(gf).forEach(([eid,fk])=>{const el=document.getElementById(eid);if(el?.value!==""&&!isNaN(+el.value))fd.append(fk,el.value);});
+  }
+
+  fd.append("mapping",JSON.stringify({X:mapping.X||"X",Y:mapping.Y||"Y",Order:mapping.Order||null,
+    Forest:mapping.Forest||null,Compartment:mapping.Compartment||null,target_shp:mapping.target_shp||null}));
+  await _send(fd);
+}
+
+async function _send(fd){
+  try{
+    const res=await fetch(`${BACKEND_URL}/upload`,{method:"POST",body:fd});
+    const data=await res.json();
+    if(data.error) throw new Error(data.error);
+    setStatus("Complete ✓","Output Ready",1.0);
+    document.getElementById("btn-run").disabled=false;
+
+    const img=document.getElementById("output-img");
+    img.src=`${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
+    img.style.display="block";
+    document.getElementById("empty-notice").style.display="none";
+
+    const dl=document.getElementById("download-btn");
+    dl.href=data.download.startsWith("http")?data.download:`${BACKEND_URL}${data.download}`;
+    dl.style.display="inline-block";
+
+    // Activate OpenStreetMap preview if we have KMZ centroid info
+    if(data.kmz_url) activateOSM(data.kmz_url, data.run_id);
+
+    document.getElementById("run-meta").textContent=`Run: ${data.run_id.slice(0,8)}… | Module: ${fd.get("module")||"?"}`;
+
+    // Refresh history
+    setTimeout(async ()=>{
+      try{
+        const hr=await fetch(`${BACKEND_URL}/history`);
+        if(hr.ok){ const hd=await hr.json(); if(hd.runs) renderHistory(hd.runs); }
+      }catch(e){}
+    }, 600);
+
+  }catch(e){
+    setStatus("Error","Pipeline failed",0);
+    document.getElementById("radial-bar").classList.add("is-error");
+    document.getElementById("btn-run").disabled=false;
+    alert(e.message||"Backend error");
+  }
+}
+
+/* ── PREVIEW TABS ──────────────────────────────────────────────────────── */
+function switchPreviewTab(tab){
+  const s=tab==="static";
+  document.getElementById("ptab-static").classList.toggle("active-toggle",s);
+  document.getElementById("ptab-osm").classList.toggle("active-toggle",!s);
+  document.getElementById("preview-static").style.display=s?"flex":"none";
+  document.getElementById("preview-osm").style.display=s?"none":"flex";
+  if(!s && leafletMap) {
+    setTimeout(()=>leafletMap.invalidateSize(),120);
+  }
+}
+
+/* ── OPENSTREETMAP PREVIEW ─────────────────────────────────────────────── */
+function activateOSM(kmzInfo, run_id){
+  const lat=kmzInfo.lat, lon=kmzInfo.lon, alt=kmzInfo.alt;
+
+  document.getElementById("osm-idle").style.display="none";
+  const wrapper=document.getElementById("osm-map-wrapper");
+  wrapper.style.display="flex";
+
+  // Init or reuse Leaflet map
+  if(!leafletMap){
+    leafletMap=L.map("leaflet-map",{zoomControl:true,attributionControl:false});
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
+      maxZoom:19, attribution:"© OpenStreetMap contributors"
+    }).addTo(leafletMap);
+  }
+
+  // Clear old layers
+  leafletLayers.forEach(l=>leafletMap.removeLayer(l));
+  leafletLayers=[];
+
+  // Compute rough zoom from altitude
+  const zoomApprox = Math.max(8, Math.min(16, Math.round(16 - Math.log2(alt/500))));
+  leafletMap.setView([lat, lon], zoomApprox);
+
+  // Add a marker at centroid
+  const marker=L.circleMarker([lat,lon],{
+    radius:8, color:"#10b981", fillColor:"#34d399", fillOpacity:0.8, weight:2
+  }).bindPopup(`<b>Centroid</b><br>${lat.toFixed(5)}° N, ${lon.toFixed(5)}° E`).addTo(leafletMap);
+  leafletLayers.push(marker);
+
+  setTimeout(()=>leafletMap.invalidateSize(),150);
+}
+
+/* ── STATUS ANIMATIONS ─────────────────────────────────────────────────── */
+(function(){
+  const hl=document.getElementById("status-headline");
+  const rb=document.querySelector(".radial-progress-box");
+  new MutationObserver(()=>{
+    const t=hl.textContent.trim();
+    hl.classList.remove("is-processing","is-error");rb.classList.remove("is-processing");
+    document.getElementById("radial-bar").classList.remove("is-error");
+    if(t==="Processing..."){hl.classList.add("is-processing");rb.classList.add("is-processing");}
+    else if(t==="Error"){hl.classList.add("is-error");document.getElementById("radial-bar").classList.add("is-error");}
+  }).observe(hl,{childList:true,characterData:true,subtree:true});
+})();
+
+/* ── RESIZABLE PANELS ──────────────────────────────────────────────────── */
+(function(){
+  const container=document.getElementById("main-layout-container");
+  const workspace=document.getElementById("center-workspace-container");
+  let leftW=262,rightW=400;
+  function applyCol(){container.style.gridTemplateColumns=`${leftW}px 8px 1fr 8px ${rightW}px`;}
+  function startDrag(el,onMove){
+    el.addEventListener("mousedown",e=>{
+      e.preventDefault();el.classList.add("dragging");document.body.style.cursor=getComputedStyle(el).cursor;
+      const mv=ev=>onMove(ev);
+      const up=()=>{el.classList.remove("dragging");document.body.style.cursor="";document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
+      document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);
+    });
+  }
+  let sxL,swL; document.getElementById("left-col-handle").addEventListener("mousedown",e=>{sxL=e.clientX;swL=leftW;});
+  startDrag(document.getElementById("left-col-handle"),ev=>{leftW=Math.min(Math.max(swL+(ev.clientX-sxL),190),480);applyCol();});
+  let sxR,swR; document.getElementById("right-col-handle").addEventListener("mousedown",e=>{sxR=e.clientX;swR=rightW;});
+  startDrag(document.getElementById("right-col-handle"),ev=>{rightW=Math.min(Math.max(swR-(ev.clientX-sxR),290),640);applyCol();});
+  let syR,stH,totH; document.getElementById("center-row-handle").addEventListener("mousedown",e=>{
+    const r=workspace.getBoundingClientRect();totH=r.height;stH=workspace.children[0].getBoundingClientRect().height;syR=e.clientY;
+  });
+  startDrag(document.getElementById("center-row-handle"),ev=>{
+    const newTop=Math.min(Math.max(stH+(ev.clientY-syR),140),totH-80);
+    workspace.style.gridTemplateRows=`${newTop}px 6px ${totH-newTop-6}px`;
+  });
+})();
+
+/* ════════════════════════════════════════════════════════════════
+   MULTI-USER LOGIN SYSTEM
+════════════════════════════════════════════════════════════════ */
+let currentUser = null;
+let _suggestedNames = [];
+
+(async function checkSession(){
+  try{
+    const res=await fetch(`${BACKEND_URL}/me`);
+    if(res.ok){const data=await res.json();if(data.username){onLoginSuccess(data.username,data.runs||[]);return;}}
+  }catch(e){}
+  document.getElementById("login-overlay").style.display="flex";
+  setTimeout(()=>document.getElementById("login-username").focus(),400);
+})();
+
+function _generateSuggestions(base){
+  const clean=base.replace(/[_\-]?\d+$/,"").trim()||base;
+  const rand=Math.floor(Math.random()*89+10);
+  return [clean+"_"+rand, clean+(new Date().getFullYear()%100), clean+"_GIS"];
+}
+
+function tryName(idx){
+  const name=_suggestedNames[idx]; if(!name) return;
+  document.getElementById("login-username").value=name;
+  document.getElementById("login-username").classList.remove("is-taken");
+  document.getElementById("login-error").style.display="none";
+  document.getElementById("login-suggestions").style.display="none";
+  doLogin();
+}
+
+async function doLogin(){
+  const inp=document.getElementById("login-username");
+  const errEl=document.getElementById("login-error");
+  const sugEl=document.getElementById("login-suggestions");
+  const btn=document.getElementById("btn-login-go");
+  const name=inp.value.trim();
+  inp.classList.remove("is-taken");
+  errEl.className="login-error"; errEl.style.display="none";
+  sugEl.style.display="none";
+  if(!name){errEl.textContent="Please enter a username.";errEl.style.display="block";return;}
+  btn.disabled=true; btn.textContent="Checking…";
+  try{
+    const res=await fetch(`${BACKEND_URL}/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:name})});
+    const data=await res.json();
+    if(res.status===409||data.taken){
+      inp.classList.add("is-taken");
+      errEl.className="login-error is-taken-msg";
+      errEl.textContent=data.error||`"${name}" is already taken.`;
+      errEl.style.display="block";
+      _suggestedNames=_generateSuggestions(name);
+      const spans=sugEl.querySelectorAll("span");
+      _suggestedNames.forEach((s,i)=>{if(spans[i])spans[i].textContent=s;});
+      sugEl.style.display="block";
+      inp.focus(); inp.select();
+      btn.disabled=false; btn.textContent="Enter Studio"; return;
+    }
+    if(!res.ok||data.error){throw new Error(data.error||"Login failed");}
+    onLoginSuccess(data.username,data.runs||[]);
+  }catch(e){
+    if(e.message&&e.message.includes("taken")){inp.classList.add("is-taken");errEl.className="login-error is-taken-msg";}
+    errEl.textContent=e.message||"Login failed. Try again.";
+    errEl.style.display="block"; btn.disabled=false; btn.textContent="Enter Studio";
+  }
+}
+
+function onLoginSuccess(username,runs){
+  currentUser=username;
+  const overlay=document.getElementById("login-overlay");
+  overlay.style.transition="opacity .4s"; overlay.style.opacity="0";
+  setTimeout(()=>{overlay.style.display="none";},420);
+  document.getElementById("user-bar").style.display="flex";
+  document.getElementById("user-name-display").textContent=username;
+  document.getElementById("user-avatar").textContent=username.charAt(0).toUpperCase();
+  renderHistory(runs);
+}
+
+async function doLogout(){
+  if(!confirm("Sign out of "+(currentUser||"this session")+"?")) return;
+  try{await fetch(`${BACKEND_URL}/logout`,{method:"POST"});}catch(e){}
+  currentUser=null;
+  document.getElementById("user-bar").style.display="none";
+  const overlay=document.getElementById("login-overlay");
+  overlay.style.opacity="1"; overlay.style.display="flex";
+  document.getElementById("login-username").value="";
+  document.getElementById("login-error").style.display="none";
+  document.getElementById("btn-login-go").disabled=false;
+  document.getElementById("btn-login-go").textContent="Enter Studio";
+  renderHistory([]);
+  setTimeout(()=>document.getElementById("login-username").focus(),200);
+}
+
+/* ── HISTORY DRAWER ─────────────────────────────────────────────────────── */
+function toggleHistory(){
+  const drawer=document.getElementById("history-drawer");
+  const backdrop=document.getElementById("history-overlay");
+  const isOpen=drawer.classList.contains("open");
+  drawer.classList.toggle("open",!isOpen);
+  backdrop.style.display=isOpen?"none":"block";
+  if(!isOpen){
+    fetch(`${BACKEND_URL}/history`).then(r=>r.ok?r.json():null).then(d=>{if(d&&d.runs)renderHistory(d.runs);}).catch(()=>{});
+  }
+}
+
+const MODULE_LABELS={A:"Group A — Boundary Whole",B:"Group B — Segment Forest",C:"Group C — Sample Plot",D:"Group D — Complex Version",E:"Group E — Subdivider",F:"Group F — Slope Analysis"};
+const MODULE_ICONS={A:"🌲",B:"🌲",C:"🌲",D:"🌲",E:"✂️",F:"🏔️"};
+
+function renderHistory(runs){
+  const body=document.getElementById("drawer-body");
+  const hbtn=document.getElementById("btn-history-count");
+  if(hbtn) hbtn.textContent=runs&&runs.length>0?` (${runs.length})`:"";
+  if(!runs||runs.length===0){
+    body.innerHTML='<div class="drawer-empty">No runs yet.<br>Execute a pipeline to see your history here.</div>';
+    return;
+  }
+  const sorted=[...runs].reverse();
+  body.innerHTML=sorted.map((r,idx)=>{
+    const mod=r.module||"?";
+    const icon=MODULE_ICONS[mod]||"📄";
+    const label=MODULE_LABELS[mod]||("Group "+mod);
+    let ts="—";
+    if(r.timestamp){const d=new Date(r.timestamp);ts=d.toLocaleString(undefined,{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});}
+    const short=r.run_id?r.run_id.slice(0,8)+"…":"—";
+    const isLatest=idx===0;
+    return `<div class="run-card" style="${isLatest?"border-color:rgba(16,185,129,0.4);background:rgba(16,185,129,0.03)":""}">
+      <div class="run-card-top">
+        <span class="run-module-badge">${icon} ${mod}</span>
+        <span class="run-time">${ts}</span>
+      </div>
+      <div style="font-size:10.5px;color:var(--white-mist);font-weight:500;margin-bottom:2px;">${label}</div>
+      <div class="run-id-text">ID: ${short}</div>
+      <div class="run-actions">
+        <button class="run-action-btn run-prev-btn" onclick="loadRunPreview('${r.run_id}')">🗺 Preview</button>
+        <button class="run-action-btn run-dl-btn" onclick="triggerDownload('${r.run_id}')">⬇ Download</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function triggerDownload(runId){
+  const a=document.createElement("a"); a.href=`${BACKEND_URL}/download/${runId}`; a.download=""; a.click();
+}
+
+function loadRunPreview(runId){
+  const img=document.getElementById("output-img");
+  img.src=`${BACKEND_URL}/outputs/${runId}/output.png?t=${Date.now()}`;
+  img.style.display="block";
+  document.getElementById("empty-notice").style.display="none";
+  document.getElementById("download-btn").href=`${BACKEND_URL}/download/${runId}`;
+  document.getElementById("download-btn").style.display="inline-block";
+  switchPreviewTab("static");
+  toggleHistory();
+}
+</script>
+</body>
+</html>
