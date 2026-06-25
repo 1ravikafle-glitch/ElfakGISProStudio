@@ -3,20 +3,22 @@ import uuid
 import zipfile
 import shutil
 import json
+import math
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 import matplotlib.patches as mpatches
-import matplotlib.gridspec as gridspec
+import matplotlib.patheffects as pe
+import matplotlib.ticker as mticker
+from matplotlib.lines import Line2D
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, session
-from shapely.geometry import Polygon, Point, LineString, MultiPolygon, MultiPoint
-from shapely.ops import unary_union
+from shapely.geometry import Polygon, Point, LineString, MultiPolygon, MultiPoint, GeometryCollection
 from shapely.geometry import box as _shapely_box
+from shapely.ops import unary_union
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "elfak-gis-engine-2025-secret")
@@ -28,6 +30,10 @@ USERS_FILE = "users.json"
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 
+# ─── A4 figure size in inches at 150 dpi ────────────────────────────────────
+A4_W_IN = 8.27   # 210mm
+A4_H_IN = 11.69  # 297mm
+A4_DPI  = 150
 
 # ================= USER STORE =================
 def _load_users():
@@ -56,7 +62,7 @@ def _create_user(username):
     username = username.strip()
     users = _load_users()
     if username in users:
-        raise ValueError(f"Username '{username}' is already taken. Please choose a different name.")
+        raise ValueError(f"Username '{username}' is already taken.")
     users[username] = {
         "username":   username,
         "created_at": pd.Timestamp.now().isoformat(),
@@ -133,43 +139,49 @@ def _repair_geom(g):
 
 
 def _as_polygon(geom):
+    """Extract best polygon from any geometry type."""
     if geom is None or geom.is_empty:
         return None
-    if geom.geom_type == "Polygon":
+    t = geom.geom_type
+    if t == "Polygon":
         return geom if not geom.is_empty else None
-    if geom.geom_type in ("MultiPolygon", "GeometryCollection"):
+    if t in ("MultiPolygon", "GeometryCollection"):
         polys = [g for g in geom.geoms
                  if g.geom_type == "Polygon" and not g.is_empty and g.area > 1e-10]
         return max(polys, key=lambda g: g.area) if polys else None
     return None
 
 
-def _enforce_polygon_gdf(gdf):
+def _force_polygon_only(geom):
     """
-    Ensure every geometry in a GeoDataFrame is a valid Polygon.
-    Drops or converts non-polygon geometries (LINESTRING, POINT, etc.)
-    This fixes: 'Attempt to write non-polygon (LINESTRING) geometry to POLYGON type shapefile'
+    CRITICAL FIX: Force any geometry to Polygon/MultiPolygon.
+    Prevents LINESTRING written to POLYGON shapefile error.
     """
-    if gdf is None or gdf.empty:
-        return gdf
-    keep = []
-    for i, row in gdf.iterrows():
-        geom = row.geometry
-        if geom is None or geom.is_empty:
-            continue
-        pg = _as_polygon(_repair_geom(geom))
-        if pg is not None and not pg.is_empty and pg.area > 1e-10:
-            row = row.copy()
-            row["geometry"] = _close_polygon(pg)
-            keep.append(row)
-    if not keep:
-        return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
-    return gpd.GeoDataFrame(keep, crs=gdf.crs)
+    if geom is None or geom.is_empty:
+        return None
+    t = geom.geom_type
+    if t == "Polygon":
+        return geom if geom.area > 1e-12 else None
+    if t == "MultiPolygon":
+        polys = [g for g in geom.geoms if g.geom_type == "Polygon" and g.area > 1e-12]
+        return MultiPolygon(polys) if polys else None
+    if t == "GeometryCollection":
+        polys = []
+        for g in geom.geoms:
+            p = _force_polygon_only(g)
+            if p is not None:
+                if p.geom_type == "Polygon":
+                    polys.append(p)
+                elif p.geom_type == "MultiPolygon":
+                    polys.extend(p.geoms)
+        if not polys:
+            return None
+        return MultiPolygon(polys) if len(polys) > 1 else polys[0]
+    # LineString, Point, etc → discard
+    return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# COLUMN ALIAS RESOLUTION
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── COLUMN ALIAS RESOLUTION ────────────────────────────────────────────────
 
 def _norm(s):
     return "".join(c for c in str(s).lower() if c.isalnum())
@@ -235,6 +247,143 @@ def normalize_order(df):
             df = df.rename(columns={c: "Order"})
             break
     return df
+
+
+# ================= MAP DECORATIONS =================
+
+def _add_north_arrow(ax, x=0.93, y=0.93, size=0.055):
+    """Add ArcGIS-style north arrow to axes."""
+    ax.annotate(
+        '', xy=(x, y + size * 0.8), xytext=(x, y - size * 0.3),
+        xycoords='axes fraction', textcoords='axes fraction',
+        arrowprops=dict(arrowstyle='->', color='black', lw=1.5)
+    )
+    ax.text(x, y + size, 'N', transform=ax.transAxes,
+            ha='center', va='bottom', fontsize=9, fontweight='bold',
+            color='black', fontfamily='sans-serif')
+
+
+def _add_scale_bar(ax, gdf_union=None, length_m=None, x=0.05, y=0.04):
+    """Add ArcGIS-style scale bar."""
+    try:
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        map_w = xlim[1] - xlim[0]
+        if length_m is None:
+            nice = [50, 100, 200, 250, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+            raw = map_w * 0.2
+            length_m = min(nice, key=lambda v: abs(v - raw))
+
+        bar_frac = length_m / max(map_w, 1e-9)
+        bx0 = xlim[0] + map_w * x
+        by0 = ylim[0] + (ylim[1] - ylim[0]) * y
+        bx1 = bx0 + length_m
+
+        # Draw alternating black/white bar
+        ax.plot([bx0, bx1], [by0, by0], color='black', lw=4, solid_capstyle='butt',
+                zorder=12, transform=ax.transData)
+        mid = (bx0 + bx1) / 2
+        ax.plot([bx0, mid], [by0, by0], color='black', lw=4, solid_capstyle='butt',
+                zorder=13, transform=ax.transData)
+        ax.plot([mid, bx1], [by0, by0], color='white', lw=4, solid_capstyle='butt',
+                zorder=13, transform=ax.transData)
+
+        # Labels
+        lbl = f"{length_m:,.0f} m" if length_m < 1000 else f"{length_m/1000:.1f} km"
+        ax.text(bx0, by0 - (ylim[1]-ylim[0])*0.012, "0",
+                ha='center', va='top', fontsize=7, color='black', zorder=14,
+                path_effects=[pe.Stroke(linewidth=2, foreground='white'), pe.Normal()])
+        ax.text(bx1, by0 - (ylim[1]-ylim[0])*0.012, lbl,
+                ha='center', va='top', fontsize=7, color='black', zorder=14,
+                path_effects=[pe.Stroke(linewidth=2, foreground='white'), pe.Normal()])
+    except Exception:
+        pass
+
+
+def _add_graticule(ax, n_lines=4):
+    """
+    Add coordinate graticule: tick marks and labels on axes edges only,
+    NO grid lines inside the map (as requested).
+    """
+    try:
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        # Round to nice intervals
+        dx = xlim[1] - xlim[0]
+        dy = ylim[1] - ylim[0]
+        step_x = _nice_step(dx / n_lines)
+        step_y = _nice_step(dy / n_lines)
+        x_ticks = _arange_ticks(xlim[0], xlim[1], step_x)
+        y_ticks = _arange_ticks(ylim[0], ylim[1], step_y)
+
+        # Only draw tick marks on axes border — no interior gridlines
+        for xt in x_ticks:
+            if xlim[0] <= xt <= xlim[1]:
+                # bottom tick
+                ax.plot([xt, xt], [ylim[0], ylim[0] + dy*0.01],
+                        color='black', lw=0.8, zorder=11, transform=ax.transData)
+                # top tick
+                ax.plot([xt, xt], [ylim[1] - dy*0.01, ylim[1]],
+                        color='black', lw=0.8, zorder=11, transform=ax.transData)
+                ax.text(xt, ylim[0] - dy*0.025, f"{int(xt)}",
+                        ha='center', va='top', fontsize=6, color='black',
+                        rotation=45, zorder=12)
+
+        for yt in y_ticks:
+            if ylim[0] <= yt <= ylim[1]:
+                ax.plot([xlim[0], xlim[0] + dx*0.01], [yt, yt],
+                        color='black', lw=0.8, zorder=11, transform=ax.transData)
+                ax.plot([xlim[1] - dx*0.01, xlim[1]], [yt, yt],
+                        color='black', lw=0.8, zorder=11, transform=ax.transData)
+                ax.text(xlim[0] - dx*0.025, yt, f"{int(yt)}",
+                        ha='right', va='center', fontsize=6, color='black', zorder=12)
+    except Exception:
+        pass
+
+
+def _nice_step(raw):
+    if raw <= 0:
+        return 1
+    exp = math.floor(math.log10(raw))
+    frac = raw / 10**exp
+    if frac < 1.5:   return 1 * 10**exp
+    elif frac < 3.5: return 2 * 10**exp
+    elif frac < 7.5: return 5 * 10**exp
+    else:            return 10 * 10**exp
+
+
+def _arange_ticks(lo, hi, step):
+    start = math.ceil(lo / step) * step
+    ticks = []
+    v = start
+    while v <= hi + step * 0.01:
+        ticks.append(v)
+        v += step
+    return ticks
+
+
+def _add_legend(ax, handles, title="Legend", loc="lower right"):
+    """Add ArcGIS-style legend box."""
+    if not handles:
+        return
+    leg = ax.legend(
+        handles=handles, title=title, loc=loc,
+        framealpha=0.92, fancybox=True, shadow=False,
+        fontsize=7, title_fontsize=8,
+        edgecolor='#cccccc',
+        borderpad=0.8, handlelength=1.6,
+    )
+    leg.get_frame().set_linewidth(0.8)
+
+
+def _add_map_title(ax, title, subtitle=None):
+    """Add ArcGIS-style map title."""
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=8,
+                 fontfamily='sans-serif', color='#1a2b22')
+    if subtitle:
+        ax.text(0.5, 1.01, subtitle, transform=ax.transAxes,
+                ha='center', va='bottom', fontsize=8,
+                color='#666', style='italic')
 
 
 # ================= GROUP A =================
@@ -473,7 +622,7 @@ def group_d(df, crs, out, mapping=None, mode="A"):
             all_polys.append(poly_rec); all_lines.append(line_rec); all_pts.extend(pt_recs)
 
     if not all_polys:
-        raise ValueError(f"No valid polygons could be built from the data.")
+        raise ValueError("No valid polygons could be built from the data.")
 
     return (gpd.GeoDataFrame(all_polys, crs=crs),
             gpd.GeoDataFrame(all_lines, crs=crs),
@@ -481,7 +630,7 @@ def group_d(df, crs, out, mapping=None, mode="A"):
 
 
 # =============================================================================
-# GROUP E — STRAIGHT-LINE RECURSIVE BISECTION SUBDIVIDER
+# GROUP E — POLYGON SUBDIVIDER
 # =============================================================================
 
 def _principal_axis_angle(poly):
@@ -491,8 +640,7 @@ def _principal_axis_angle(poly):
         cov = np.cov(coords.T)
         eigvals, eigvecs = np.linalg.eigh(cov)
         principal = eigvecs[:, np.argmax(eigvals)]
-        angle = np.arctan2(principal[1], principal[0])
-        return angle
+        return np.arctan2(principal[1], principal[0])
     except Exception:
         return 0.0
 
@@ -519,8 +667,7 @@ def _unrotate_polygon(poly, angle, cx, cy):
 
 def _close_polygon(poly):
     """
-    Guarantee the polygon exterior ring is explicitly closed
-    (first coord == last coord) and rebuild as a valid Polygon.
+    Guarantee the polygon exterior ring is explicitly closed.
     Fixes the 'unclosed ring' artefact seen with 8+ bisections.
     """
     if poly is None or poly.is_empty:
@@ -544,8 +691,7 @@ def _close_polygon(poly):
 def _bisect_polygon(poly, n, axis=None, _depth=0):
     """
     Recursively split poly into exactly n near-equal-area pieces.
-    Each resulting piece is explicitly closed and clipped to the parent
-    to prevent open-ring geometry artefacts on deep recursion (8+ parts).
+    Each piece is explicitly clipped to parent to prevent open rings (8+).
     """
     poly = _repair_geom(poly)
     if poly is None or poly.is_empty or poly.area < 1e-10:
@@ -557,7 +703,6 @@ def _bisect_polygon(poly, n, axis=None, _depth=0):
     dx = maxx - minx
     dy = maxy - miny
 
-    # ── Principal-axis rotation for strongly diagonal polygons
     use_principal = False
     rot_angle     = 0.0
     cx0, cy0      = poly.centroid.x, poly.centroid.y
@@ -611,7 +756,6 @@ def _bisect_polygon(poly, n, axis=None, _depth=0):
                 return clipped
         use_principal = False
 
-    # ── Squarified axis selection
     n_left  = n // 2
     n_right = n - n_left
     frac    = n_left / n
@@ -684,28 +828,65 @@ def _bisect_polygon(poly, n, axis=None, _depth=0):
     except Exception:
         pass
 
-    # Explicitly close both children before recursing
-    lp = _close_polygon(_repair_geom(lp) or lp)
-    rp = _close_polygon(_repair_geom(rp) or rp)
-
     return (_bisect_polygon(lp, n_left,  None, _depth=_depth+1) +
             _bisect_polygon(rp, n_right, None, _depth=_depth+1))
 
 
-def _subdivide_polygon(poly, n, area_tol_ha=0.3):
+def _subdivide_voronoi(poly, n, area_tol_ha=0.3):
+    """Voronoi-based subdivision with iterative refinement."""
+    try:
+        from shapely.ops import voronoi_diagram
+        import random
+        # Generate seed points
+        minx, miny, maxx, maxy = poly.bounds
+        seeds = []
+        attempts = 0
+        while len(seeds) < n and attempts < n * 100:
+            px = random.uniform(minx, maxx)
+            py = random.uniform(miny, maxy)
+            pt = Point(px, py)
+            if poly.contains(pt):
+                seeds.append(pt)
+            attempts += 1
+        if len(seeds) < n:
+            return _subdivide_polygon(poly, n, area_tol_ha, method='bisect')
+
+        mp = MultiPoint(seeds)
+        regions = voronoi_diagram(mp, envelope=poly)
+        pieces = []
+        for region in regions.geoms:
+            clipped = _repair_geom(region.intersection(poly))
+            p = _as_polygon(clipped)
+            if p and p.area > 1e-10:
+                pieces.append(_close_polygon(p))
+
+        if len(pieces) != n:
+            # fallback
+            return _subdivide_polygon(poly, n, area_tol_ha, method='bisect')
+        return pieces
+    except Exception:
+        return _subdivide_polygon(poly, n, area_tol_ha, method='bisect')
+
+
+def _subdivide_polygon(poly, n, area_tol_ha=0.3, method='bisect'):
     """
-    Public entry point: subdivide poly into n near-equal-area compartments.
-    n is not clamped here — caller controls range.
-    area_tol_ha: acceptable ± deviation per compartment in ha (default 0.3 ha)
-    Returns a list of exactly n valid, closed Polygon objects.
+    Public entry: subdivide poly into n near-equal-area compartments.
+    method: 'bisect', 'voronoi', 'grid'
     """
+    n = max(2, min(200, int(n)))
+
     poly = _repair_geom(poly)
     if poly is None or poly.is_empty:
         return []
 
+    if method == 'voronoi':
+        return _subdivide_voronoi(poly, n, area_tol_ha)
+    elif method == 'grid':
+        return _subdivide_grid(poly, n, area_tol_ha)
+
     pieces = _bisect_polygon(poly, n)
 
-    # Remove empties, close all rings
+    # Close all rings
     valid = []
     for p in pieces:
         p = _repair_geom(p)
@@ -718,7 +899,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
     if not valid:
         return [_close_polygon(poly)]
 
-    # ── Merge excess slivers
+    # Merge excess slivers
     while len(valid) > n:
         smallest_i = min(range(len(valid)), key=lambda i: valid[i].area)
         sliver = valid.pop(smallest_i)
@@ -735,7 +916,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
         except Exception:
             valid.append(sliver)
 
-    # ── Split largest if short
+    # Split largest if short
     while len(valid) < n:
         largest_i = max(range(len(valid)), key=lambda i: valid[i].area)
         big = valid.pop(largest_i)
@@ -747,7 +928,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
             valid.append(big)
             break
 
-    # ── Gap fill: assign any uncovered area to nearest neighbour
+    # Gap fill
     try:
         covered = _repair_geom(unary_union(valid))
         gap     = _repair_geom(poly.difference(covered))
@@ -764,7 +945,7 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
     except Exception:
         pass
 
-    # ── Final re-close all rings
+    # Final close
     final = []
     for p in valid:
         p = _close_polygon(_repair_geom(p) or p)
@@ -773,7 +954,27 @@ def _subdivide_polygon(poly, n, area_tol_ha=0.3):
     return final
 
 
-# ── Compartment vertex points for Group E output
+def _subdivide_grid(poly, n, area_tol_ha=0.3):
+    """Grid-based subdivision."""
+    minx, miny, maxx, maxy = poly.bounds
+    cols_n = math.ceil(math.sqrt(n))
+    rows_n = math.ceil(n / cols_n)
+    dx = (maxx - minx) / cols_n
+    dy = (maxy - miny) / rows_n
+    pieces = []
+    for r in range(rows_n):
+        for c in range(cols_n):
+            cell = _shapely_box(minx + c*dx, miny + r*dy,
+                                minx + (c+1)*dx, miny + (r+1)*dy)
+            clipped = _repair_geom(poly.intersection(cell))
+            p = _as_polygon(clipped)
+            if p and p.area > 1e-10:
+                pieces.append(_close_polygon(p))
+    if not pieces:
+        return [_close_polygon(poly)]
+    return pieces
+
+
 def _extract_division_points(pieces, forest_name):
     records = []
     sn = 1
@@ -795,12 +996,8 @@ def _extract_division_points(pieces, forest_name):
 
         for j, (cx, cy) in enumerate(coords):
             records.append({
-                "SN":      sn,
-                "Forest":  forest_name,
-                "Comp_ID": comp_id,
-                "Type":    "Vertex",
-                "X":       round(cx, 4),
-                "Y":       round(cy, 4),
+                "SN": sn, "Forest": forest_name, "Comp_ID": comp_id,
+                "Type": "Vertex", "X": round(cx, 4), "Y": round(cy, 4),
             })
             sn += 1
             nx, ny = coords[(j + 1) % len(coords)]
@@ -808,12 +1005,8 @@ def _extract_division_points(pieces, forest_name):
             if elen > mid_thresh:
                 mx, my = (cx + nx) / 2, (cy + ny) / 2
                 records.append({
-                    "SN":      sn,
-                    "Forest":  forest_name,
-                    "Comp_ID": comp_id,
-                    "Type":    "Midpoint",
-                    "X":       round(mx, 4),
-                    "Y":       round(my, 4),
+                    "SN": sn, "Forest": forest_name, "Comp_ID": comp_id,
+                    "Type": "Midpoint", "X": round(mx, 4), "Y": round(my, 4),
                 })
                 sn += 1
     return records
@@ -844,47 +1037,10 @@ def _extract_internal_cut_lines(pieces):
     return lines
 
 
-def _points_along_cut_lines(cut_lines, forest_name, sn_start=1):
-    records = []
-    sn = sn_start
-    for cl in cut_lines:
-        geom = cl["geometry"]
-        between = f"Comp_{cl['comp_i']:03d} / Comp_{cl['comp_j']:03d}"
-        parts = list(geom.geoms) if hasattr(geom, "geoms") else [geom]
-        for part in parts:
-            if part.geom_type != "LineString" or part.is_empty:
-                continue
-            coords = list(part.coords)
-            if len(coords) < 2:
-                continue
-            seg_lens = [
-                ((coords[k+1][0]-coords[k][0])**2 + (coords[k+1][1]-coords[k][1])**2) ** 0.5
-                for k in range(len(coords) - 1)
-            ]
-            avg_len    = (sum(seg_lens) / len(seg_lens)) if seg_lens else 1.0
-            mid_thresh = avg_len * 1.5
-            for k, (cx, cy) in enumerate(coords):
-                records.append({
-                    "SN": sn, "Forest": forest_name, "Between_Comp": between,
-                    "Type": "Cut_Vertex", "X": round(cx, 4), "Y": round(cy, 4),
-                })
-                sn += 1
-                if k < len(coords) - 1:
-                    nx, ny = coords[k + 1]
-                    if seg_lens[k] > mid_thresh:
-                        mx, my = (cx + nx) / 2, (cy + ny) / 2
-                        records.append({
-                            "SN": sn, "Forest": forest_name, "Between_Comp": between,
-                            "Type": "Cut_Midpoint", "X": round(mx, 4), "Y": round(my, 4),
-                        })
-                        sn += 1
-    return records
-
-
 def _save_compartments(pieces, forest_name, crs, save_dir):
     os.makedirs(save_dir, exist_ok=True)
 
-    # Close all rings before saving — critical for valid shapefiles
+    # Close all rings before saving
     pieces = [_close_polygon(_repair_geom(p)) for p in pieces if p and not p.is_empty]
     pieces = [p for p in pieces if p and not p.is_empty]
 
@@ -892,11 +1048,11 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
     records, line_recs, pt_recs = [], [], []
 
     for i, p in enumerate(pieces, start=1):
-        comp_id   = f"Comp_{i:03d}"
-        area_ha   = round(p.area / 10000, 4)
-        perim_m   = round(p.length, 4)
-        pct_area  = round(p.area / total_area * 100, 2) if total_area > 0 else 0
-        centroid  = p.centroid
+        comp_id  = f"Comp_{i:03d}"
+        area_ha  = round(p.area / 10000, 4)
+        perim_m  = round(p.length, 4)
+        pct_area = round(p.area / total_area * 100, 2) if total_area > 0 else 0
+        centroid = p.centroid
 
         records.append({
             "Forest":   forest_name,
@@ -906,17 +1062,21 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
             "Pct_Area": pct_area,
             "geometry": p,
         })
-        # Use explicitly closed exterior for line geometry
         ext_coords = list(p.exterior.coords)
         if ext_coords[0] != ext_coords[-1]:
             ext_coords.append(ext_coords[0])
         line_geom = LineString(ext_coords)
-        line_recs.append({"Forest": forest_name, "Comp_ID": comp_id, "geometry": line_geom})
+        line_recs.append({
+            "Forest":  forest_name,
+            "Comp_ID": comp_id,
+            "geometry": line_geom,
+        })
         pt_recs.append({
-            "Forest":   forest_name,
-            "Comp_ID":  comp_id,
-            "Area_ha":  area_ha,
-            "Pct_Area": pct_area,
+            "Forest":  forest_name,
+            "Comp_ID": comp_id,
+            "Area_ha": area_ha,
+            "X":       round(centroid.x, 4),
+            "Y":       round(centroid.y, 4),
             "geometry": centroid,
         })
 
@@ -924,75 +1084,63 @@ def _save_compartments(pieces, forest_name, crs, save_dir):
     line_gdf = gpd.GeoDataFrame(line_recs, crs=crs)
     pts_gdf  = gpd.GeoDataFrame(pt_recs,   crs=crs)
 
-    # Enforce polygon-only output before saving to prevent LINESTRING error
-    poly_gdf = _enforce_polygon_gdf(poly_gdf)
-
-    prefix = _safe_dirname(forest_name)
     if not poly_gdf.empty:
-        poly_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_polygon.shp"))
+        poly_gdf.to_file(os.path.join(save_dir, "compartment_polygon.shp"))
     if not line_gdf.empty:
-        line_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_line.shp"))
+        line_gdf.to_file(os.path.join(save_dir, "compartment_line.shp"))
     if not pts_gdf.empty:
-        pts_gdf.to_file(os.path.join(save_dir, f"{prefix}_compartment_point.shp"))
+        pts_gdf.to_file(os.path.join(save_dir, "compartment_centroid.shp"))
 
-    summary_df = pd.DataFrame([{k: v for k, v in r.items() if k != "geometry"} for r in records])
-    summary_df.to_excel(os.path.join(save_dir, f"{prefix}_compartment_summary.xlsx"), index=False)
-
+    # Division points Excel
     div_pts = _extract_division_points(pieces, forest_name)
     if div_pts:
-        div_df = pd.DataFrame(div_pts)
-        div_df.to_excel(os.path.join(save_dir, f"{prefix}_division_points.xlsx"), index=False)
-        div_gdf = gpd.GeoDataFrame(
-            div_df,
-            geometry=gpd.points_from_xy(div_df["X"], div_df["Y"]),
-            crs=crs
-        )
-        div_gdf.to_file(os.path.join(save_dir, f"{prefix}_division_points.shp"))
+        dp_df = pd.DataFrame(div_pts)
+        dp_df.to_excel(os.path.join(save_dir, "division_points.xlsx"), index=False)
+        dp_gdf = gpd.GeoDataFrame(dp_df,
+                                   geometry=gpd.points_from_xy(dp_df.X, dp_df.Y),
+                                   crs=crs)
+        dp_gdf.to_file(os.path.join(save_dir, "division_points.shp"))
 
-    if div_pts:
-        vt_df = pd.DataFrame(div_pts).rename(columns={
-            "SN": "S.N.", "Comp_ID": "Sub_compartment", "X": "x", "Y": "y",
-        })[["S.N.", "Sub_compartment", "x", "y", "Forest", "Type"]]
-        vt_path = os.path.join(save_dir, f"{prefix}_subcompartment_vertices_table.xlsx")
-        try:
-            with pd.ExcelWriter(vt_path, engine="openpyxl") as writer:
-                vt_df.to_excel(writer, index=False, sheet_name="Vertices Table", startrow=1)
-                writer.sheets["Vertices Table"]["A1"] = (
-                    f"{forest_name} Sub-compartment Vertices Table"
-                )
-        except Exception:
-            vt_df.to_excel(vt_path, index=False)
-
+    # Cut lines
     cut_lines = _extract_internal_cut_lines(pieces)
-    cut_pts   = _points_along_cut_lines(cut_lines, forest_name)
-    if cut_pts:
-        cut_df = pd.DataFrame(cut_pts)
-        cut_df.to_excel(os.path.join(save_dir, f"{prefix}_division_line_points.xlsx"), index=False)
-        cut_gdf = gpd.GeoDataFrame(
-            cut_df,
-            geometry=gpd.points_from_xy(cut_df["X"], cut_df["Y"]),
-            crs=crs
-        )
-        cut_gdf.to_file(os.path.join(save_dir, f"{prefix}_division_line_points.shp"))
+    if cut_lines:
+        cl_gdf = gpd.GeoDataFrame(cut_lines, crs=crs)
+        cl_gdf.to_file(os.path.join(save_dir, "cut_lines.shp"))
+
+    # Summary Excel
+    summary_rows = [{
+        "Forest": forest_name, "Comp_ID": r["Comp_ID"],
+        "Area_ha": r["Area_ha"], "Perim_m": r["Perim_m"], "Pct_Area": r["Pct_Area"],
+    } for r in records]
+    total_row = {
+        "Forest": forest_name, "Comp_ID": "TOTAL",
+        "Area_ha": round(sum(r["Area_ha"] for r in records), 4),
+        "Perim_m": "", "Pct_Area": 100.0,
+    }
+    summary_rows.append(total_row)
+    pd.DataFrame(summary_rows).to_excel(
+        os.path.join(save_dir, "compartment_summary.xlsx"), index=False)
 
     return poly_gdf, line_gdf, pts_gdf
 
 
 def _df_to_polygon(df, x_col, y_col, order_col):
-    if order_col and order_col in df.columns:
-        df = df.sort_values(order_col)
+    if order_col: df = df.sort_values(order_col)
     coords = list(zip(df[x_col], df[y_col]))
-    if len(coords) < 3:
-        raise ValueError("Need at least 3 points to build a polygon.")
+    if len(coords) < 3: raise ValueError("Need at least 3 points for a polygon.")
     coords.append(coords[0])
-    return _close_polygon(_repair_geom(Polygon(coords)))
+    return safe_polygon(coords)
 
 
-def _load_polygons_from_zip(file, target_shp, crs, forest_col_name=None):
+def _load_polygons_from_zip(zip_file_or_path, target_shp, crs, forest_col_name=None):
     folder = os.path.join(UPLOAD, str(uuid.uuid4()))
     os.makedirs(folder, exist_ok=True)
     zip_path = os.path.join(folder, "input.zip")
-    file.save(zip_path)
+
+    if hasattr(zip_file_or_path, "save"):
+        zip_file_or_path.save(zip_path)
+    else:
+        shutil.copy(zip_file_or_path, zip_path)
 
     with zipfile.ZipFile(zip_path, "r") as z:
         z.extractall(folder)
@@ -1002,17 +1150,14 @@ def _load_polygons_from_zip(file, target_shp, crs, forest_col_name=None):
         for f in files:
             if f.endswith(".shp"):
                 shp_candidates.append(os.path.join(root, f))
-
     if not shp_candidates:
-        raise ValueError("No shapefile (.shp) found inside the ZIP archive.")
+        raise ValueError("No .shp found in ZIP.")
 
     shp_path = shp_candidates[0]
     if target_shp:
-        target_name = os.path.basename(target_shp)
         for cand in shp_candidates:
-            if os.path.basename(cand) == target_name:
-                shp_path = cand
-                break
+            if os.path.basename(cand) == os.path.basename(target_shp):
+                shp_path = cand; break
 
     gdf = gpd.read_file(shp_path)
     if gdf.empty:
@@ -1026,20 +1171,16 @@ def _load_polygons_from_zip(file, target_shp, crs, forest_col_name=None):
     if forest_col_name:
         for col in gdf.columns:
             if col.lower() == forest_col_name.lower():
-                name_col = col
-                break
+                name_col = col; break
     if name_col is None:
-        for candidate in ["Forest", "forest", "Name", "name", "NAME",
-                           "Label", "label", "LABEL", "ID", "id"]:
+        for candidate in ["Forest", "forest", "Name", "name", "NAME", "Label", "label", "ID", "id"]:
             if candidate in gdf.columns:
-                name_col = candidate
-                break
+                name_col = candidate; break
     if name_col is None:
         for col in gdf.columns:
             if col == "geometry": continue
             if gdf[col].dtype == object:
-                name_col = col
-                break
+                name_col = col; break
 
     results = []
     for i, row in gdf.iterrows():
@@ -1071,12 +1212,9 @@ def _load_polygons_from_zip(file, target_shp, crs, forest_col_name=None):
 
 
 def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
-            is_zip=False, forest_col_name=None, area_tol_ha=0.3):
-    """
-    Group E — Polygon Subdivider (2–15 compartments per polygon).
-    area_tol_ha: acceptable ±ha deviation per compartment (default 0.3 ha).
-    """
-    n_compartments = max(2, min(15, int(n_compartments)))  # Enforce 2-15
+            is_zip=False, forest_col_name=None, area_tol_ha=0.3, method='bisect'):
+    """Group E — Polygon Subdivider (2–200 compartments per polygon)."""
+    n_compartments = max(2, min(200, int(n_compartments)))
 
     all_poly_gdfs, all_line_gdfs, all_pts_gdfs = [], [], []
 
@@ -1087,12 +1225,12 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
 
         if len(features) == 1:
             feat_name, poly = features[0]
-            pieces = _subdivide_polygon(poly, n_compartments, area_tol_ha)
+            pieces = _subdivide_polygon(poly, n_compartments, area_tol_ha, method=method)
             pg, lg, ptg = _save_compartments(pieces, feat_name, crs, out)
             all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
         else:
             for feat_name, poly in features:
-                pieces   = _subdivide_polygon(poly, n_compartments, area_tol_ha)
+                pieces   = _subdivide_polygon(poly, n_compartments, area_tol_ha, method=method)
                 feat_dir = os.path.join(out, _safe_dirname(feat_name))
                 pg, lg, ptg = _save_compartments(pieces, feat_name, crs, feat_dir)
                 all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
@@ -1100,7 +1238,6 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
     else:
         df = file_or_df
         df = normalize_order(df)
-
         x_col      = safe_col(df, mapping, "X",      "X")
         y_col      = safe_col(df, mapping, "Y",      "Y")
         order_col  = safe_col(df, mapping, "Order",  "Order")
@@ -1114,7 +1251,7 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
         if e_mode == "A":
             forest_name = (mapping or {}).get("forest") or "FOREST"
             poly   = _df_to_polygon(df, x_col, y_col, order_col)
-            pieces = _subdivide_polygon(poly, n_compartments, area_tol_ha)
+            pieces = _subdivide_polygon(poly, n_compartments, area_tol_ha, method=method)
             pg, lg, ptg = _save_compartments(pieces, forest_name, crs, out)
             all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
         else:
@@ -1123,7 +1260,7 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
                     poly = _df_to_polygon(fg, x_col, y_col, order_col)
                 except ValueError:
                     continue
-                pieces     = _subdivide_polygon(poly, n_compartments, area_tol_ha)
+                pieces     = _subdivide_polygon(poly, n_compartments, area_tol_ha, method=method)
                 forest_dir = os.path.join(out, _safe_dirname(str(f)))
                 pg, lg, ptg = _save_compartments(pieces, str(f), crs, forest_dir)
                 all_poly_gdfs.append(pg); all_line_gdfs.append(lg); all_pts_gdfs.append(ptg)
@@ -1189,17 +1326,20 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             f_mode="A", comp_col_name=None, field_area_ha=None):
     """
     Group F — DEM Slope Analysis.
-    f_mode:
-      A = Single forest, one table for whole boundary
-      B = Multi-forest: groups by Forest/Name column, one table per forest
-      E = Compartments: groups by Compartment column, one table per compartment
-    Returns (all_summary, vec_gdf, boundary_gdf, f_mode, per_group_summaries)
+    FIXED: vec_gdf now guaranteed to contain only Polygon geometries.
+    Workflow:
+      1. Extract rect DEM (20% buffer)
+      2. Slope (Horn method)
+      3. Reclassify: <19, 19-31, >31 degrees
+      4. Raster-to-polygon on whole rectangle
+      5. Dissolve by gridcode
+      6. Clip dissolved rect polygon to boundary (per compartment/forest)
+      7. Build slope tables per group
     """
     try:
         import rasterio
         from rasterio.mask import mask as rio_mask
         from rasterio.features import shapes as rio_shapes
-        from rasterio.transform import from_bounds
         import scipy.ndimage as ndimage
     except ImportError:
         raise ValueError("Group F requires rasterio and scipy. Install: pip install rasterio scipy")
@@ -1207,7 +1347,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     os.makedirs(out, exist_ok=True)
     prefix = _safe_dirname(forest_name)
 
-    # ── Load DEM
+    # ── Load DEM ──────────────────────────────────────────────────────
     dem_path = os.path.join(UPLOAD, f"{uuid.uuid4()}_dem.tif")
     dem_file.save(dem_path)
     with rasterio.open(dem_path) as src:
@@ -1221,7 +1361,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if nodata is not None:
         dem_arr[dem_arr == nodata] = np.nan
 
-    # ── Load boundary
+    # ── Load boundary ─────────────────────────────────────────────────
     if boundary_is_zip:
         target_shp = (mapping or {}).get("target_shp")
         boundary_poly, boundary_gdf = _boundary_polygon_from_zip(
@@ -1234,7 +1374,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         ).to_crs(str(dem_crs))
         boundary_poly = boundary_gdf.unary_union
 
-    # ── Step 1: Extract rectangular DEM (20% buffer)
+    # ── Step 1: Rect DEM extract (20% buffer) ─────────────────────────
     b = boundary_poly.bounds
     buf_x = (b[2] - b[0]) * 0.20
     buf_y = (b[3] - b[1]) * 0.20
@@ -1257,8 +1397,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     rect_res_x = abs(rect_tr.a)
     rect_res_y = abs(rect_tr.e)
 
-    # ── Step 2: Slope (Horn method)
-    import scipy.ndimage as ndimage
+    # ── Step 2: Slope (Horn method) ───────────────────────────────────
     valid_dem = ~np.isnan(rect_dem)
     filled    = np.nan_to_num(rect_dem, nan=0.0)
 
@@ -1282,7 +1421,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     with rasterio.open(slope_rect_path, "w", **rect_profile) as dst:
         dst.write(slope_rect, 1)
 
-    # ── Step 3: Reclassify
+    # ── Step 3: Reclassify ────────────────────────────────────────────
     valid_mask = (slope_rect != slope_nodata) & ~np.isnan(slope_rect)
     class_rect = np.zeros_like(slope_rect, dtype=np.uint8)
     class_rect[valid_mask & (slope_rect < 19)]                       = 1
@@ -1295,7 +1434,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     with rasterio.open(class_rect_path, "w", **cls_profile) as dst:
         dst.write(class_rect, 1)
 
-    # ── Step 4 & 5: Raster-to-polygon, dissolve by class
+    # ── Step 4 & 5: Raster-to-polygon, dissolve by class ─────────────
     class_defs = {
         1: ("< 19°",    "Gentle",   "#2ecc71"),
         2: ("19 - 31°", "Moderate", "#f39c12"),
@@ -1314,7 +1453,10 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                 holes    = rings[1:] if len(rings) > 1 else None
                 geom = _repair_geom(Polygon(exterior, holes=holes))
                 if geom and not geom.is_empty and geom.area > 1e-10:
-                    rtp_records.append({"gridcode": cid, "geometry": geom})
+                    # CRITICAL: ensure only Polygon stored
+                    pg = _force_polygon_only(geom)
+                    if pg:
+                        rtp_records.append({"gridcode": cid, "geometry": pg})
             except Exception:
                 continue
 
@@ -1326,16 +1468,21 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     try:
         dissolved = rtp_gdf.dissolve(by="gridcode", as_index=False)
         dissolved["gridcode"] = dissolved["gridcode"].astype(int)
+        # CRITICAL FIX: Force all geometries in dissolved to be Polygon/MultiPolygon only
+        def _fix_dissolved_geom(g):
+            pg = _force_polygon_only(_repair_geom(g))
+            return pg if pg is not None else Polygon()
+        dissolved["geometry"] = dissolved["geometry"].apply(_fix_dissolved_geom)
+        dissolved = dissolved[~dissolved["geometry"].is_empty].copy()
     except Exception:
         dissolved = rtp_gdf.copy()
 
-    # ── Step 6: Clip dissolved polygons to boundary per group
+    # ── Step 6: Clip to boundary per group ───────────────────────────
 
     def _clip_group_to_poly(clip_poly, label):
         """
         Clip dissolved slope polygons to clip_poly.
-        Returns (summary_rows, vec_recs).
-        CRITICAL: All output geometries are guaranteed to be Polygons (no LINESTRING).
+        FIXED: All returned geometries are forced to Polygon type.
         """
         vec_recs = []
         total_valid_ha = 0.0
@@ -1346,32 +1493,20 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             if dgeom is None or dgeom.is_empty:
                 continue
             try:
-                clipped = _repair_geom(dgeom.intersection(clip_poly))
+                clipped_raw = _repair_geom(dgeom.intersection(clip_poly))
             except Exception:
                 continue
+            if clipped_raw is None or clipped_raw.is_empty:
+                continue
+
+            # CRITICAL FIX: Force polygon-only — eliminates LINESTRING error
+            clipped = _force_polygon_only(clipped_raw)
             if clipped is None or clipped.is_empty:
                 continue
 
-            # ── CRITICAL FIX: Force polygon-only output ──────────────────
-            # Intersection of two polygons can produce LINESTRING, POINT, or
-            # GeometryCollection containing non-polygon parts, causing the
-            # "non-polygon (LINESTRING) geometry to POLYGON type shapefile" error.
-            pg = _as_polygon(clipped)
-            if pg is None or pg.is_empty or pg.area < 1e-10:
-                # Try to extract all polygons from a collection
-                if hasattr(clipped, "geoms"):
-                    pg_parts = [_as_polygon(_repair_geom(g)) for g in clipped.geoms
-                                if g.geom_type in ("Polygon", "MultiPolygon")]
-                    pg_parts = [p for p in pg_parts if p and p.area > 1e-10]
-                    if pg_parts:
-                        pg = _close_polygon(max(pg_parts, key=lambda x: x.area))
-                    else:
-                        continue
-                else:
-                    continue
-
-            pg = _close_polygon(pg)
-            area_ha = round(pg.area / 10000, 4)
+            area_ha = round(clipped.area / 10000, 4)
+            if area_ha < 1e-6:
+                continue
             total_valid_ha += area_ha
             vec_recs.append({
                 "Label":       label,
@@ -1379,7 +1514,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                 "Slope_Range": class_defs[cid][0],
                 "Descr":       class_defs[cid][1],
                 "Area_ha":     area_ha,
-                "geometry":    pg,          # guaranteed Polygon
+                "geometry":    clipped,   # guaranteed Polygon/MultiPolygon
             })
 
         total_valid_ha = max(total_valid_ha, 1e-6)
@@ -1396,24 +1531,22 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             })
         return rows, vec_recs
 
-    # ── Build group polygon list based on f_mode
+    # ── Build group polygon list based on f_mode ──────────────────────
     comp_polygons = []
 
     if f_mode == "A":
         comp_polygons = [(forest_name, boundary_poly)]
-
     else:
         grp_col = None
         if comp_col_name:
             for c in boundary_gdf.columns:
                 if c.lower() == comp_col_name.lower():
-                    grp_col = c
-                    break
+                    grp_col = c; break
 
         if grp_col is None:
             if f_mode == "B":
                 grp_col = _find_col(boundary_gdf, _FOREST_ALIASES)
-            else:  # E
+            else:
                 grp_col = _find_col(boundary_gdf, _COMPARTMENT_ALIASES)
                 if grp_col is None:
                     grp_col = _find_col(boundary_gdf, _FOREST_ALIASES)
@@ -1429,7 +1562,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         if not comp_polygons:
             comp_polygons = [(forest_name, boundary_poly)]
 
-    # ── Run clipping for every group
+    # ── Run clipping for every group ──────────────────────────────────
     all_summary, all_vec = [], []
     per_group_summaries = {}
 
@@ -1439,7 +1572,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         all_vec.extend(vec_recs)
         per_group_summaries[label] = rows
 
-    # ── Recalibration
+    # ── Recalibration ─────────────────────────────────────────────────
     if field_area_ha and field_area_ha > 0:
         total_computed = sum(r["Area_ha"] for r in all_summary)
         factor = field_area_ha / max(total_computed, 1e-6)
@@ -1451,19 +1584,34 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             r["Recal_ha"]   = None
             r["Cal_Factor"] = None
 
-    # ── Save vector output — enforce polygon-only before writing shp ───
+    # ── Save vector output ────────────────────────────────────────────
+    # CRITICAL FIX: Ensure ALL geometries in vec_gdf are Polygon only
     vec_crs = str(dem_crs)
     if all_vec:
-        vec_gdf = gpd.GeoDataFrame(all_vec, crs=vec_crs)
-        vec_gdf = _enforce_polygon_gdf(vec_gdf)   # ← CRITICAL FIX
-        if not vec_gdf.empty:
-            vec_gdf.to_file(os.path.join(out, f"{prefix}_slope_polygon.shp"))
+        # Force polygon conversion for every record before GDF creation
+        clean_vec = []
+        for rec in all_vec:
+            geom = rec.get("geometry")
+            forced = _force_polygon_only(_repair_geom(geom))
+            if forced is not None and not forced.is_empty:
+                rec2 = {k: v for k, v in rec.items() if k != "geometry"}
+                rec2["geometry"] = forced
+                clean_vec.append(rec2)
+
+        if clean_vec:
+            vec_gdf = gpd.GeoDataFrame(clean_vec, crs=vec_crs)
+            # Final validation pass — drop any non-polygon rows
+            vec_gdf = vec_gdf[vec_gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+            if not vec_gdf.empty:
+                vec_gdf.to_file(os.path.join(out, f"{prefix}_slope_polygon.shp"))
+        else:
+            vec_gdf = gpd.GeoDataFrame(columns=["geometry"], crs=vec_crs)
     else:
         vec_gdf = gpd.GeoDataFrame(columns=["geometry"], crs=vec_crs)
 
     boundary_gdf.to_file(os.path.join(out, f"{prefix}_boundary_polygon.shp"))
 
-    # Bonus: clipped raster deliverables (first group)
+    # Bonus clipped rasters
     try:
         with rasterio.open(slope_rect_path) as src:
             first_cs, first_tr = rio_mask(
@@ -1476,9 +1624,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
 
     valid_mask2 = (first_cs != slope_nodata) & ~np.isnan(first_cs)
     first_ca = np.zeros_like(first_cs, dtype=np.uint8)
-    first_ca[valid_mask2 & (first_cs < 19)]                       = 1
-    first_ca[valid_mask2 & (first_cs >= 19) & (first_cs <= 31)]   = 2
-    first_ca[valid_mask2 & (first_cs > 31)]                       = 3
+    first_ca[valid_mask2 & (first_cs < 19)]                      = 1
+    first_ca[valid_mask2 & (first_cs >= 19) & (first_cs <= 31)]  = 2
+    first_ca[valid_mask2 & (first_cs > 31)]                      = 3
 
     clipped_profile = rect_profile.copy()
     clipped_profile.update(height=first_cs.shape[0], width=first_cs.shape[1], transform=first_tr)
@@ -1489,7 +1637,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     with rasterio.open(os.path.join(out, f"{prefix}_slope_classes.tif"), "w", **class_profile2) as dst:
         dst.write(first_ca, 1)
 
-    # ── Excel summary
+    # ── Excel summary ─────────────────────────────────────────────────
     summary_df = pd.DataFrame(all_summary)
     excel_path = os.path.join(out, f"{prefix}_slope_summary.xlsx")
 
@@ -1522,48 +1670,37 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     return all_summary, vec_gdf, boundary_gdf, f_mode, per_group_summaries
 
 
-# ================= PREVIEW HELPERS =================
-_A4_W  = 8.27   # A4 landscape width in inches
-_A4_H  = 11.69  # A4 portrait height in inches
-_DPI   = 200
+# ================= PREVIEW FUNCTIONS =================
 
 _COMP_COLORS = [
     "#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7",
     "#DCEDC8","#B2EBF2","#FFF9C4","#D7CCC8","#CFD8DC",
     "#C5CAE9","#F0F4C3","#FFCCBC","#B2DFDB","#E8EAF6",
+    "#FCE4EC","#F3E5F5","#E8F5E9","#E3F2FD","#FFF3E0",
 ]
 
 
-def _style_map_axes(ax):
-    """
-    Apply clean cartographic style to a map axes:
-    - No internal grid
-    - Tick marks and labels visible on all four sides
-    - Scientific notation disabled
-    """
-    ax.set_aspect("equal")
-    ax.tick_params(axis="both", which="both",
-                   left=True, right=True, top=True, bottom=True,
-                   labelleft=True, labelright=False,
-                   labelbottom=True, labeltop=False,
-                   direction="out", length=4, width=0.7,
-                   labelsize=6, color="#555555")
-    ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.0f'))
-    ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.0f'))
-    for spine in ax.spines.values():
-        spine.set_linewidth(0.6)
-        spine.set_color("#888888")
-    ax.grid(False)   # No internal grid lines
-    ax.set_xlabel("Easting (m)", fontsize=6, color="#555555", labelpad=2)
-    ax.set_ylabel("Northing (m)", fontsize=6, color="#555555", labelpad=2)
+def _setup_a4_fig(title="", subtitle=""):
+    """Create A4-sized figure with map axes."""
+    fig = plt.figure(figsize=(A4_W_IN, A4_H_IN), dpi=A4_DPI, facecolor='white')
+    # Layout: title bar, map, legend/table
+    fig.subplots_adjust(left=0.08, right=0.92, top=0.94, bottom=0.08)
+    ax = fig.add_subplot(111)
+    ax.set_facecolor('white')
+    if title:
+        fig.suptitle(title, fontsize=14, fontweight='bold', y=0.97,
+                     fontfamily='sans-serif', color='#1a2b22')
+    if subtitle:
+        ax.set_title(subtitle, fontsize=9, color='#555', style='italic', pad=4)
+    return fig, ax
 
 
-def preview_compartments(poly_gdf, path, title=""):
-    """A4-sized compartment preview — no internal grid, tick marks and labels."""
-    fig, ax = plt.subplots(figsize=(_A4_W, _A4_H), dpi=_DPI)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("#f8faf8")
+def preview_compartments(poly_gdf, path, title="Compartment Division Map",
+                          legend_title="Legend", label_col=None):
+    """Group E A4 preview with north arrow, scale bar, legend, graticule."""
+    fig, ax = _setup_a4_fig(title=title)
 
+    legend_handles = []
     for i, (_, row) in enumerate(poly_gdf.iterrows()):
         geom = row.geometry
         if geom is None or geom.is_empty:
@@ -1574,43 +1711,71 @@ def preview_compartments(poly_gdf, path, title=""):
                 ext.append(ext[0])
             geom = Polygon(ext)
         color = _COMP_COLORS[i % len(_COMP_COLORS)]
-        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
-            ax=ax, facecolor=color, edgecolor="#1a1a1a", linewidth=1.6
-        )
-        cx, cy = geom.centroid.x, geom.centroid.y
         comp_id = row.get("Comp_ID", f"Comp_{i+1:03d}")
-        area_ha = row.get("Area_ha", "")
-        label   = f"{comp_id}\n{area_ha:.2f} ha" if isinstance(area_ha, float) else comp_id
-        ax.annotate(label, xy=(cx, cy), ha="center", va="center",
-                    fontsize=7, fontweight="bold", color="#1a1a1a",
-                    path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
+        area_ha = row.get("Area_ha", None)
+
+        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
+            ax=ax, facecolor=color, edgecolor="#1a1a1a", linewidth=1.2, zorder=3
+        )
+
+        lbl_val = str(row[label_col]) if label_col and label_col in row.index else comp_id
+        lbl_txt = f"{lbl_val}"
+        if area_ha is not None:
+            lbl_txt += f"\n{area_ha:.2f} ha"
+
+        cx, cy = geom.centroid.x, geom.centroid.y
+        ax.annotate(lbl_txt, xy=(cx, cy), ha="center", va="center",
+                    fontsize=6.5, fontweight="bold", color="#1a1a1a",
+                    path_effects=[pe.Stroke(linewidth=2, foreground="white"), pe.Normal()],
                     zorder=10)
+        legend_handles.append(mpatches.Patch(facecolor=color, edgecolor="#1a1a1a", label=comp_id))
 
-    _style_map_axes(ax)
-    head = title.strip() if title.strip() else "Compartment Division Map"
-    ax.set_title(head, fontsize=11, fontweight="bold", color="#1a2b22", pad=8)
+    ax.set_aspect("equal")
+    ax.axis("off")
 
-    plt.tight_layout(pad=0.8)
-    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+    # Decorations
+    _add_graticule(ax)
+    _add_north_arrow(ax)
+    _add_scale_bar(ax)
+    _add_legend(ax, legend_handles[:15], title=legend_title)
+
+    # Neat border
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(1.2)
+        spine.set_color('#333')
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(path, dpi=A4_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
-def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
-            label_col=None, label_pts_gdf=None, area_ha=None, title=""):
-    """A4-sized general preview — no internal grid, tick marks and labels."""
-    fig, ax = plt.subplots(figsize=(_A4_W, _A4_H), dpi=_DPI)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("#f8faf8")
+def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
+            label_col=None, label_pts_gdf=None, area_ha=None,
+            title="Forest Boundary Map", legend_title="Legend",
+            poly_label="Forest Boundary", pts_label="Survey Points"):
+    """A4 preview with north arrow, scale bar, legend, graticule — Groups A/B/C/D."""
+    fig, ax = _setup_a4_fig(title=title)
+
+    legend_handles = []
 
     if poly_gdf is not None and not poly_gdf.empty:
-        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc, linewidth=1.4)
+        poly_gdf.plot(ax=ax, facecolor="none", edgecolor=pc, linewidth=1.8, zorder=3)
+        legend_handles.append(
+            mpatches.Patch(facecolor='none', edgecolor=pc, linewidth=1.8, label=poly_label)
+        )
 
     if line_gdf is not None and not line_gdf.empty:
-        line_gdf.plot(ax=ax, color=lc, linewidth=1.5)
+        line_gdf.plot(ax=ax, color=lc, linewidth=1.2, zorder=2)
 
     if pts_gdf is not None and not pts_gdf.empty:
-        pts_gdf.plot(ax=ax, color=ptc, markersize=5, zorder=5)
+        pts_gdf.plot(ax=ax, color=ptc, markersize=8, zorder=5)
+        legend_handles.append(
+            Line2D([0], [0], marker='o', color='w', markerfacecolor=ptc,
+                   markersize=6, label=pts_label)
+        )
 
+    # Labels for survey points
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
     if label_col and lbl_src is not None and not lbl_src.empty and label_col in lbl_src.columns:
         for _, row in lbl_src.iterrows():
@@ -1621,8 +1786,11 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
                         path_effects=[pe.Stroke(linewidth=1.8, foreground="white"), pe.Normal()],
                         zorder=6)
 
+    # Compartment labels
     if poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns:
         for _, row in poly_gdf.iterrows():
+            if row.geometry is None or row.geometry.is_empty:
+                continue
             cx = row.geometry.centroid.x
             cy = row.geometry.centroid.y
             area_txt = f"{row['Area_ha']:.2f} ha" if "Area_ha" in row else ""
@@ -1632,44 +1800,59 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc, lc, ptc,
                         path_effects=[pe.Stroke(linewidth=2, foreground="white"), pe.Normal()],
                         zorder=7)
 
-    _style_map_axes(ax)
-    head = title.strip() if title.strip() else (
-        f"Total Area: {area_ha:.2f} ha" if area_ha is not None else "Forest Boundary Map"
-    )
-    ax.set_title(head, fontsize=11, fontweight="bold", color="#1a2b22", pad=8)
+    if area_ha is not None:
+        ax.text(0.02, 0.98, f"Total Area: {area_ha:.3f} ha",
+                transform=ax.transAxes, ha='left', va='top',
+                fontsize=9, fontweight='bold', color='#1a2b22',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8), zorder=15)
 
-    plt.tight_layout(pad=0.8)
-    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    _add_graticule(ax)
+    _add_north_arrow(ax)
+    _add_scale_bar(ax)
+    if legend_handles:
+        _add_legend(ax, legend_handles, title=legend_title)
+
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(1.2)
+        spine.set_color('#333')
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(path, dpi=A4_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
 def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
-                  f_mode="A", per_group_summaries=None, title=""):
+                  f_mode="A", per_group_summaries=None,
+                  title="Slope Classification Map", legend_title="Legend"):
     """
-    A4-sized slope preview.
-    - Mode A: map + single summary table
-    - Mode B/E: map + per-group tables (one sub-table per label)
+    A4 slope preview with map + table.
+    Mode A: map + single summary table
+    Mode B/E: map + per-group tables
     """
-    import matplotlib.ticker
+    import matplotlib.gridspec as gridspec
 
     class_colors = {1: "#2ecc71", 2: "#f39c12", 3: "#e74c3c"}
-    class_labels = {1: "< 19°  Gentle", 2: "19–31° Moderate", 3: "> 31°  Steep"}
+    class_labels_map = {1: "< 19°  Gentle", 2: "19–31° Moderate", 3: "> 31°  Steep"}
 
     has_groups = f_mode in ("B", "E") and per_group_summaries and len(per_group_summaries) > 1
-    n_groups   = len(per_group_summaries) if per_group_summaries else 1
-    n_rows_total = len(summary_rows)
+    n_rows_total = len(summary_rows) if summary_rows else 0
 
-    table_ratio = max(0.22, min(0.50, 0.07 + n_rows_total * 0.026))
-    fig_w = _A4_W
-    fig_h = _A4_H
+    # A4 figure
+    fig = plt.figure(figsize=(A4_W_IN, A4_H_IN), dpi=A4_DPI, facecolor="white")
+    if title:
+        fig.suptitle(title, fontsize=13, fontweight='bold', y=0.98, color='#1a2b22')
 
-    fig = plt.figure(figsize=(fig_w, fig_h), dpi=_DPI, facecolor="white")
-    gs  = gridspec.GridSpec(2, 1, height_ratios=[1, table_ratio], hspace=0.22,
-                            left=0.10, right=0.96, top=0.94, bottom=0.04)
+    table_ratio = max(0.22, min(0.45, 0.06 + n_rows_total * 0.025))
+    gs = gridspec.GridSpec(2, 1, height_ratios=[1, table_ratio], hspace=0.15,
+                           left=0.06, right=0.94, top=0.95, bottom=0.04)
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
 
-    # ── Map
+    # ── Map ────────────────────────────────────────────────────────────
     if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
         for cid, color in class_colors.items():
             sub = vec_gdf[vec_gdf["Class"] == cid]
@@ -1683,12 +1866,12 @@ def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
         except Exception:
             pass
 
+    # Label groups on map
     if has_groups and boundary_gdf is not None and not boundary_gdf.empty:
         grp_col = None
         for c in boundary_gdf.columns:
             if c.lower() not in ("geometry",):
-                grp_col = c
-                break
+                grp_col = c; break
         if grp_col:
             for _, row in boundary_gdf.iterrows():
                 geom = row.geometry
@@ -1700,22 +1883,30 @@ def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
                                  path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
                                  zorder=8)
 
-    _style_map_axes(ax1)
-    map_title = title.strip() if title.strip() else "Slope Classification"
-    if has_groups:
-        map_title += f" — {n_groups} Groups ({f_mode} mode)"
-    ax1.set_title(map_title, fontsize=10, fontweight="bold", pad=6)
-    legend_items = [mpatches.Patch(facecolor=c, edgecolor="#2c2c2c", label=class_labels[cid])
-                    for cid, c in class_colors.items()]
-    ax1.legend(handles=legend_items, loc="lower left", fontsize=8,
-               framealpha=0.92, title="Slope Class", title_fontsize=8)
+    ax1.set_aspect("equal")
+    ax1.axis("off")
 
-    # ── Table
+    # Map decorations
+    _add_graticule(ax1)
+    _add_north_arrow(ax1)
+    _add_scale_bar(ax1)
+
+    # Legend
+    legend_items = [mpatches.Patch(facecolor=c, edgecolor="#2c2c2c", label=class_labels_map[cid])
+                    for cid, c in class_colors.items()]
+    _add_legend(ax1, legend_items, title=legend_title)
+
+    for spine in ax1.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(1.0)
+        spine.set_color('#333')
+
+    # ── Table ──────────────────────────────────────────────────────────
     ax2.axis("off")
-    ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
+    ax2.set_title("Slope Area Summary", fontsize=10, fontweight="bold", pad=4)
 
     if not summary_rows:
-        fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+        fig.savefig(path, dpi=A4_DPI, bbox_inches="tight", facecolor="white")
         plt.close(fig)
         return
 
@@ -1777,7 +1968,7 @@ def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
                 row_idx += 1
 
     if not table_data:
-        fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+        fig.savefig(path, dpi=A4_DPI, bbox_inches="tight", facecolor="white")
         plt.close(fig)
         return
 
@@ -1806,7 +1997,7 @@ def preview_slope(vec_gdf, boundary_gdf, summary_rows, path,
             else:
                 cell.set_facecolor(row_colors.get(cid, "#f8f9fa"))
 
-    fig.savefig(path, dpi=_DPI, bbox_inches="tight", facecolor="white")
+    fig.savefig(path, dpi=A4_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -1840,10 +2031,10 @@ def _gdf_to_kml_placemarks(gdf, style_id, name_col=None):
         def coords_str(coords):
             return " ".join(f"{x},{y},0" for x, y in coords)
 
-        def polygon_kml(geom):
-            outer = coords_str(list(geom.exterior.coords))
+        def polygon_kml(g):
+            outer = coords_str(list(g.exterior.coords))
             rings = [f"<outerBoundaryIs><LinearRing><coordinates>{outer}</coordinates></LinearRing></outerBoundaryIs>"]
-            for interior in geom.interiors:
+            for interior in g.interiors:
                 inner = coords_str(list(interior.coords))
                 rings.append(f"<innerBoundaryIs><LinearRing><coordinates>{inner}</coordinates></LinearRing></innerBoundaryIs>")
             return f"<Polygon>{''.join(rings)}</Polygon>"
@@ -1892,8 +2083,8 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
 
     kml_styles = """
   <Style id="poly_style">
-    <LineStyle><color>ff00ff00</color><width>2</width></LineStyle>
-    <PolyStyle><color>4400cc00</color></PolyStyle>
+    <LineStyle><color>ff0000ff</color><width>2</width></LineStyle>
+    <PolyStyle><color>44ff0000</color></PolyStyle>
   </Style>
   <Style id="line_style">
     <LineStyle><color>ff0000ff</color><width>2</width></LineStyle>
@@ -1929,6 +2120,18 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
         kmz.writestr("doc.kml", kml.encode("utf-8"))
 
     return {"url": f"/outputs/{run_id}/output.kmz", "lat": round(cy, 6), "lon": round(cx, 6), "alt": alt_m}
+
+
+# ================= GeoJSON for OSM preview =================
+def _gdf_to_geojson_wgs84(gdf):
+    """Convert GeoDataFrame to WGS84 GeoJSON string."""
+    if gdf is None or gdf.empty:
+        return None
+    try:
+        wgs = gdf.to_crs("EPSG:4326")
+        return wgs.to_json()
+    except Exception:
+        return None
 
 
 # ================= AUTH ROUTES =================
@@ -1998,7 +2201,6 @@ def upload():
         mode   = request.form.get("mode",   "A")
         module = request.form.get("module", mode)
         zone   = request.form.get("zone",   "44")
-        title  = request.form.get("title",  "").strip()
 
         try:
             mapping = json.loads(request.form.get("mapping", "{}"))
@@ -2011,34 +2213,46 @@ def upload():
         cols   = int(  request.form.get("cols", 10))
         forest = request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
 
+        # Title and legend params
+        map_title     = request.form.get("map_title", "").strip() or None
+        legend_title  = request.form.get("legend_title", "Legend").strip() or "Legend"
+        poly_label    = request.form.get("poly_label", "Forest Boundary").strip() or "Forest Boundary"
+        pts_label     = request.form.get("pts_label", "Survey Points").strip() or "Survey Points"
+        label_col_req = request.form.get("label_col", "").strip() or None
+
         run_id   = str(uuid.uuid4())
         username = _require_login() or "guest"
         out      = os.path.join(OUTPUT, run_id)
         os.makedirs(out, exist_ok=True)
         crs = get_crs(zone)
 
-        label_col      = None
+        label_col      = label_col_req
         label_pts_gdf  = None
         area_ha_display = None
 
         if module == "B":
             df = read_input(file)
             poly, line, pts = group_b(df, crs, out, mapping)
+            default_title = map_title or f"Forest Boundary Map — {forest}"
 
         elif module == "C":
             poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
-            label_col     = "SN"
+            if not label_col:
+                label_col = "SN"
             label_pts_gdf = pts
+            default_title = map_title or "Forest Sample Plot Map"
 
         elif module == "D":
             df = read_input(file)
             d_mode = request.form.get("d_mode", "A")
             poly, line, pts = group_d(df, crs, out, mapping, mode=d_mode)
+            default_title = map_title or f"Multi-Forest Map — {d_mode} Mode"
 
         elif module == "E":
             e_mode          = request.form.get("e_mode", "A")
-            n_compartments  = max(2, min(15, int(request.form.get("n_compartments", 4))))
+            n_compartments  = max(2, min(200, int(request.form.get("n_compartments", 4))))
             area_tol_ha     = float(request.form.get("area_tol_ha", "0.3") or "0.3")
+            e_method        = request.form.get("e_method", "bisect").strip() or "bisect"
             is_zip          = file.filename.lower().endswith(".zip")
             forest_col_name = request.form.get("forest_col_name") or None
 
@@ -2050,7 +2264,7 @@ def upload():
                     file, crs, out, mapping,
                     e_mode=e_mode, n_compartments=n_compartments,
                     is_zip=True, forest_col_name=forest_col_name,
-                    area_tol_ha=area_tol_ha
+                    area_tol_ha=area_tol_ha, method=e_method
                 )
             else:
                 df = read_input(file)
@@ -2058,11 +2272,21 @@ def upload():
                     df, crs, out, mapping,
                     e_mode=e_mode, n_compartments=n_compartments,
                     is_zip=False, forest_col_name=forest_col_name,
-                    area_tol_ha=area_tol_ha
+                    area_tol_ha=area_tol_ha, method=e_method
                 )
 
             preview_path = os.path.join(out, "output.png")
-            preview_compartments(poly, preview_path, title=title)
+            preview_compartments(poly, preview_path,
+                                  title=map_title or f"Compartment Division — {n_compartments} Parts",
+                                  legend_title=legend_title,
+                                  label_col=label_col)
+
+            # GeoJSON for OSM
+            geojson_str = _gdf_to_geojson_wgs84(poly)
+            geojson_path = os.path.join(out, "output.geojson")
+            if geojson_str:
+                with open(geojson_path, "w") as gf:
+                    gf.write(geojson_str)
 
             kmz_url = None
             try:
@@ -2071,7 +2295,12 @@ def upload():
                 pass
 
             _append_run(username, run_id, "E")
-            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
+            return jsonify({
+                "run_id": run_id,
+                "download": f"/download/{run_id}",
+                "kmz_url": kmz_url,
+                "has_geojson": geojson_str is not None
+            })
 
         elif module == "F":
             dem_file_upload = request.files.get("dem_file")
@@ -2108,7 +2337,14 @@ def upload():
             preview_path = os.path.join(out, "output.png")
             preview_slope(vec_gdf, boundary_gdf, summary_rows, preview_path,
                           f_mode=f_mode_out, per_group_summaries=per_group_summaries,
-                          title=title)
+                          title=map_title or f"Slope Classification — {f_forest}",
+                          legend_title=legend_title)
+
+            # GeoJSON for OSM
+            geojson_str = _gdf_to_geojson_wgs84(vec_gdf)
+            if geojson_str:
+                with open(os.path.join(out, "output.geojson"), "w") as gf:
+                    gf.write(geojson_str)
 
             poly = vec_gdf if (vec_gdf is not None and not vec_gdf.empty) else gpd.GeoDataFrame()
             line = gpd.GeoDataFrame()
@@ -2121,19 +2357,36 @@ def upload():
                 pass
 
             _append_run(username, run_id, "F")
-            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
+            return jsonify({
+                "run_id": run_id,
+                "download": f"/download/{run_id}",
+                "kmz_url": kmz_url,
+                "has_geojson": geojson_str is not None
+            })
 
         else:  # module == "A"
             df = read_input(file)
             poly, line, pts = group_a(df, forest, crs, out, mapping)
             if not poly.empty and "Area_ha" in poly.columns:
                 area_ha_display = float(poly["Area_ha"].sum())
+            default_title = map_title or f"Forest Boundary — {forest}"
 
+        # ── Standard preview (A, B, C, D) ───────────────────────────────
         preview_path = os.path.join(out, "output.png")
         preview(poly, line, pts, preview_path,
-                pc="yellow", lc="black", ptc="red",
+                pc="blue", lc="black", ptc="red",
                 label_col=label_col, label_pts_gdf=label_pts_gdf,
-                area_ha=area_ha_display, title=title)
+                area_ha=area_ha_display,
+                title=map_title or default_title,
+                legend_title=legend_title,
+                poly_label=poly_label,
+                pts_label=pts_label)
+
+        # GeoJSON for OSM
+        geojson_str = _gdf_to_geojson_wgs84(poly)
+        if geojson_str:
+            with open(os.path.join(out, "output.geojson"), "w") as gf:
+                gf.write(geojson_str)
 
         kmz_url = None
         try:
@@ -2142,12 +2395,19 @@ def upload():
             pass
 
         _append_run(username, run_id, module)
-        return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
+        return jsonify({
+            "run_id": run_id,
+            "download": f"/download/{run_id}",
+            "kmz_url": kmz_url,
+            "has_geojson": geojson_str is not None
+        })
 
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": f"Unexpected error: {e}"}), 500
+        import traceback
+        tb = traceback.format_exc()
+        return jsonify({"error": f"Unexpected error: {e}", "traceback": tb}), 500
 
 
 # ================= STATIC OUTPUT FILES =================
