@@ -11,17 +11,82 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, render_template
+from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, session
 from shapely.geometry import Polygon, Point, LineString, MultiPolygon, MultiPoint
 from shapely.ops import unary_union
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "elfak-gis-engine-2025-secret")
 
 UPLOAD = "uploads"
 OUTPUT = "outputs"
+USERS_FILE = "users.json"
 
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
+
+
+# ================= USER STORE =================
+def _load_users():
+    if not os.path.exists(USERS_FILE):
+        return {}
+    try:
+        with open(USERS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_users(users):
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump(users, f, indent=2)
+    except Exception:
+        pass
+
+
+def _user_exists(username):
+    """Return True if this username is already registered."""
+    return username.strip() in _load_users()
+
+
+def _create_user(username):
+    """Register a brand-new username. Raises ValueError if already taken."""
+    username = username.strip()
+    users = _load_users()
+    if username in users:
+        raise ValueError(f"Username '{username}' is already taken. Please choose a different name.")
+    users[username] = {
+        "username":   username,
+        "created_at": pd.Timestamp.now().isoformat(),
+        "runs":       []
+    }
+    _save_users(users)
+    return users[username]
+
+
+def _get_user(username):
+    """Fetch an existing user record. Returns None if not found."""
+    return _load_users().get(username.strip())
+
+
+def _append_run(username, run_id, module, description=""):
+    if not username:
+        return
+    users = _load_users()
+    if username in users:
+        users[username].setdefault("runs", []).append({
+            "run_id":      run_id,
+            "module":      module,
+            "description": description,
+            "timestamp":   pd.Timestamp.now().isoformat()
+        })
+        users[username]["runs"] = users[username]["runs"][-50:]
+        _save_users(users)
+
+
+def _require_login():
+    return session.get("username")
 
 
 # ================= CORS =================
@@ -882,8 +947,9 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
     pts_gdf  = gpd.GeoDataFrame(pd.concat(all_pts_gdfs,  ignore_index=True), crs=crs)
 
     return poly_gdf, line_gdf, pts_gdf
-    
-    
+
+
+
 # ================= GROUP F — DEM SLOPE ANALYSIS =================
 # Improved workflow:
 # 1. Extract rectangle from DEM around polygon (20% extra coverage)
@@ -1532,6 +1598,68 @@ def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     return {"url": f"/outputs/{run_id}/output.kmz", "lat": round(cy, 6), "lon": round(cx, 6), "alt": alt_m}
 
 
+
+# ================= AUTH ROUTES =================
+@app.route("/login", methods=["POST"])
+def login():
+    import re
+    data     = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+
+    # Basic validation
+    if not username or len(username) < 2:
+        return jsonify({"error": "Username must be at least 2 characters."}), 400
+    if len(username) > 40:
+        return jsonify({"error": "Username too long (max 40 characters)."}), 400
+    if not re.match(r'^[A-Za-z0-9 _\-]+$', username):
+        return jsonify({"error": "Username may only contain letters, numbers, spaces, - and _."}), 400
+
+    # ── EXCLUSIVITY CHECK ──────────────────────────────────────────────
+    # If this username already exists in users.json it belongs to someone
+    # else. Reject and ask them to choose a different name.
+    if _user_exists(username):
+        return jsonify({
+            "error": f"Username \"{username}\" is already taken. Please choose a different name.",
+            "taken": True
+        }), 409
+
+    # New username — register and log in
+    try:
+        user = _create_user(username)
+    except ValueError as e:
+        return jsonify({"error": str(e), "taken": True}), 409
+
+    session["username"]  = username
+    session.permanent    = True
+    return jsonify({"ok": True, "username": username, "runs": []})
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/me")
+def me():
+    username = _require_login()
+    if not username:
+        return jsonify({"error": "Not logged in"}), 401
+    users = _load_users()
+    user  = users.get(username, {})
+    return jsonify({"username": username, "runs": user.get("runs", [])[-20:]})
+
+
+@app.route("/history")
+def history():
+    username = _require_login()
+    if not username:
+        return jsonify({"error": "Not logged in"}), 401
+    users = _load_users()
+    user  = users.get(username, {})
+    return jsonify({"runs": user.get("runs", [])})
+
+
 # ================= UPLOAD ROUTE =================
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -1555,8 +1683,9 @@ def upload():
         cols   = int(  request.form.get("cols", 10))
         forest = request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
 
-        run_id = str(uuid.uuid4())
-        out    = os.path.join(OUTPUT, run_id)
+        run_id   = str(uuid.uuid4())
+        username = _require_login() or "guest"
+        out      = os.path.join(OUTPUT, run_id)
         os.makedirs(out, exist_ok=True)
         crs = get_crs(zone)
 
@@ -1610,6 +1739,7 @@ def upload():
             except Exception:
                 pass
 
+            _append_run(username, run_id, "E")
             return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
 
         elif module == "F":
@@ -1659,6 +1789,7 @@ def upload():
             except Exception:
                 pass
 
+            _append_run(username, run_id, "F")
             return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
 
         else:  # module == "A"
@@ -1680,6 +1811,7 @@ def upload():
         except Exception:
             pass
 
+        _append_run(username, run_id, module)
         return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
 
     except ValueError as e:
