@@ -1252,7 +1252,7 @@ if slope_poly_gdf is not None and not slope_poly_gdf.empty:
     }
 
     for _, row in slope_poly_gdf.iterrows():
-        if slope_poly_gdf is not None and not slope_poly_gdf.empty:
+if slope_poly_gdf is not None and not slope_poly_gdf.empty:
 
     for _, row in slope_poly_gdf.iterrows():
 
