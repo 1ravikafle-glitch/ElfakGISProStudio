@@ -1209,8 +1209,7 @@ def preview_slope(
     path,
     nodata,
     boundary_gdf=None,
-    f_mode="A",
-    slope_poly_gdf=None
+    f_mode="A"
 ):
     import matplotlib.patches as mpatches
     import matplotlib.gridspec as gridspec
@@ -1234,8 +1233,14 @@ def preview_slope(
     ax1.set_title("Slope Raster (degrees)", fontsize=10, fontweight="bold", pad=6)
     ax1.axis("off")
 
-    colors_map = {0:(1,1,1,0), 1:(0.18,0.8,0.44,1), 2:(0.95,0.61,0.07,1), 3:(0.91,0.29,0.24,1)}
-    ax2.set_facecolor("white")
+    colors_map = {
+    0:(1,1,1,0),
+    1:(0.18,0.8,0.44,1),
+    2:(0.95,0.61,0.07,1),
+    3:(0.91,0.29,0.24,1)
+}
+
+ax2.set_facecolor("white")
 
 if slope_poly_gdf is not None and not slope_poly_gdf.empty:
 
@@ -1254,14 +1259,37 @@ if slope_poly_gdf is not None and not slope_poly_gdf.empty:
             crs=slope_poly_gdf.crs
         ).plot(
             ax=ax2,
-            facecolor=color_lookup.get(cid,"gray"),
+            facecolor=color_lookup.get(cid, "gray"),
             edgecolor="black",
             linewidth=0.5
         )
 
     ax2.set_aspect("equal")
-    ax2.set_title("Slope Polygon Map", fontsize=10, fontweight="bold", pad=6)
-    ax2.axis("off")
+
+    ax2.set_title(
+        "Slope Polygon Map",
+        fontsize=10,
+        fontweight="bold",
+        pad=6
+    )
+
+else:
+
+    rgb = np.zeros((*class_arr.shape, 4), dtype=np.float32)
+
+    for cid, rgba in colors_map.items():
+        rgb[class_arr == cid] = rgba
+
+    ax2.imshow(rgb, interpolation="nearest")
+
+    ax2.set_title(
+        "Slope Classification Raster",
+        fontsize=10,
+        fontweight="bold",
+        pad=6
+    )
+
+ax2.axis("off")
 
     if boundary_gdf is not None and not boundary_gdf.empty:
         try:
@@ -1612,8 +1640,16 @@ def upload():
                 field_area_ha=field_area_ha)
             clipped_slope, class_arr, _tr, summary_rows, vec_gdf, nodata, boundary_gdf, f_mode_out = result
             preview_path = os.path.join(out, "output.png")
-            preview_slope(clipped_slope, class_arr, summary_rows, preview_path, nodata,
-                          boundary_gdf=boundary_gdf, f_mode=f_mode_out)
+            preview_slope(
+    clipped_slope,
+    class_arr,
+    summary_rows,
+    preview_path,
+    nodata,
+    boundary_gdf=boundary_gdf,
+    f_mode=f_mode_out,
+    slope_poly_gdf=vec_gdf
+)
             poly = vec_gdf if (vec_gdf is not None and not vec_gdf.empty) else gpd.GeoDataFrame()
             line = gpd.GeoDataFrame(); pts = gpd.GeoDataFrame()
             kmz_url = None
