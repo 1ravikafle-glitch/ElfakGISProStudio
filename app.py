@@ -488,22 +488,78 @@ def group_d(df, crs, out, mapping=None, mode="A"):
 # =============================================================================
 
 from shapely.geometry import box as _shapely_box
+def _principal_axis_angle(poly):
+    """
+    Compute the orientation angle (radians) of the polygon's principal axis
+    using the second moments of area (PCA on boundary coords).
+    Returns angle in [-pi/2, pi/2].
+    """
+    try:
+        coords = np.array(poly.exterior.coords[:-1])
+        coords -= coords.mean(axis=0)
+        cov = np.cov(coords.T)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        # Principal axis = eigenvector of largest eigenvalue
+        principal = eigvecs[:, np.argmax(eigvals)]
+        angle = np.arctan2(principal[1], principal[0])
+        return angle
+    except Exception:
+        return 0.0
 
 
-def _bisect_polygon(poly, n, axis=None):
+def _elongation_ratio(poly):
+    """
+    Return the ratio of bounding-box long-side / short-side.
+    Values >> 1 mean the polygon is strongly elongated (diagonal or strip-like).
+    """
+    minx, miny, maxx, maxy = poly.bounds
+    dx, dy = maxx - minx, maxy - miny
+    short = min(dx, dy)
+    if short < 1e-9:
+        return 999.0
+    return max(dx, dy) / short
+
+
+def _rotate_polygon(poly, angle):
+    """Rotate polygon by -angle around its centroid (align principal axis to X)."""
+    from shapely import affinity
+    cx, cy = poly.centroid.x, poly.centroid.y
+    return affinity.rotate(poly, -np.degrees(angle), origin=(cx, cy))
+
+
+def _unrotate_polygon(poly, angle, cx, cy):
+    """Rotate polygon back by +angle around original centroid."""
+    from shapely import affinity
+    return affinity.rotate(poly, np.degrees(angle), origin=(cx, cy))
+
+
+def _bisect_polygon(poly, n, axis=None, _depth=0):
     """
     Recursively split poly into exactly n near-equal-area pieces using
-    straight-line bisection cuts.
+    straight-line bisection cuts aligned to the polygon's natural orientation.
+
+    KEY IMPROVEMENT over plain X/Y SLRB:
+    ─────────────────────────────────────
+    When a polygon is strongly diagonal (elongation ratio > 1.6), we detect
+    its principal axis via PCA, rotate the polygon to align that axis with X,
+    perform the bisection cut there, then rotate the resulting pieces BACK.
+
+    This prevents the dangling-tip / gap problem that occurs when an X or Y
+    cut crosses a narrow diagonal neck at an oblique angle — producing a tiny
+    sliver on one side instead of a clean split following the polygon's shape.
+
+    For compact or mildly elongated polygons we fall back to bounding-box
+    axis selection (longest of X vs Y), which is faster and just as accurate.
 
     Parameters
     ----------
-    poly : shapely Polygon (valid, repaired)
-    n    : int >= 1
-    axis : None | 'x' | 'y'   — force cut axis (None = auto-longest)
+    poly   : shapely Polygon (valid, repaired)
+    n      : int >= 1
+    axis   : None | 'x' | 'y' | 'principal'  (None = auto-detect)
+    _depth : recursion depth (internal — limits principal-axis rotation to
+             top 2 levels to avoid compounding rotation errors)
 
-    Returns
-    -------
-    list of Polygon objects whose union == poly exactly
+    Returns list of Polygon whose union == poly exactly.
     """
     poly = _repair_geom(poly)
     if poly is None or poly.is_empty or poly.area < 1e-10:
@@ -515,25 +571,85 @@ def _bisect_polygon(poly, n, axis=None):
     dx = maxx - minx
     dy = maxy - miny
 
-    # Choose cut axis: prefer the longest dimension for compact shapes
-    if axis is None:
-        cut_axis = 'x' if dx >= dy else 'y'
-    else:
+    # ── Axis selection ────────────────────────────────────────────────
+    use_principal = False
+    rot_angle     = 0.0
+    cx0, cy0      = poly.centroid.x, poly.centroid.y
+
+    if axis == 'principal' or (axis is None and _depth < 2):
+        elong = _elongation_ratio(poly)
+        if elong > 1.6:
+            # Polygon is significantly elongated — use its principal axis
+            rot_angle     = _principal_axis_angle(poly)
+            abs_deg       = abs(np.degrees(rot_angle)) % 90
+            # Only rotate if the principal axis is meaningfully diagonal
+            # (skip if it's already nearly horizontal or vertical — < 10° off)
+            if 10 < abs_deg < 80:
+                use_principal = True
+
+    if use_principal:
+        # Rotate polygon so its principal axis aligns with X
+        poly_rot  = _rotate_polygon(poly, rot_angle)
+        poly_rot  = _repair_geom(poly_rot)
+        if poly_rot and not poly_rot.is_empty:
+            # Bisect in rotated space along X (principal direction)
+            pieces_rot = _bisect_polygon(poly_rot, n, axis='x', _depth=_depth+1)
+            # Rotate pieces back to original coordinate space
+            pieces = []
+            for p in pieces_rot:
+                p_back = _unrotate_polygon(p, rot_angle, cx0, cy0)
+                p_back = _repair_geom(p_back)
+                pg = _as_polygon(p_back)
+                if pg and not pg.is_empty and pg.area > 1e-10:
+                    pieces.append(pg)
+            # After rotating back, re-clip each piece to the original polygon
+            # to guarantee boundary exactness (rotation introduces fp errors)
+            clipped = []
+            remaining = _repair_geom(poly)
+            # Sort by centroid to give deterministic left→right ordering
+            try:
+                pieces.sort(key=lambda p: p.centroid.x)
+            except Exception:
+                pass
+            for i, p in enumerate(pieces):
+                if remaining is None or remaining.is_empty:
+                    break
+                if i == len(pieces) - 1:
+                    # Last piece gets exact remainder — zero gap guarantee
+                    last = _as_polygon(_repair_geom(remaining))
+                    if last and last.area > 1e-10:
+                        clipped.append(last)
+                else:
+                    try:
+                        c = _repair_geom(p.intersection(remaining))
+                        c = _as_polygon(c)
+                    except Exception:
+                        c = None
+                    if c and c.area > 1e-10:
+                        clipped.append(c)
+                        try:
+                            remaining = _repair_geom(remaining.difference(c))
+                        except Exception:
+                            pass
+            if clipped:
+                return clipped
+            # Fallback: drop through to standard X/Y bisection
+            use_principal = False
+
+    # ── Standard bounding-box axis selection ──────────────────────────
+    if axis in ('x', 'y'):
         cut_axis = axis
+    else:
+        cut_axis = 'x' if dx >= dy else 'y'
 
     # Target area ratio: left gets floor(n/2) shares, right gets ceil(n/2)
     n_left  = n // 2
     n_right = n - n_left
-    frac    = n_left / n           # fraction of total area that goes left
+    frac    = n_left / n
 
-    # Binary search for the cut coordinate
-    if cut_axis == 'x':
-        lo, hi = minx, maxx
-    else:
-        lo, hi = miny, maxy
-
-    target_area = poly.area * frac
-    best_mid    = (lo + hi) / 2
+    lo, hi       = (minx, maxx) if cut_axis == 'x' else (miny, maxy)
+    target_area  = poly.area * frac
+    best_mid     = (lo + hi) / 2
 
     for _ in range(80):
         mid = (lo + hi) / 2
@@ -559,29 +675,27 @@ def _bisect_polygon(poly, n, axis=None):
     # Perform the actual cut
     try:
         if cut_axis == 'x':
-            left_box  = _shapely_box(minx - 1, miny - 1, best_mid, maxy + 1)
+            left_box = _shapely_box(minx - 1, miny - 1, best_mid, maxy + 1)
         else:
-            left_box  = _shapely_box(minx - 1, miny - 1, maxx + 1, best_mid)
+            left_box = _shapely_box(minx - 1, miny - 1, maxx + 1, best_mid)
         left_piece  = _repair_geom(poly.intersection(left_box))
-        # Right piece is EXACTLY the complement — no gap possible
         right_piece = _repair_geom(poly.difference(left_piece))
     except Exception:
-        return [poly] if n == 1 else [poly] * n  # fallback
+        return [poly] if n == 1 else [poly] * n
 
-    # Flatten MultiPolygon results by taking the largest piece per side
     lp = _as_polygon(left_piece)
     rp = _as_polygon(right_piece)
 
     if lp is None or lp.is_empty:
-        return _bisect_polygon(rp or poly, n)
+        return _bisect_polygon(rp or poly, n, _depth=_depth+1)
     if rp is None or rp.is_empty:
-        return _bisect_polygon(lp or poly, n)
+        return _bisect_polygon(lp or poly, n, _depth=_depth+1)
 
-    # Alternate cut axis on next level for balanced grid-like result
+    # Alternate axis on next recursion level
     next_axis = 'y' if cut_axis == 'x' else 'x'
 
-    return (_bisect_polygon(lp, n_left,  next_axis) +
-            _bisect_polygon(rp, n_right, next_axis))
+    return (_bisect_polygon(lp, n_left,  next_axis, _depth=_depth+1) +
+            _bisect_polygon(rp, n_right, next_axis, _depth=_depth+1))
 
 
 def _subdivide_polygon(poly, n):
@@ -1074,12 +1188,29 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     rect_res_x = abs(rect_tr.a)
     rect_res_y = abs(rect_tr.e)
 
-    # ── Step 2: Calculate slope of rectangular DEM ────────────────────────
-    dzdx = ndimage.sobel(np.nan_to_num(rect_dem, nan=0.0), axis=1) / (8 * max(rect_res_x, 1e-9))
-    dzdy = ndimage.sobel(np.nan_to_num(rect_dem, nan=0.0), axis=0) / (8 * max(rect_res_y, 1e-9))
+    # ── Step 2: Calculate slope of rectangular DEM (ArcGIS Horn-method) ───
+    # ArcGIS's Slope tool uses the same 3x3 Horn-method gradient as our
+    # Sobel kernel, but it marks a cell NoData if ANY of its 8 neighbours
+    # is NoData or off the raster edge — it never silently treats a missing
+    # neighbour as elevation 0. We replicate that: fill NoData with 0 only
+    # so the convolution math stays well-defined, then invalidate every
+    # cell whose full 3x3 neighbourhood didn't already have real data
+    # (border_value=0 -> the rectangle's own outer ring counts as touching
+    # "no data" too, same as ArcGIS at a raster edge). Because of the 20%
+    # buffer, that invalidated ring sits outside your boundary polygon and
+    # never reaches the final clipped compartments.
+    valid_dem = ~np.isnan(rect_dem)
+    filled    = np.nan_to_num(rect_dem, nan=0.0)
+
+    dzdx = ndimage.sobel(filled, axis=1) / (8 * max(rect_res_x, 1e-9))
+    dzdy = ndimage.sobel(filled, axis=0) / (8 * max(rect_res_y, 1e-9))
     slope_rect = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2))).astype(np.float32)
+
+    full_neighborhood_valid = ndimage.binary_erosion(
+        valid_dem, structure=np.ones((3, 3), dtype=bool), border_value=0
+    )
     slope_nodata = -9999.0
-    slope_rect[np.isnan(rect_dem)] = slope_nodata
+    slope_rect[~full_neighborhood_valid] = slope_nodata
 
     # Save rectangular slope raster
     rect_profile = profile.copy()
@@ -1119,7 +1250,14 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             cid = int(val)
             if cid == 0: continue
             try:
-                geom = _repair_geom(Polygon(shp["coordinates"][0]))
+                # rasterio gives ring 0 = exterior, rings 1+ = holes (e.g. a
+                # patch of one slope class fully enclosed by another). Using
+                # only ring 0 silently swallows the hole into the outer
+                # polygon and double-counts that area — preserve it.
+                rings    = shp["coordinates"]
+                exterior = rings[0]
+                holes    = rings[1:] if len(rings) > 1 else None
+                geom = _repair_geom(Polygon(exterior, holes=holes))
                 if geom and not geom.is_empty and geom.area > 1e-10:
                     rtp_records.append({"gridcode": cid, "geometry": geom})
             except Exception:
@@ -1208,17 +1346,13 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         all_vec.extend(vec_recs)
 
     # ── Recalibration factor if field area provided ────────────────────────
+    # field_area_ha is the ONE ground-measured total area for the whole
+    # dataset (the whole forest, or the whole multi-compartment tract).
+    # We compute a single correction factor = field_area_ha / (sum of every
+    # computed Area_ha across every class and every compartment) and apply
+    # it uniformly to every row.
     if field_area_ha and field_area_ha > 0:
-        total_computed = sum(r["Area_ha"] for r in all_summary
-                             if f_mode == "A" or True)
-        # Sum per label for multi-forest
-        if f_mode != "A":
-            label_totals = {}
-            for r in all_summary:
-                label_totals.setdefault(r["Label"], 0.0)
-                label_totals[r["Label"]] += r["Area_ha"]
-            # Use total of first label as reference (single field area given)
-            total_computed = sum(label_totals.values()) if label_totals else 1.0
+        total_computed = sum(r["Area_ha"] for r in all_summary)
         factor = field_area_ha / max(total_computed, 1e-6)
         for r in all_summary:
             r["Recal_ha"] = round(r["Area_ha"] * factor, 4)
