@@ -1252,7 +1252,18 @@ if slope_poly_gdf is not None and not slope_poly_gdf.empty:
     }
 
     for _, row in slope_poly_gdf.iterrows():
-if slope_poly_gdf is not None and not slope_poly_gdf.empty:
+
+        cid = int(row["Class"])
+
+        gpd.GeoDataFrame(
+            [row],
+            crs=slope_poly_gdf.crs
+        ).plot(
+            ax=ax2,
+            facecolor=color_lookup.get(cid, "gray"),
+            edgecolor="black",
+            linewidth=0.5
+        )
 
     for _, row in slope_poly_gdf.iterrows():
 
@@ -1279,38 +1290,10 @@ if slope_poly_gdf is not None and not slope_poly_gdf.empty:
             ]
         )
 
-        cid = int(row["Class"])
-
-        gpd.GeoDataFrame(
-            [row],
-            crs=slope_poly_gdf.crs
-        ).plot(
-            ax=ax2,
-            facecolor=color_lookup.get(cid, "gray"),
-            edgecolor="black",
-            linewidth=0.5
-        )
-
     ax2.set_aspect("equal")
 
     ax2.set_title(
         "Slope Polygon Map",
-        fontsize=10,
-        fontweight="bold",
-        pad=6
-    )
-
-else:
-
-    rgb = np.zeros((*class_arr.shape, 4), dtype=np.float32)
-
-    for cid, rgba in colors_map.items():
-        rgb[class_arr == cid] = rgba
-
-    ax2.imshow(rgb, interpolation="nearest")
-
-    ax2.set_title(
-        "Slope Classification Raster",
         fontsize=10,
         fontweight="bold",
         pad=6
