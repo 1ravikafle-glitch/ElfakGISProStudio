@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Elfak GIS Engine Pro — Premium Forest Studio</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js">
 
@@ -220,7 +220,7 @@ function loadRunPreview(runId){
 }
 
 </script>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
 :root {
   --bg-glass:rgba(255,255,255,0.55);--border-soft:rgba(20,40,30,0.09);--border-active:#10b981;
@@ -311,7 +311,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
 .cyber-dropzone span{font-size:11px;color:var(--white-mist);font-weight:500;}
 .input-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .field-group label{display:block;font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;
-  color:var(--text-muted);margin-bottom:4px;font-weight:500;letter-spacing:.08em;transition:color .3s;}
+  color:var(--text-muted);margin-bottom:4px;font-weight:600;letter-spacing:.08em;transition:color .3s;}
 .field-group:focus-within label{color:var(--mint);}
 .vector-badge{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);color:#0d9488;
   padding:9px 12px;border-radius:8px;font-family:var(--font-mono);font-size:10.5px;display:flex;flex-direction:column;gap:7px;}
@@ -490,7 +490,6 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
   </div>
 </div>
 <div id="history-overlay" onclick="toggleHistory()" style="display:none;position:fixed;inset:0;z-index:7999;background:rgba(0,0,0,0.18);"></div>
-
 
 <div class="app-shell">
 
@@ -695,7 +694,7 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
                   <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
                 </div>
               </div>
-              <div class="vector-badge" id="e-mode-hint">
+              <div class="vector-badge" id="e-hint">
                 <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
                 <div style="font-size:10px;opacity:.8;" id="e-hint-sub">division_points.xlsx exported for ArcGIS reconstruction</div>
               </div>
@@ -739,7 +738,7 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
             <div class="field-group"><label>Step 1 — Forest Boundary (CSV/XLS or ZIP/SHP)</label></div>
             <div class="cyber-dropzone" id="f-boundary-drop">
               <span class="dz-text" id="f-boundary-label">🌲 Upload Boundary File</span>
-              <input type="file" id="file-f-boundary" accept=".csv,.xlsx,.xls,.zip">
+              <input type="file" id="file-f-boundary" accept=".csv,.xlsx,.xls,.zip" />
             </div>
 
             <!-- ZIP notice -->
@@ -752,7 +751,7 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
                 </div>
                 <div id="f-zip-comp-wrapper" class="field-group hidden" style="width:100%;">
                   <label style="color:#064e3b;">Grouping Column Name</label>
-                  <input type="text" id="f-zip-comp-col" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;" placeholder="e.g. Forest or Compartment">
+                  <input type="text" id="f-zip-comp-col" style="background:#fff;border-color:rgba(16,185,129,.4);color:#064e3b;" placeholder="e.g. Forest or Compartment" />
                 </div>
               </div>
             </div>
@@ -765,7 +764,7 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
               </div>
               <div class="input-row">
                 <div class="field-group"><label>Point Order</label><select id="f-order-col"><option value="">— none —</option></select></div>
-                <div class="field-group"><label>Forest Name</label><input type="text" id="f-forest-name" value="FOREST" placeholder="Forest name"></div>
+                <div class="field-group"><label>Forest Name</label><input type="text" id="f-forest-name" value="FOREST" placeholder="Forest name" /></div>
               </div>
               <div id="f-csv-comp-wrapper" class="field-group hidden">
                 <label>Grouping Column (Forest / Compartment)</label>
@@ -777,13 +776,13 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
             <div class="field-group" style="margin-top:2px;"><label>Step 2 — Raw DEM GeoTIFF</label></div>
             <div class="cyber-dropzone" id="f-dem-drop">
               <span class="dz-text" id="f-dem-label">🏔️ Upload DEM (.tif / .tiff)</span>
-              <input type="file" id="file-f-dem" accept=".tif,.tiff">
+              <input type="file" id="file-f-dem" accept=".tif,.tiff" />
             </div>
 
             <!-- Field area recalibration -->
             <div class="field-group">
               <label>Field Area (ha) — optional, for recalibration</label>
-              <input type="number" id="f-field-area" min="0" step="any" placeholder="e.g. 47.5 — leave blank to skip">
+              <input type="number" id="f-field-area" min="0" step="any" placeholder="e.g. 47.5 — leave blank to skip" />
             </div>
 
             <div class="vector-badge" style="background:rgba(101,163,13,.08);border-color:rgba(101,163,13,.3);">
@@ -836,7 +835,7 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
     <div id="preview-static" style="flex:1;display:flex;flex-direction:column;min-height:0;">
       <div class="canvas-wrapper" style="flex:1;">
         <div id="empty-notice">Awaiting data rendering execution...</div>
-        <img id="output-img" alt="Output">
+        <img id="output-img" alt="Output" />
       </div>
     </div>
 
@@ -863,7 +862,6 @@ select:focus,input[type="number"]:focus,input[type="text"]:focus{
       <a id="download-btn" class="btn-download" href="#">Export Package (ZIP)</a>
     </div>
   </div>
-
 </div><!-- app-layout -->
 </div><!-- app-shell -->
 
