@@ -982,8 +982,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
 
     # ── Survey/point markers (red filled circles) ─────────────────────────
     if pts_gdf is not None and not pts_gdf.empty:
-        pts_gdf.plot(ax=ax, color=ptc, markersize=18, zorder=8,
-                     marker="o", markeredgecolor=ptc, markeredgewidth=0.5)
+        pts_gdf.plot(ax=ax, color=ptc, markersize=18, zorder=8, marker="o")
         pt_lbl = "Sub-compartment Survey Points" if (
             poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns
         ) else "Survey Points"
