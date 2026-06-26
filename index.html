@@ -59,7 +59,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--t1);
 /* ─── HEADER ────────────────────────────────────────────────── */
 .hdr{
   display:flex;align-items:center;gap:16px;padding:0 20px;height:54px;
-  background:rgba(255,255,255,.92);backdrop-filter:blur(24px) saturate(1.4);
+  background:rgba(255,255,255,.92);backdrop-filter:blur(24px) saturate(5);
   border-bottom:1px solid var(--b1);flex-shrink:0;position:relative;z-index:10}
 .hdr::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;
   background:linear-gradient(90deg,transparent,rgba(29,158,117,.18) 30%,rgba(29,158,117,.18) 70%,transparent)}
@@ -479,7 +479,7 @@ select option{font-family:var(--sans)}
   <div class="login-card">
     <h2>🌲 GIS Engine Pro</h2>
     <p>Enter a username to access Premium Forest Studio</p>
-    <input type="text" id="login-inp" placeholder="Enter the UserName and Enter" maxlength="40"
+    <input type="text" id="login-inp" placeholder="Eg. Forest_1_A" maxlength="40"
            onkeydown="if(event.key==='Enter')doLogin()">
     <div class="login-err" id="lerr"></div>
     <div id="sugg">Try: <span onclick="trySugg(0)">…</span> <span onclick="trySugg(1)">…</span> <span onclick="trySugg(2)">…</span></div>
