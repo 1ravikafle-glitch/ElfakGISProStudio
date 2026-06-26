@@ -2,1882 +2,1509 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Elfak GIS Engine Pro — Premium Forest Studio</title>
-
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Elfak GIS Engine Pro</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root {
-    --bg-canopy: #000000;
-    --bg-glass: rgba(255, 255, 255, 0.55);
-    --bg-card: rgba(255, 255, 255, 0.55);
-    --border-soft: rgba(20, 40, 30, 0.09);
-    --border-active: #10b981;
-    --glow-mint: rgba(16, 185, 129, 0.18);
-
-    --white-pure: #ffffff;
-    --white-snow: #1c2b22;
-    --white-mist: #33453a;
-    --text-muted: #74897d;
-
-    --mint: #10b981;
-    --emerald-glow: linear-gradient(135deg, #34d399 0%, #059669 100%);
-    --amber-timber: #d97706;
-    --survey-blue: #65a30d;
-    --gold-accent: #059669;
-
-    --font-display: 'Space Grotesk', system-ui, sans-serif;
-    --font-body: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-
-    --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
-    --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-* {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(16, 185, 129, 0.3) transparent;
-}
-
-body {
-    margin: 0;
-    font-family: var(--font-body);
-    background: radial-gradient(circle at 50% 0%, #ffffff 0%, #eef7f0 45%, var(--bg-canopy) 100%);
-    color: var(--white-snow);
-    height: 100vh;
-    overflow: hidden;
-    -webkit-font-smoothing: antialiased;
-    position: relative;
-    user-select: none;
-}
-
-body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    opacity: 0.6;
-    mix-blend-mode: multiply;
-    background-image:
-        repeating-radial-gradient(circle at 18% 22%, transparent 0px, transparent 38px, rgba(101,163,13,0.05) 39px, transparent 41px, transparent 78px),
-        repeating-radial-gradient(circle at 85% 78%, transparent 0px, transparent 46px, rgba(16,185,129,0.04) 47px, transparent 49px, transparent 92px),
-        repeating-radial-gradient(circle at 78% 12%, transparent 0px, transparent 30px, rgba(5,150,105,0.035) 31px, transparent 33px, transparent 62px);
-}
-
-.app-shell {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    opacity: 0;
-    animation: shellEnter 0.7s var(--ease-smooth) forwards;
-}
-
-@keyframes shellEnter {
-    from { opacity: 0; transform: translateY(10px) scale(0.995); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.app-header {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 28px 14px;
-    animation: headerSlide 0.6s var(--ease-smooth) 0.05s both;
-}
-
-@keyframes headerSlide {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}
-
-.brand-mark {
-    width: 38px;
-    height: 38px;
-    border-radius: 11px;
-    background: linear-gradient(135deg, var(--gold-accent) 0%, var(--border-active) 100%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 6px 18px var(--glow-mint);
-    flex-shrink: 0;
-    transition: box-shadow 0.4s var(--ease-soft), transform 0.4s var(--ease-soft);
-}
-
-.brand:hover .brand-mark {
-    box-shadow: 0 8px 26px var(--glow-mint);
-    transform: rotate(-6deg) scale(1.05);
-}
-
-.brand-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.brand-name {
-    font-family: var(--font-display);
-    font-size: 16px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    color: var(--white-snow);
-}
-
-.brand-sub {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-}
-
-.header-readout {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-muted);
-}
-
-.header-readout .pip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.header-readout .pip-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #10b981;
-    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
-    animation: pulseGlow 2s infinite alternate;
-}
-
-.header-readout .pip-value {
-    color: var(--white-mist);
-    font-weight: 500;
-    transition: color 0.3s var(--ease-soft);
-    display: inline-block;
-}
-
-.app-layout {
-    display: grid;
-    grid-template-columns: 280px 10px 1fr 10px 420px;
-    flex: 1;
-    min-height: 0;
-    padding: 0 20px 20px;
-    box-sizing: border-box;
-    animation: layoutRise 0.7s var(--ease-smooth) 0.1s both;
-}
-
-@keyframes layoutRise {
-    from { opacity: 0; transform: translateY(14px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.layout-resizer {
-    position: relative;
-    z-index: 10;
-    transition: background 0.25s var(--ease-soft);
-    border-radius: 4px;
-}
-.layout-resizer::after {
-    content: '';
-    position: absolute;
-    border-radius: 3px;
-    background: rgba(16, 185, 129, 0.0);
-    transition: background 0.25s var(--ease-soft);
-}
-.layout-resizer.col-resizer::after {
-    top: 50%; left: 50%;
-    width: 3px; height: 36px;
-    transform: translate(-50%, -50%);
-}
-.layout-resizer.row-resizer::after {
-    top: 50%; left: 50%;
-    width: 36px; height: 3px;
-    transform: translate(-50%, -50%);
-}
-.layout-resizer:hover, .layout-resizer.dragging {
-    background: rgba(16, 185, 129, 0.18);
-}
-.layout-resizer:hover::after, .layout-resizer.dragging::after {
-    background: rgba(16, 185, 129, 0.55);
-}
-
-.layout-resizer.col-resizer {
-    cursor: col-resize;
-    width: 6px;
-    margin: 0 2px;
-    height: 100%;
-}
-
-.layout-resizer.row-resizer {
-    cursor: row-resize;
-    height: 6px;
-    margin: 2px 0;
-    width: 100%;
-}
-
-.holo-panel {
-    background: var(--bg-glass);
-    backdrop-filter: blur(30px);
-    -webkit-backdrop-filter: blur(30px);
-    border: 1px solid var(--border-soft);
-    border-radius: 20px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow: 0 10px 40px rgba(28, 60, 45, 0.10);
-    transition: border-color 0.4s var(--ease-soft), box-shadow 0.4s var(--ease-soft);
-    position: relative;
-    height: 100%;
-    min-width: 150px;
-    min-height: 80px;
-}
-
-.holo-panel:hover {
-    border-color: rgba(16, 185, 129, 0.22);
-    box-shadow: 0 14px 50px rgba(28, 60, 45, 0.14);
-}
-
-.holo-panel::after {
-    content: '';
-    position: absolute;
-    top: 10px; left: 10px;
-    width: 10px; height: 10px;
-    border-top: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-left: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-radius: 3px 0 0 0;
-    pointer-events: none;
-    transition: border-color 0.4s var(--ease-soft);
-}
-.holo-panel::before {
-    content: '';
-    position: absolute;
-    bottom: 10px; right: 10px;
-    width: 10px; height: 10px;
-    border-bottom: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-right: 1.5px solid rgba(16, 185, 129, 0.35);
-    border-radius: 0 0 3px 0;
-    pointer-events: none;
-    transition: border-color 0.4s var(--ease-soft);
-}
-.holo-panel:hover::after,
-.holo-panel:hover::before {
-    border-color: rgba(16, 185, 129, 0.6);
-}
-
-.panel-title {
-    font-family: var(--font-display);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: var(--white-mist);
-    opacity: 0.85;
-    padding: 16px 24px;
-    border-bottom: 1px solid rgba(241, 245, 249, 0.04);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.panel-title::before {
-    content: '';
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 1px;
-    background: #10b981;
-    box-shadow: 0 0 6px rgba(16, 185, 129, 0.55);
-    flex-shrink: 0;
-    transition: transform 0.4s var(--ease-soft), box-shadow 0.4s var(--ease-soft);
-}
-
-.holo-panel:hover .panel-title::before {
-    transform: rotate(45deg) scale(1.15);
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
-}
-
-.panel-scroll {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px 24px;
-    scroll-behavior: smooth;
-}
-
-.panel-scroll::-webkit-scrollbar,
-.config-stack::-webkit-scrollbar {
-    width: 6px;
-}
-.panel-scroll::-webkit-scrollbar-track,
-.config-stack::-webkit-scrollbar-track {
-    background: transparent;
-}
-.panel-scroll::-webkit-scrollbar-thumb,
-.config-stack::-webkit-scrollbar-thumb {
-    background: rgba(16, 185, 129, 0.25);
-    border-radius: 10px;
-    transition: background 0.25s var(--ease-soft);
-}
-.panel-scroll::-webkit-scrollbar-thumb:hover,
-.config-stack::-webkit-scrollbar-thumb:hover {
-    background: rgba(16, 185, 129, 0.5);
-}
-
-.tree-node {
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 13px;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
-    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
-                transform 0.3s var(--ease-soft), box-shadow 0.3s var(--ease-soft);
-}
-.tree-node:hover {
-    background: rgba(20, 40, 30, 0.05);
-    color: var(--white-snow);
-    transform: translateX(4px);
-}
-.tree-node:active {
-    transform: translateX(4px) scale(0.985);
-}
-.tree-node.active {
-    background: rgba(16, 185, 129, 0.12);
-    color: var(--white-snow);
-    font-weight: 600;
-    box-shadow: inset 1px 0 0 var(--border-active);
-}
-
-.workspace-split {
-    display: grid;
-    grid-template-rows: 1fr 6px 120px;
-    height: 100%;
-    min-height: 0;
-}
-
-.matrix-container {
-    display: flex;
-    gap: 24px;
-    height: 100%;
-}
-
-.matrix-selectors {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.matrix-tab {
-    width: 48px;
-    height: 48px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-soft);
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.35s var(--ease-smooth);
-}
-.matrix-tab:hover {
-    color: var(--white-snow);
-    border-color: rgba(28, 60, 45, 0.25);
-    transform: scale(1.06);
-}
-.matrix-tab:active {
-    transform: scale(0.97);
-}
-
-.matrix-tab.active-tab {
-    color: var(--white-snow);
-    background: rgba(16, 185, 129, 0.15);
-    border-color: var(--border-active);
-    box-shadow: 0 0 20px var(--glow-mint);
-    animation: pulseGlow 2s infinite alternate;
-}
-
-@keyframes pulseGlow {
-    0% { box-shadow: 0 0 12px rgba(16, 185, 129, 0.2); }
-    100% { box-shadow: 0 0 24px rgba(16, 185, 129, 0.45); }
-}
-
-.config-stack {
-    flex: 1;
-    overflow-y: auto;
-    padding-right: 6px;
-    scroll-behavior: smooth;
-}
-
-.group-content-card {
-    display: none;
-    flex-direction: column;
-    gap: 16px;
-}
-.group-content-card.active-card {
-    display: flex;
-    animation: cardEnter 0.4s var(--ease-smooth) both;
-}
-@keyframes cardEnter {
-    from { opacity: 0; transform: translateY(8px) scale(0.992); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
-.hidden {
-    display: none !important;
-    pointer-events: none;
-}
-
-.cyber-dropzone {
-    border: 1px dashed rgba(28, 60, 45, 0.18);
-    background: rgba(255, 255, 255, 0.35);
-    border-radius: 12px;
-    padding: 18px;
-    text-align: center;
-    cursor: pointer;
-    position: relative;
-    transition: border-color 0.35s var(--ease-soft), background 0.35s var(--ease-soft),
-                transform 0.35s var(--ease-soft), box-shadow 0.35s var(--ease-soft);
-}
-.cyber-dropzone:hover {
-    border-color: var(--border-active);
-    background: rgba(16, 185, 129, 0.04);
-    box-shadow: 0 6px 22px rgba(16, 185, 129, 0.10);
-    transform: translateY(-1px);
-}
-.cyber-dropzone:active {
-    transform: translateY(0) scale(0.995);
-}
-.cyber-dropzone.drag-over {
-    border-color: var(--border-active);
-    background: rgba(16, 185, 129, 0.08);
-    box-shadow: 0 0 0 3px var(--glow-mint);
-}
-.cyber-dropzone input[type="file"] {
-    position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;
-}
-.cyber-dropzone span {
-    font-size: 12px;
-    color: var(--white-mist);
-    font-weight: 500;
-    transition: color 0.3s var(--ease-soft);
-}
-.cyber-dropzone:hover span {
-    color: var(--white-snow);
-}
-
-.input-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-}
-
-.field-group label {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: 5px;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    transition: color 0.3s var(--ease-soft);
-}
-.field-group:focus-within label {
-    color: var(--mint);
-}
-
-.vector-badge {
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    color: #0d9488;
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    animation: cardEnter 0.35s var(--ease-smooth) both;
-}
-select, input[type="number"], input[type="text"] {
-    width: 100%;
-    background: rgba(255, 255, 255, 0.85);
-    border: 1px solid var(--border-soft);
-    border-radius: 8px;
-    padding: 0 12px;
-    color: #1c2b22;
-    font-family: var(--font-body);
-    font-size: 12px;
-    font-weight: 500;
-    outline: none;
-    box-sizing: border-box;
-    height: 32px;
-    transition: border-color 0.25s var(--ease-soft), background 0.25s var(--ease-soft),
-                box-shadow 0.25s var(--ease-soft), transform 0.15s var(--ease-soft);
-}
-select, input[type="number"] {
-    font-family: var(--font-mono);
-}
-select:hover, input[type="number"]:hover, input[type="text"]:hover {
-    border-color: rgba(28, 60, 45, 0.22);
-}
-select:focus, input[type="number"]:focus, input[type="text"]:focus {
-    border-color: var(--survey-blue);
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 0 10px rgba(101, 163, 13, 0.18);
-}
-input[type="text"]:focus {
-    border-color: var(--border-active);
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 0 10px var(--glow-mint);
-}
-
-.toggle-switch-container {
-    display: flex;
-    background: rgba(20, 40, 30, 0.05);
-    padding: 4px;
-    border-radius: 8px;
-    border: 1px solid var(--border-soft);
-}
-.toggle-option {
-    flex: 1;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
-    padding: 6px 0;
-    border-radius: 6px;
-    cursor: pointer;
-    color: var(--text-muted);
-    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
-                box-shadow 0.3s var(--ease-soft), transform 0.2s var(--ease-soft);
-}
-.toggle-option:hover {
-    color: var(--white-snow);
-}
-.toggle-option:active {
-    transform: scale(0.97);
-}
-.toggle-option.active-toggle {
-    background: var(--white-pure);
-    color: var(--white-snow);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-}
-
-.console-layout {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 28px;
-}
-
-.btn-cyber-run {
-    background: var(--emerald-glow);
-    border: none;
-    color: var(--white-pure);
-    padding: 12px 28px;
-    border-radius: 12px;
-    font-family: var(--font-display);
-    font-weight: 600;
-    font-size: 13px;
-    letter-spacing: 0.03em;
-    cursor: pointer;
-    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.2);
-    transition: transform 0.35s var(--ease-smooth), box-shadow 0.35s var(--ease-smooth), filter 0.3s var(--ease-soft);
-    position: relative;
-    overflow: hidden;
-}
-.btn-cyber-run::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.35) 50%, transparent 70%);
-    transform: translateX(-100%);
-    transition: transform 0.6s var(--ease-soft);
-}
-.btn-cyber-run:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.45);
-}
-.btn-cyber-run:hover::after {
-    transform: translateX(100%);
-}
-.btn-cyber-run:active {
-    transform: translateY(0) scale(0.985);
-    filter: brightness(0.97);
-}
-
-.radial-progress-box {
-    position: relative;
-    width: 56px;
-    height: 56px;
-    transition: transform 0.4s var(--ease-soft);
-}
-.radial-svg {
-    transform: rotate(-90deg);
-}
-.track-arc {
-    fill: none; stroke: rgba(28, 60, 45, 0.08); stroke-width: 4;
-}
-.fill-arc {
-    fill: none; stroke: var(--mint); stroke-width: 4;
-    stroke-linecap: round;
-    stroke-dasharray: 150.7; stroke-dashoffset: 150.7;
-    transition: stroke-dashoffset 0.8s var(--ease-soft), stroke 0.4s var(--ease-soft);
-}
-
-#status-headline {
-    transition: color 0.3s var(--ease-soft);
-}
-#status-headline.is-processing {
-    animation: pulse 1.1s infinite alternate;
-    color: var(--mint);
-}
-#status-headline.is-error {
-    color: #dc2626;
-}
-.radial-progress-box.is-processing {
-    animation: spinPulse 1.4s infinite linear;
-}
-@keyframes spinPulse {
-    0% { transform: rotate(0deg) scale(1); }
-    50% { transform: rotate(180deg) scale(1.04); }
-    100% { transform: rotate(360deg) scale(1); }
-}
-.fill-arc.is-error {
-    stroke: #dc2626 !important;
-}
-
-.visualizer-desk {
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-.canvas-wrapper {
-    flex: 1;
-    background-color: #0f0a12;
-    background-image:
-        linear-gradient(rgba(101, 163, 13, 0.045) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(101, 163, 13, 0.045) 1px, transparent 1px);
-    background-size: 28px 28px;
-    border: 1px solid rgba(241, 245, 249, 0.02);
-    border-radius: 16px;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: inset 0 10px 40px rgba(0,0,0,0.7);
-    transition: box-shadow 0.4s var(--ease-soft);
-}
-
-.canvas-wrapper::before {
-    content: ''; position: absolute; inset: 0;
-    border: 1px solid var(--border-active); border-radius: 16px;
-    pointer-events: none; opacity: 0.12;
-    transition: opacity 0.4s var(--ease-soft);
-}
-
-.canvas-wrapper.is-active::before {
-    opacity: 0.35;
-}
-
-#empty-notice {
-    font-size:12px;
-    font-family: var(--font-mono);
-    letter-spacing:0.04em;
-    color: var(--text-muted);
-    transition: opacity 0.4s var(--ease-soft);
-}
-
-#output-img {
-    max-width: 95%; max-height: 95%; object-fit: contain;
-    display: none; border-radius: 10px;
-    animation: imageReveal 0.6s var(--ease-smooth) forwards;
-}
-
-@keyframes imageReveal {
-    from { opacity: 0; transform: scale(0.96); filter: blur(6px); }
-    to { opacity: 1; transform: scale(1); filter: blur(0); }
-}
-
-.meta-footer {
-    margin-top: 18px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-}
-
-#run-meta {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    transition: color 0.3s var(--ease-soft);
-}
-
-.btn-download {
-    background: rgba(28, 43, 34, 0.06);
-    border: 1px solid var(--border-soft);
-    color: var(--white-snow);
-    padding: 8px 18px;
-    border-radius: 8px;
-    font-size: 12px;
-    text-decoration: none;
-    font-weight: 500;
-    display: none;
-    transition: background 0.3s var(--ease-soft), color 0.3s var(--ease-soft),
-                border-color 0.3s var(--ease-soft), transform 0.25s var(--ease-soft),
-                box-shadow 0.3s var(--ease-soft);
-}
-.btn-download.is-visible {
-    display: inline-block;
-    animation: cardEnter 0.4s var(--ease-smooth) both;
-}
-.btn-download:hover {
-    background: var(--white-snow);
-    color: var(--white-pure);
-    border-color: var(--white-snow);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 18px rgba(28, 43, 34, 0.25);
-}
-.btn-download:active {
-    transform: translateY(0) scale(0.98);
-}
-
-.btn-disabled {
-    opacity: 0.5;
-    pointer-events: none;
-}
-
-.loading-glow {
-    animation: pulse 1s infinite alternate;
-}
-
-@keyframes pulse {
-    from { opacity: 0.6; }
-    to { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-    }
-}
+/* ─── RESET & ROOT ─────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  /* palette */
+  --mint:#1d9e75; --mint-h:#0f6e56; --mint-l:#e1f5ee; --mint-m:#9fe1cb;
+  --amber:#f59e0b; --red:#ef4444; --blue:#3b82f6;
+  /* surfaces */
+  --bg:#f2f4f2;
+  --s0:#ffffff; --s1:#f7f8f7; --s2:#eef0ee;
+  /* text */
+  --t1:#111813; --t2:#4a5c52; --t3:#8aa096;
+  /* borders */
+  --b1:rgba(20,50,30,.09); --b2:rgba(20,50,30,.15); --b3:rgba(20,50,30,.22);
+  /* type */
+  --sans:'Inter',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  /* motion */
+  --ease:cubic-bezier(.22,1,.36,1);
+  --ease-in:cubic-bezier(.4,0,1,1);
+  --ease-out:cubic-bezier(0,0,.2,1);
+  --fast:120ms; --base:200ms; --slow:340ms; --xslow:500ms;
+  /* radii */
+  --r4:4px; --r6:6px; --r8:8px; --r12:12px; --r16:16px;
+  /* shadow */
+  --sh-sm:0 1px 3px rgba(10,40,20,.06),0 1px 2px rgba(10,40,20,.04);
+  --sh-md:0 4px 16px rgba(10,40,20,.08),0 1px 4px rgba(10,40,20,.04);
+  --sh-lg:0 12px 40px rgba(10,40,20,.12),0 4px 12px rgba(10,40,20,.06);
+}
+
+/* ─── BASE ─────────────────────────────────────────────────── */
+html,body{height:100%;overflow:hidden;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{font-family:var(--sans);background:var(--bg);color:var(--t1);
+  background-image:
+    radial-gradient(ellipse 60% 40% at 10% 0%,rgba(29,158,117,.05) 0,transparent 70%),
+    radial-gradient(ellipse 50% 50% at 90% 100%,rgba(29,158,117,.04) 0,transparent 70%)}
+*{scrollbar-width:thin;scrollbar-color:var(--b2) transparent}
+*::-webkit-scrollbar{width:4px;height:4px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px}
+
+/* ─── SHELL ─────────────────────────────────────────────────── */
+.shell{
+  display:flex;flex-direction:column;height:100vh;
+  opacity:0;transform:translateY(6px);
+  animation:shellIn var(--xslow) var(--ease) .05s forwards}
+@keyframes shellIn{to{opacity:1;transform:none}}
+
+/* ─── HEADER ────────────────────────────────────────────────── */
+.hdr{
+  display:flex;align-items:center;gap:16px;padding:0 20px;height:54px;
+  background:rgba(255,255,255,.92);backdrop-filter:blur(24px) saturate(1.4);
+  border-bottom:1px solid var(--b1);flex-shrink:0;position:relative;z-index:10}
+.hdr::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(29,158,117,.18) 30%,rgba(29,158,117,.18) 70%,transparent)}
+
+.logo{display:flex;align-items:center;gap:10px;flex-shrink:0;text-decoration:none}
+.logo-mark{
+  width:32px;height:32px;border-radius:9px;background:var(--mint);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  box-shadow:0 2px 8px rgba(29,158,117,.35);
+  transition:transform var(--slow) var(--ease),box-shadow var(--slow) var(--ease)}
+.logo-mark:hover{transform:rotate(-8deg) scale(1.08);box-shadow:0 4px 16px rgba(29,158,117,.45)}
+.logo-mark svg{width:16px;height:16px;fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.logo-label{display:flex;flex-direction:column;gap:1px}
+.logo-name{font-size:13px;font-weight:600;color:var(--t1);letter-spacing:-.01em;line-height:1}
+.logo-tag{font-size:9.5px;font-family:var(--mono);color:var(--t3);letter-spacing:.1em;text-transform:uppercase}
+
+.hdr-pills{display:flex;align-items:center;gap:6px;flex:1;padding:0 4px;flex-wrap:wrap}
+.pill{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 9px 3px 7px;border-radius:20px;
+  background:var(--mint-l);border:1px solid rgba(29,158,117,.2);
+  font-size:10px;font-family:var(--mono);color:var(--mint-h);
+  transition:border-color var(--base),background var(--base)}
+.pill-dot{width:5px;height:5px;border-radius:50%;background:var(--mint);flex-shrink:0;animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+
+.hdr-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.avatar{
+  width:28px;height:28px;border-radius:50%;background:var(--mint-l);border:1.5px solid var(--mint-m);
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--mint-h);
+  flex-shrink:0;transition:transform var(--base) var(--ease)}
+.avatar:hover{transform:scale(1.08)}
+.hdr-uname{font-size:12px;font-weight:500;color:var(--t2)}
+.hdr-btn{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:5px 11px;border-radius:var(--r6);
+  border:1px solid var(--b2);background:transparent;
+  font-size:11px;font-family:var(--sans);color:var(--t2);cursor:pointer;
+  transition:all var(--base) var(--ease)}
+.hdr-btn svg{width:13px;height:13px;flex-shrink:0;opacity:.7}
+.hdr-btn:hover{background:var(--mint-l);border-color:rgba(29,158,117,.3);color:var(--mint-h)}
+.hdr-btn:active{transform:scale(.97)}
+.hdr-btn.danger:hover{background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.3);color:#b91c1c}
+
+/* ─── MAIN GRID ──────────────────────────────────────────────── */
+.main{
+  display:grid;grid-template-columns:220px 1fr 360px;
+  flex:1;min-height:0;gap:10px;padding:10px 12px 12px;overflow:hidden}
+
+/* ─── PANELS ─────────────────────────────────────────────────── */
+.panel{
+  background:var(--s0);border:1px solid var(--b1);border-radius:var(--r12);
+  display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--sh-sm);
+  transition:border-color var(--base),box-shadow var(--base)}
+.panel:hover{border-color:var(--b2);box-shadow:var(--sh-md)}
+
+.panel-hd{
+  display:flex;align-items:center;gap:7px;
+  padding:11px 14px;border-bottom:1px solid var(--b1);
+  font-size:9.5px;font-family:var(--mono);font-weight:500;
+  text-transform:uppercase;letter-spacing:.1em;color:var(--t3);flex-shrink:0}
+.panel-hd-dot{
+  width:6px;height:6px;border-radius:2px;background:var(--mint);flex-shrink:0;
+  transition:transform var(--slow) var(--ease),border-radius var(--slow) var(--ease)}
+.panel:hover .panel-hd-dot{transform:rotate(45deg);border-radius:1px}
+.panel-body{flex:1;overflow-y:auto;padding:12px 13px;min-height:0}
+
+/* ─── LEFT NAV ───────────────────────────────────────────────── */
+.nav-group{margin-bottom:2px}
+.nav-item{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 10px;border-radius:var(--r8);
+  font-size:11.5px;color:var(--t2);cursor:pointer;
+  transition:all var(--base) var(--ease);position:relative}
+.nav-item svg{width:15px;height:15px;flex-shrink:0;opacity:.65;transition:opacity var(--base)}
+.nav-item:hover{background:var(--s2);color:var(--t1)}
+.nav-item:hover svg{opacity:.9}
+.nav-item:hover{transform:translateX(1.5px)}
+.nav-item.active{
+  background:var(--mint-l);color:var(--mint-h);font-weight:500}
+.nav-item.active svg{opacity:1;stroke:var(--mint)}
+.nav-item.active::before{
+  content:'';position:absolute;left:0;top:20%;bottom:20%;
+  width:2.5px;border-radius:2px;background:var(--mint)}
+
+.nav-divider{height:1px;background:var(--b1);margin:8px 0}
+
+/* ─── FORM ELEMENTS ──────────────────────────────────────────── */
+.fg{display:flex;flex-direction:column;gap:3px}
+.fg label{
+  font-size:9.5px;font-family:var(--mono);text-transform:uppercase;
+  letter-spacing:.08em;color:var(--t3);font-weight:500;
+  transition:color var(--base)}
+.fg:focus-within label{color:var(--mint)}
+
+select,input[type=number],input[type=text]{
+  width:100%;background:var(--s1);border:1px solid var(--b2);
+  border-radius:var(--r6);padding:6.5px 9px;
+  font-size:11.5px;color:var(--t1);font-family:var(--sans);outline:none;
+  transition:border-color var(--base),box-shadow var(--base),background var(--base)}
+select:hover,input:hover{border-color:var(--b3)}
+select:focus,input:focus{
+  border-color:var(--mint);background:var(--s0);
+  box-shadow:0 0 0 3px rgba(29,158,117,.12)}
+
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+
+/* ─── DROP ZONE ──────────────────────────────────────────────── */
+.dz{
+  border:1.5px dashed var(--b2);background:var(--s1);border-radius:var(--r8);
+  padding:14px;text-align:center;cursor:pointer;position:relative;
+  transition:all var(--slow) var(--ease)}
+.dz input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.dz-icon{font-size:22px;margin-bottom:4px;display:block;
+  transition:transform var(--slow) var(--ease)}
+.dz-main{font-size:11px;font-weight:500;color:var(--t2)}
+.dz-sub{font-size:10px;color:var(--t3);margin-top:2px;font-family:var(--mono)}
+.dz:hover{
+  border-color:var(--mint);background:var(--mint-l);
+  transform:translateY(-1px);box-shadow:0 4px 16px rgba(29,158,117,.1)}
+.dz:hover .dz-icon{transform:scale(1.15) translateY(-1px)}
+.dz.over{
+  border-color:var(--mint);background:var(--mint-l);
+  box-shadow:0 0 0 3px rgba(29,158,117,.15)}
+
+/* ─── TOGGLE TABS ────────────────────────────────────────────── */
+.toggle-row{
+  display:flex;border:1px solid var(--b2);border-radius:var(--r6);overflow:hidden;
+  background:var(--s1)}
+.tog{
+  flex:1;padding:5.5px 8px;text-align:center;
+  font-size:10.5px;font-family:var(--mono);font-weight:500;cursor:pointer;
+  color:var(--t3);transition:all var(--base) var(--ease)}
+.tog:hover:not(.on){background:var(--s0);color:var(--t2)}
+.tog.on{background:var(--mint-l);color:var(--mint-h);box-shadow:inset 0 -2px 0 var(--mint)}
+
+/* ─── BADGES ─────────────────────────────────────────────────── */
+.badge{
+  background:var(--s1);border:1px solid var(--b1);border-radius:var(--r6);
+  padding:8px 10px;font-size:10px;color:var(--t2);line-height:1.6}
+.badge strong{color:var(--mint-h);font-weight:500}
+.badge.info{background:rgba(59,130,246,.06);border-color:rgba(59,130,246,.2);color:#1e3a6e}
+.badge.warn{background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.22);color:#78400a}
+
+.sep{height:1px;background:var(--b1);margin:4px 0}
+
+/* ─── CENTER LAYOUT ──────────────────────────────────────────── */
+.center-col{display:grid;grid-template-rows:1fr auto;gap:10px;min-height:0}
+
+/* ─── MODULE TABS ────────────────────────────────────────────── */
+.mtabs{display:flex;gap:4px;padding:0 14px;margin-top:10px;margin-bottom:0;flex-shrink:0}
+.mtab{
+  width:32px;height:32px;border-radius:var(--r8);
+  background:var(--s1);border:1px solid var(--b1);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;font-weight:600;color:var(--t3);
+  cursor:pointer;transition:all var(--base) var(--ease)}
+.mtab:hover{background:var(--s0);color:var(--t2);border-color:var(--b2);transform:translateY(-1px)}
+.mtab:active{transform:scale(.93)}
+.mtab.active{
+  background:var(--mint-l);border-color:rgba(29,158,117,.35);color:var(--mint-h);
+  box-shadow:0 2px 8px rgba(29,158,117,.18)}
+
+.config-area{flex:1;overflow-y:auto;padding:14px;min-height:0}
+
+/* ─── CARDS (module panels) ──────────────────────────────────── */
+.card{display:none;flex-direction:column;gap:11px}
+.card.active{display:flex;animation:cardSlide var(--slow) var(--ease)}
+@keyframes cardSlide{
+  from{opacity:0;transform:translateY(8px)}
+  to  {opacity:1;transform:translateY(0)}}
+
+/* ─── CONSOLE BAR ────────────────────────────────────────────── */
+.console{
+  display:flex;align-items:center;gap:12px;
+  padding:11px 14px;flex-shrink:0;
+  background:var(--s0);border:1px solid var(--b1);border-radius:var(--r12);
+  box-shadow:var(--sh-sm)}
+
+.run-btn{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:9px 20px;border-radius:var(--r8);border:none;
+  background:var(--mint);color:#fff;
+  font-family:var(--sans);font-size:12.5px;font-weight:600;cursor:pointer;
+  box-shadow:0 3px 12px rgba(29,158,117,.35);flex-shrink:0;
+  transition:all var(--base) var(--ease)}
+.run-btn svg{width:14px;height:14px;flex-shrink:0}
+.run-btn:hover{background:var(--mint-h);transform:translateY(-1.5px) scale(1.01);box-shadow:0 6px 20px rgba(29,158,117,.42)}
+.run-btn:active{transform:scale(.97);box-shadow:0 2px 8px rgba(29,158,117,.3)}
+.run-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+
+.prog-wrap{flex:1;display:flex;flex-direction:column;gap:5px}
+.prog-top{display:flex;justify-content:space-between;align-items:baseline}
+.prog-lbl{font-size:12px;font-weight:500;color:var(--t1);transition:color var(--base)}
+.prog-lbl.running{color:var(--mint)}
+.prog-lbl.error{color:var(--red)}
+.prog-lbl.done{color:var(--mint-h)}
+.prog-pct{font-family:var(--mono);font-size:10px;color:var(--t3)}
+.prog-track{height:4px;background:var(--s2);border-radius:2px;overflow:hidden}
+.prog-fill{
+  height:100%;width:0%;background:var(--mint);border-radius:2px;
+  transition:width .6s var(--ease);position:relative;overflow:hidden}
+.prog-fill::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.35) 50%,transparent 100%);
+  animation:shimmer 1.8s ease-in-out infinite;
+  opacity:0;transition:opacity var(--base)}
+.prog-fill.running::after{opacity:1}
+@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(200%)}}
+.prog-fill.error{background:var(--red)}
+.prog-msg{font-size:10px;font-family:var(--mono);color:var(--t3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color var(--base)}
+
+/* ─── RIGHT PANEL ────────────────────────────────────────────── */
+.preview-panel{display:flex;flex-direction:column;gap:0}
+
+.ptabs{
+  display:flex;border-bottom:1px solid var(--b1);flex-shrink:0;padding:0 14px;gap:0}
+.ptab{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:10px 11px;font-size:10.5px;font-family:var(--mono);font-weight:500;
+  cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;
+  margin-bottom:-1px;transition:all var(--base) var(--ease)}
+.ptab svg{width:13px;height:13px;flex-shrink:0;transition:transform var(--base) var(--ease)}
+.ptab:hover{color:var(--t2)}
+.ptab.on{color:var(--mint-h);border-bottom-color:var(--mint)}
+.ptab.on svg{stroke:var(--mint)}
+
+.prev-body{flex:1;overflow-y:auto;padding:12px;min-height:0;display:flex;flex-direction:column;gap:8px}
+
+.canvas-wrap{
+  flex:1;min-height:200px;background:var(--s1);border-radius:var(--r8);
+  border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;
+  overflow:hidden;position:relative;transition:border-color var(--base)}
+.canvas-wrap:hover{border-color:var(--b2)}
+
+.empty-msg{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:8px;padding:24px;text-align:center}
+.empty-icon{
+  width:44px;height:44px;border-radius:var(--r12);background:var(--s2);
+  display:flex;align-items:center;justify-content:center;
+  animation:floatIcon 3s ease-in-out infinite}
+@keyframes floatIcon{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(-5px)}}
+.empty-icon svg{width:22px;height:22px;stroke:var(--t3);stroke-width:1.4}
+.empty-title{font-size:12px;font-weight:500;color:var(--t2)}
+.empty-sub{font-size:10px;font-family:var(--mono);color:var(--t3);line-height:1.6}
+
+#out-img{max-width:100%;max-height:100%;object-fit:contain;display:none;border-radius:var(--r6)}
+#osm-map{width:100%;height:100%;display:none;border-radius:var(--r6)}
+
+.prev-foot{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:9px 14px;border-top:1px solid var(--b1);flex-shrink:0}
+.run-meta{font-family:var(--mono);font-size:9.5px;color:var(--t3)}
+.dl-btn{
+  display:none;align-items:center;gap:5px;
+  padding:6px 13px;border-radius:var(--r6);
+  background:var(--mint-l);border:1px solid rgba(29,158,117,.3);
+  color:var(--mint-h);font-size:11.5px;font-weight:500;text-decoration:none;
+  transition:all var(--base) var(--ease)}
+.dl-btn svg{width:13px;height:13px;flex-shrink:0}
+.dl-btn:hover{background:var(--mint-m);box-shadow:0 2px 8px rgba(29,158,117,.2)}
+.dl-btn:active{transform:scale(.97)}
+
+/* ─── EDIT TOOLBAR ───────────────────────────────────────────── */
+.edit-bar{
+  display:none;flex-wrap:wrap;gap:4px;padding:8px 10px;
+  background:var(--s1);border:1px solid var(--b1);border-radius:var(--r8)}
+.edit-bar.visible{display:flex}
+.etool{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:4px 10px;border-radius:var(--r6);border:1px solid var(--b1);
+  background:var(--s0);font-size:10px;cursor:pointer;
+  font-family:var(--mono);color:var(--t2);
+  transition:all var(--base) var(--ease)}
+.etool svg{width:11px;height:11px;flex-shrink:0;opacity:.6}
+.etool:hover{background:var(--mint-l);border-color:rgba(29,158,117,.3);color:var(--mint-h)}
+.etool:hover svg{opacity:1}
+.etool.active-tool{background:var(--mint-l);border-color:var(--mint);color:var(--mint-h)}
+.etool.save{background:rgba(29,158,117,.1);border-color:rgba(29,158,117,.3);color:var(--mint-h)}
+.etool.save:hover{background:var(--mint-l)}
+
+/* ─── COMPOSER ───────────────────────────────────────────────── */
+.composer-body{display:flex;flex-direction:column;gap:8px}
+
+/* ─── LOGIN OVERLAY ──────────────────────────────────────────── */
+#login-overlay{
+  display:none;position:fixed;inset:0;z-index:9000;
+  background:rgba(5,20,10,.55);backdrop-filter:blur(28px) saturate(1.6);
+  align-items:center;justify-content:center}
+.login-card{
+  background:var(--s0);border-radius:18px;padding:36px 40px;
+  width:380px;max-width:92vw;
+  border:1px solid var(--b1);box-shadow:var(--sh-lg);
+  animation:loginIn .4s var(--ease)}
+@keyframes loginIn{
+  from{opacity:0;transform:scale(.95) translateY(10px)}
+  to  {opacity:1;transform:none}}
+.login-card h2{font-size:20px;font-weight:600;color:var(--t1);margin-bottom:4px}
+.login-card p{font-size:12px;color:var(--t3);margin-bottom:22px;line-height:1.6}
+.login-card input{
+  width:100%;padding:10px 13px;border:1px solid var(--b2);border-radius:var(--r8);
+  font-size:13px;font-family:var(--sans);outline:none;
+  background:var(--s1);color:var(--t1);
+  transition:border-color var(--base),box-shadow var(--base),background var(--base)}
+.login-card input:focus{border-color:var(--mint);background:var(--s0);box-shadow:0 0 0 3px rgba(29,158,117,.12)}
+.login-card input.taken{border-color:var(--red);box-shadow:0 0 0 3px rgba(239,68,68,.1)}
+#login-go{
+  width:100%;margin-top:14px;padding:11px;
+  background:var(--mint);color:#fff;border:none;border-radius:var(--r8);
+  font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans);
+  box-shadow:0 3px 12px rgba(29,158,117,.35);
+  transition:all var(--base) var(--ease)}
+#login-go:hover{background:var(--mint-h);transform:translateY(-1px);box-shadow:0 5px 18px rgba(29,158,117,.4)}
+#login-go:active{transform:scale(.98)}
+#login-go:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.login-err{
+  display:none;font-size:11px;margin-top:8px;padding:7px 10px;border-radius:var(--r6);
+  background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);color:#c21f1f}
+.login-err.taken-msg{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.22);color:#92400e}
+#sugg{display:none;margin-top:8px;font-size:10.5px;color:var(--t3);line-height:1.8}
+#sugg span{
+  cursor:pointer;padding:2px 7px;border-radius:var(--r4);
+  background:var(--mint-l);color:var(--mint-h);font-weight:500;margin:0 3px;
+  transition:background var(--base)}
+#sugg span:hover{background:var(--mint-m)}
+
+/* ─── HISTORY DRAWER ─────────────────────────────────────────── */
+#hist-drawer{
+  position:fixed;right:-340px;top:0;height:100%;width:320px;z-index:8500;
+  background:var(--s0);border-left:1px solid var(--b1);box-shadow:var(--sh-lg);
+  display:flex;flex-direction:column;
+  transition:right var(--slow) var(--ease)}
+#hist-drawer.open{right:0}
+.drawer-hd{
+  padding:16px 18px;border-bottom:1px solid var(--b1);
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.drawer-title{font-size:13px;font-weight:600;color:var(--t1);display:flex;align-items:center;gap:7px}
+.drawer-title svg{width:16px;height:16px;stroke:var(--mint)}
+.close-drawer{
+  background:var(--s1);border:1px solid var(--b1);border-radius:var(--r6);
+  padding:4px 9px;cursor:pointer;font-size:13px;color:var(--t3);
+  transition:all var(--base)}
+.close-drawer:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.2);color:#c21f1f}
+.drawer-body{flex:1;overflow-y:auto;padding:12px 14px}
+.run-card{
+  border:1px solid var(--b1);border-radius:var(--r8);padding:10px 12px;
+  margin-bottom:8px;background:var(--s0);
+  transition:all var(--base) var(--ease);cursor:default}
+.run-card:hover{border-color:var(--b2);box-shadow:var(--sh-sm);transform:translateY(-1px)}
+.run-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.run-mod{
+  font-family:var(--mono);font-size:9.5px;font-weight:600;color:var(--mint-h);
+  background:var(--mint-l);padding:2px 7px;border-radius:var(--r4)}
+.run-time{font-family:var(--mono);font-size:9px;color:var(--t3)}
+.run-actions{display:flex;gap:5px;margin-top:7px}
+.run-act{
+  flex:1;padding:5px 0;border:1px solid var(--b1);border-radius:var(--r6);
+  background:var(--s1);font-size:10.5px;cursor:pointer;
+  font-family:var(--sans);color:var(--t2);transition:all var(--base)}
+.run-act:hover{background:var(--mint-l);border-color:rgba(29,158,117,.3);color:var(--mint-h)}
+#hist-bg{
+  display:none;position:fixed;inset:0;z-index:7999;
+  background:rgba(0,0,0,.1);backdrop-filter:blur(2px);
+  transition:opacity var(--base)}
+
+/* ─── SLOPE CLASS GRID ───────────────────────────────────────── */
+.slope-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:4px}
+.slope-cls{
+  padding:7px 6px;border-radius:var(--r6);text-align:center;
+  transition:transform var(--base) var(--ease)}
+.slope-cls:hover{transform:scale(1.03)}
+.slope-cls-n{font-size:10px;font-weight:600;margin-bottom:2px}
+.slope-cls-d{font-size:9px;opacity:.85}
+
+/* ─── CRS SELECT ─────────────────────────────────────────────── */
+.crs-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  font-family:var(--mono);font-size:9.5px;padding:2px 8px;
+  background:var(--mint-l);color:var(--mint-h);border-radius:20px;
+  border:1px solid rgba(29,158,117,.2)}
+
+/* ─── UTILS ──────────────────────────────────────────────────── */
+.hidden{display:none!important}
+.flex-col{display:flex;flex-direction:column;gap:8px}
+
+/* ─── ENTRANCE STAGGER ───────────────────────────────────────── */
+.panel:nth-child(1){animation:panelIn var(--slow) var(--ease) .12s both}
+.panel:nth-child(2){animation:panelIn var(--slow) var(--ease) .18s both}
+.panel:nth-child(3){animation:panelIn var(--slow) var(--ease) .24s both}
+@keyframes panelIn{
+  from{opacity:0;transform:translateY(10px)}
+  to  {opacity:1;transform:none}}
+
+/* ─── OSM IDLE ───────────────────────────────────────────────── */
+.osm-idle{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;width:100%;height:100%;color:var(--t3);
+  font-family:var(--mono);font-size:10px;text-align:center;padding:20px}
+.osm-idle svg{width:32px;height:32px;stroke:var(--b3);stroke-width:1.2;animation:floatIcon 3s ease-in-out infinite}
+
+/* scrollbar on select */
+select option{font-family:var(--sans)}
+
+/* focus ring for accessibility */
+:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
 </style>
 </head>
-
 <body>
 
-<div class="app-shell">
-
-    <header class="app-header">
-        <div class="brand">
-            <div class="brand-mark">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="9" stroke="#06231a" stroke-width="1.6"/>
-                    <path d="M12 4 L14.2 11 L20 12 L14.2 13 L12 20 L9.8 13 L4 12 L9.8 11 Z" fill="#06231a"/>
-                </svg>
-            </div>
-            <div class="brand-text">
-                <div class="brand-name">Elfak GIS Engine Pro</div>
-                <div class="brand-sub">Premium Forest Studio</div>
-            </div>
-        </div>
-        <div class="header-readout">
-            <div class="pip"><span class="pip-dot"></span><span>Engine Status</span><span class="pip-value">Online</span></div>
-            <div class="pip"><span>Projection</span><span class="pip-value" id="header-crs">EPSG:32644</span></div>
-            <div class="pip"><span>Module</span><span class="pip-value" id="header-module">A · Boundary Whole</span></div>
-        </div>
-    </header>
-
-    <div class="app-layout" id="main-layout-container">
-
-        <div class="holo-panel">
-            <div class="panel-title">Forest Map Navigator</div>
-            <div class="panel-scroll">
-                <div class="tree-node active" onclick="switchTab('A')">🌲 Group A — Boundary Whole</div>
-                <div class="tree-node" onclick="switchTab('B')">🌲 Group B — Segment Forest</div>
-                <div class="tree-node" onclick="switchTab('C')">🌲 Group C — Sample Plot</div>
-                <div class="tree-node" onclick="switchTab('D')">🌲 Group D — Complex Version A</div>
-                <div class="tree-node" onclick="switchTab('E')">✂️ Group E — Polygon Subdivider</div>
-                <div class="tree-node" onclick="switchTab('F')">🏔️ Group F — Slope Analysis</div>
-
-                <div style="margin-top: 35px;">
-                    <div class="field-group">
-                        <label>Target GIS Projection</label>
-                        <select id="zone" onchange="document.getElementById('header-crs').textContent = 'EPSG:326' + this.value">
-                            <option value="44">UTM Zone 44N (EPSG:32644)</option>
-                            <option value="45">UTM Zone 45N (EPSG:32645)</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="layout-resizer col-resizer" id="left-col-handle"></div>
-        <div class="workspace-split" id="center-workspace-container">
-
-            <div class="holo-panel">
-                <div class="panel-title">Parameter Settings Matrix</div>
-                <div class="panel-scroll matrix-container">
-
-                    <div class="matrix-selectors">
-                        <div class="matrix-tab active-tab" id="tab-A" onclick="switchTab('A')">A</div>
-                        <div class="matrix-tab" id="tab-B" onclick="switchTab('B')">B</div>
-                        <div class="matrix-tab" id="tab-C" onclick="switchTab('C')">C</div>
-                        <div class="matrix-tab" id="tab-D" onclick="switchTab('D')">D</div>
-                        <div class="matrix-tab" id="tab-E" onclick="switchTab('E')">E</div>
-                        <div class="matrix-tab" id="tab-F" onclick="switchTab('F')">F</div>
-                    </div>
-
-                    <div class="config-stack">
-
-                        <!-- GROUP A -->
-                        <div class="group-content-card active-card" id="card-A">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select Excel Data</span>
-                                <input type="file" class="file">
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order Vector</label><select data-key="Order"></select></div>
-                                <div class="field-group">
-                                    <label>Enter Forest Name</label>
-                                    <input type="text" data-key="forest" value="FOREST" placeholder="Enter Forest Name">
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- GROUP B -->
-                        <div class="group-content-card" id="card-B">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Select Excel Data</span><input type="file" class="file"></div>
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
-                            </div>
-                            <div class="field-group"><label>Compartment Identifier</label><select data-key="Compartment"></select></div>
-                        </div>
-
-                        <!-- GROUP C -->
-                        <div class="group-content-card" id="card-C">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✨ Select Spatial Source (CSV/XLS or ZIP)</span>
-                                <input type="file" class="file" id="file-c">
-                            </div>
-
-                            <div id="c-dynamic-content">
-                                <div class="field-group" id="c-mode-selector-wrapper">
-                                    <label>Mode Selection</label>
-                                    <div class="toggle-switch-container">
-                                        <div class="toggle-option active-toggle" id="c-toggle-A" onclick="setGroupCSubMode('A')">Simple Poly</div>
-                                        <div class="toggle-option" id="c-toggle-B" onclick="setGroupCSubMode('B')">Segmented</div>
-                                    </div>
-                                </div>
-
-                                <div id="c-zip-notice" class="field-group hidden">
-                                    <div class="vector-badge">
-                                        <div style="font-weight: 600; margin-bottom: 2px;">📦 Archive Bundle Map Detected</div>
-                                        <div style="font-size: 10px; opacity: 0.8; margin-bottom: 8px;">Skipping XY matching. Select target layer from the package:</div>
-                                        <div class="field-group" style="width: 100%;">
-                                            <label style="color: #064e3b;">Target Vector Layer (.shp)</label>
-                                            <select id="c-shp-selector" style="background: #ffffff; border-color: rgba(16, 185, 129, 0.4); color: #064e3b;"></select>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div id="c-coordinate-fields-container">
-                                    <div class="input-row" id="c-vector-row-1">
-                                        <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                        <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                                    </div>
-                                    <div class="input-row" id="c-vector-row-2">
-                                        <div class="field-group"><label>Order Vector</label><select data-key="Order"></select></div>
-                                        <div class="field-group hidden" id="c-forest-wrapper">
-                                            <label>Forest Identifier</label>
-                                            <select data-key="Forest"></select>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="field-group" style="margin-top: 4px;">
-                                    <label>Sample Grid Settings (leave blank for defaults)</label>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group">
-                                        <label>Cell Width — w (default 50)</label>
-                                        <input type="number" id="c-grid-w" min="0.01" step="any" placeholder="50">
-                                    </div>
-                                    <div class="field-group">
-                                        <label>Cell Height — h (default 50)</label>
-                                        <input type="number" id="c-grid-h" min="0.01" step="any" placeholder="50">
-                                    </div>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group">
-                                        <label>Grid Rows (default 10)</label>
-                                        <input type="number" id="c-grid-rows" min="1" step="1" placeholder="10">
-                                    </div>
-                                    <div class="field-group">
-                                        <label>Grid Cols (default 10)</label>
-                                        <input type="number" id="c-grid-cols" min="1" step="1" placeholder="10">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- GROUP D -->
-                        <div class="group-content-card" id="card-D">
-                            <div class="cyber-dropzone"><span class="dz-text">✨ Click or Drop Multi-Forest File</span><input type="file" class="file"></div>
-
-                            <div class="field-group">
-                                <label>Mode Selection</label>
-                                <div class="toggle-switch-container">
-                                    <div class="toggle-option active-toggle" id="d-toggle-A" onclick="setGroupDSubMode('A')">Whole Forest</div>
-                                    <div class="toggle-option" id="d-toggle-B" onclick="setGroupDSubMode('B')">Segmented</div>
-                                </div>
-                            </div>
-
-                            <div class="vector-badge" id="d-mode-hint">
-                                <div style="font-weight:600;" id="d-hint-title">📂 One folder per Forest</div>
-                                <div style="font-size:10px;opacity:0.8;" id="d-hint-sub">Forest_A/ → Polygon.shp · Line.shp · Point.shp</div>
-                            </div>
-
-                            <div class="input-row">
-                                <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                            </div>
-                            <div class="input-row">
-                                <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                <div class="field-group"><label>Forest Identifier</label><select data-key="Forest"></select></div>
-                            </div>
-
-                            <div class="field-group" id="d-comp-wrapper" style="display:none;">
-                                <label>Compartment Identifier</label>
-                                <select data-key="Compartment"></select>
-                            </div>
-                        </div>
-
-                        <!-- GROUP E -->
-                        <div class="group-content-card" id="card-E">
-                            <div class="cyber-dropzone">
-                                <span class="dz-text">✂️ Select Boundary File (CSV/XLS or ZIP)</span>
-                                <input type="file" class="file" id="file-e">
-                            </div>
-
-                            <div id="e-zip-notice" class="field-group hidden">
-                                <div class="vector-badge">
-                                    <div style="font-weight:600;margin-bottom:2px;">📦 Archive Bundle Detected</div>
-                                    <div style="font-size:10px;opacity:0.8;margin-bottom:8px;">Select the polygon layer to subdivide:</div>
-                                    <div class="field-group" style="width:100%;">
-                                        <label style="color:#064e3b;">Target Polygon Layer (.shp)</label>
-                                        <select id="e-shp-selector" style="background:#ffffff;border-color:rgba(16,185,129,0.4);color:#064e3b;"></select>
-                                    </div>
-                                    <div style="font-size:10px;opacity:0.75;margin-top:6px;">Each polygon feature in the layer will be subdivided independently into <span id="e-zip-n-display">4</span> compartments.</div>
-                                </div>
-                            </div>
-
-                            <div id="e-csv-fields">
-                                <div class="field-group">
-                                    <label>Forest Input Mode</label>
-                                    <div class="toggle-switch-container">
-                                        <div class="toggle-option active-toggle" id="e-toggle-A" onclick="setGroupESubMode('A')">Single Forest</div>
-                                        <div class="toggle-option" id="e-toggle-B" onclick="setGroupESubMode('B')">Multi-Forest</div>
-                                    </div>
-                                </div>
-
-                                <div class="vector-badge" id="e-mode-hint">
-                                    <div style="font-weight:600;" id="e-hint-title">✂️ One forest → N compartments</div>
-                                    <div style="font-size:10px;opacity:0.8;" id="e-hint-sub">compartments.shp · compartment_summary.xlsx</div>
-                                </div>
-
-                                <div class="input-row">
-                                    <div class="field-group"><label>X Coordinate</label><select data-key="X"></select></div>
-                                    <div class="field-group"><label>Y Coordinate</label><select data-key="Y"></select></div>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group"><label>Point Order</label><select data-key="Order"></select></div>
-                                    <div class="field-group" id="e-forest-wrapper" style="display:none;">
-                                        <label>Forest Identifier</label>
-                                        <select data-key="Forest"></select>
-                                    </div>
-                                    <div class="field-group" id="e-forestname-wrapper">
-                                        <label>Forest Name</label>
-                                        <input type="text" data-key="forest" value="FOREST" placeholder="Forest name">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="field-group">
-                                <label>Number of Compartments to Create</label>
-                                <input type="number" id="e-n-compartments" min="2" max="200" step="1" value="4"
-                                       placeholder="4" oninput="document.getElementById('e-zip-n-display').textContent=this.value||4">
-                            </div>
-
-                            <div class="vector-badge" style="background:rgba(101,163,13,0.08);border-color:rgba(101,163,13,0.3);">
-                                <div style="font-weight:600;color:#3f6212;">🌳 Bisection Algorithm</div>
-                                <div style="font-size:10px;opacity:0.85;color:#3f6212;">Iteratively splits along the longest axis at area-balanced positions. Each compartment will be near-equal in area. Output includes Area_ha, Perim_m, and Pct_Area per compartment.</div>
-                            </div>
-                        </div>
-
-                        <!-- GROUP F -->
-                        <div class="group-content-card" id="card-F">
-
-                            <div class="field-group">
-                                <label>Step 1 — Forest Boundary (CSV/XLS or ZIP/SHP)</label>
-                            </div>
-                            <div class="cyber-dropzone" id="f-boundary-drop">
-                                <span class="dz-text" id="f-boundary-label">🌲 Upload Boundary File</span>
-                                <input type="file" id="file-f-boundary" accept=".csv,.xlsx,.xls,.zip">
-                            </div>
-
-                            <div id="f-zip-notice" class="field-group hidden">
-                                <div class="vector-badge">
-                                    <div style="font-weight:600;margin-bottom:2px;">📦 Archive Detected</div>
-                                    <div style="font-size:10px;opacity:0.8;margin-bottom:8px;">Select the boundary polygon layer:</div>
-                                    <div class="field-group" style="width:100%;">
-                                        <label style="color:#064e3b;">Target Polygon Layer (.shp)</label>
-                                        <select id="f-shp-selector" style="background:#ffffff;border-color:rgba(16,185,129,0.4);color:#064e3b;"></select>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div id="f-csv-fields">
-                                <div class="input-row">
-                                    <div class="field-group"><label>X Coordinate</label><select id="f-x-col"><option>X</option></select></div>
-                                    <div class="field-group"><label>Y Coordinate</label><select id="f-y-col"><option>Y</option></select></div>
-                                </div>
-                                <div class="input-row">
-                                    <div class="field-group"><label>Point Order</label><select id="f-order-col"><option value="">— none —</option></select></div>
-                                    <div class="field-group"><label>Forest Name</label>
-                                        <input type="text" id="f-forest-name" value="FOREST" placeholder="Forest name">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="field-group" style="margin-top:4px;">
-                                <label>Step 2 — Raw DEM GeoTIFF (slope computed automatically)</label>
-                            </div>
-                            <div class="cyber-dropzone" id="f-dem-drop">
-                                <span class="dz-text" id="f-dem-label">🏔️ Upload DEM (.tif / .tiff)</span>
-                                <input type="file" id="file-f-dem" accept=".tif,.tiff">
-                            </div>
-
-                            <div class="vector-badge" style="background:rgba(101,163,13,0.08);border-color:rgba(101,163,13,0.3);">
-                                <div style="font-weight:600;color:#3f6212;">📊 Output Slope Classes</div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px;">
-                                    <div style="background:#2ecc71;color:white;border-radius:6px;padding:6px;text-align:center;font-size:10px;font-weight:600;">
-                                        Class 1<br>&lt; 19°<br><span style="font-weight:400;">Gentle</span>
-                                    </div>
-                                    <div style="background:#f39c12;color:white;border-radius:6px;padding:6px;text-align:center;font-size:10px;font-weight:600;">
-                                        Class 2<br>19 – 31°<br><span style="font-weight:400;">Moderate</span>
-                                    </div>
-                                    <div style="background:#e74c3c;color:white;border-radius:6px;padding:6px;text-align:center;font-size:10px;font-weight:600;">
-                                        Class 3<br>&gt; 31°<br><span style="font-weight:400;">Steep</span>
-                                    </div>
-                                </div>
-                                <div style="font-size:10px;opacity:0.8;margin-top:8px;color:#3f6212;">
-                                    Outputs: slope_clipped.tif · slope_classes.tif · slope_polygon.shp · slope_summary.xlsx
-                                </div>
-                            </div>
-
-                        </div>
-
-                    </div>
-                </div>
-            </div>
-
-            <div class="layout-resizer row-resizer" id="center-row-handle"></div>
-
-            <div class="holo-panel console-layout">
-                <div>
-                    <button class="btn-cyber-run" onclick="runPipeline()">Execute Process</button>
-                </div>
-                <div style="display: flex; align-items: center; gap: 16px;">
-                    <div style="text-align: right;">
-                        <div id="status-headline" style="font-size:12px; font-weight:600; font-family: var(--font-display); color:var(--white-snow);">Core Standby</div>
-                        <div id="status-sub" style="font-size:10px; font-family: var(--font-mono); letter-spacing:0.04em; color:var(--text-muted); margin-top:2px;">Topology Balanced</div>
-                    </div>
-                    <div class="radial-progress-box">
-                        <svg class="radial-svg" width="56" height="56">
-                            <circle class="track-arc" cx="28" cy="28" r="24"></circle>
-                            <circle class="fill-arc" id="radial-bar" cx="28" cy="28" r="24"></circle>
-                        </svg>
-                    </div>
-                </div>
-            </div>
-
-        </div>
-
-        <div class="layout-resizer col-resizer" id="right-col-handle"></div>
-
-        <div class="holo-panel visualizer-desk">
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 12px 0;">
-                <div class="panel-title" style="padding:0;">Dynamic Preview</div>
-                <div class="toggle-switch-container" style="width:auto;gap:0;" id="preview-tab-bar">
-                    <div class="toggle-option active-toggle" id="ptab-static" onclick="switchPreviewTab('static')"
-                         style="padding:5px 14px;font-size:10px;">🗺 Static</div>
-                    <div class="toggle-option" id="ptab-ge" onclick="switchPreviewTab('ge')"
-                         style="padding:5px 14px;font-size:10px;">🌍 Google Earth</div>
-                </div>
-            </div>
-
-            <!-- Static preview -->
-            <div id="preview-static" style="flex:1;display:flex;flex-direction:column;min-height:0;">
-                <div class="canvas-wrapper" id="static-canvas-wrapper" style="flex:1;">
-                    <div id="empty-notice">Awaiting data rendering execution...</div>
-                    <img id="output-img" alt="Spatial Matrix Layout Output Workspace">
-                </div>
-            </div>
-
-            <!-- Google Earth Web panel -->
-            <div id="preview-ge" style="flex:1;display:none;flex-direction:column;min-height:0;">
-                <div id="ge-idle" class="canvas-wrapper" style="flex:1;flex-direction:column;gap:14px;">
-                    <div style="font-size:28px;">🌍</div>
-                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:center;max-width:240px;line-height:1.6;">
-                        Run the pipeline first, then open your output in Google Earth Web.
-                    </div>
-                </div>
-                <div id="ge-ready" style="display:none;flex:1;flex-direction:column;gap:12px;">
-                    <div style="flex:1;border-radius:14px;overflow:hidden;border:1px solid var(--border-soft);position:relative;min-height:200px;">
-                        <iframe id="ge-iframe"
-                            src="about:blank"
-                            style="width:100%;height:100%;border:none;border-radius:14px;"
-                            allowfullscreen
-                            title="Google Earth Web Preview">
-                        </iframe>
-                        <div id="ge-iframe-overlay"
-                             style="position:absolute;inset:0;display:flex;flex-direction:column;
-                                    align-items:center;justify-content:center;gap:16px;
-                                    background:rgba(15,10,18,0.85);border-radius:14px;
-                                    font-family:var(--font-mono);color:var(--text-muted);">
-                            <div style="font-size:32px;">🌍</div>
-                            <div style="font-size:11px;text-align:center;max-width:260px;line-height:1.7;">
-                                Click <strong style="color:var(--mint);">Open in Google Earth</strong> below to view your output on the live globe.
-                                <br><br>
-                                Or download the <strong style="color:var(--mint);">KMZ file</strong> and open it in Google Earth Desktop / Pro.
-                            </div>
-                        </div>
-                    </div>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                        <a id="ge-open-btn" href="#" target="_blank"
-                           class="btn-cyber-run"
-                           style="flex:1;text-align:center;text-decoration:none;padding:10px 12px;font-size:12px;">
-                            🌍 Open in Google Earth Web
-                        </a>
-                        <a id="ge-kmz-btn" href="#"
-                           class="btn-download is-visible"
-                           style="flex:0 0 auto;padding:10px 14px;">
-                            ⬇ KMZ File
-                        </a>
-                    </div>
-                    <div id="ge-coords" style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-align:center;"></div>
-                </div>
-            </div>
-
-            <div class="meta-footer">
-                <div>
-                    <div id="run-meta">Metrics: Ready</div>
-                </div>
-                <a id="download-btn" class="btn-download" href="#">Export Package (ZIP)</a>
-            </div>
-        </div>
-
-    </div>
-
+<!-- ── LOGIN ── -->
+<div id="login-overlay">
+  <div class="login-card">
+    <h2>🌲 GIS Engine Pro</h2>
+    <p>Enter a username to access Premium Forest Studio</p>
+    <input type="text" id="login-inp" placeholder="Enter the UserName and Enter" maxlength="40"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <div class="login-err" id="lerr"></div>
+    <div id="sugg">Try: <span onclick="trySugg(0)">…</span> <span onclick="trySugg(1)">…</span> <span onclick="trySugg(2)">…</span></div>
+    <button id="login-go" onclick="doLogin()">Enter Studio →</button>
+  </div>
 </div>
 
+<!-- ── HISTORY DRAWER ── -->
+<div id="hist-drawer">
+  <div class="drawer-hd">
+    <div class="drawer-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M3.05 11a9 9 0 1 0 .5-3"/><path d="M3 4v4h4"/></svg>
+      Run History
+    </div>
+    <button class="close-drawer" onclick="toggleHist()">✕</button>
+  </div>
+  <div class="drawer-body" id="hist-body">
+    <div style="text-align:center;color:var(--t3);font-size:11px;padding:40px 20px;font-family:var(--mono)">No runs yet.</div>
+  </div>
+</div>
+<div id="hist-bg" onclick="toggleHist()"></div>
+
+<!-- ── SHELL ── -->
+<div class="shell">
+
+  <!-- HEADER -->
+  <header class="hdr">
+    <a class="logo" href="#">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3C8 3 5 7 5 11c0 5 7 10 7 10s7-5 7-10c0-4-3-8-7-8z"/>
+          <circle cx="12" cy="11" r="2.5"/>
+        </svg>
+      </div>
+      <div class="logo-label">
+        <div class="logo-name">Elfak GIS Engine</div>
+        <div class="logo-tag">Premium Forest Studio</div>
+      </div>
+    </a>
+
+    <div class="hdr-pills">
+      <div class="pill">
+        <span class="pill-dot"></span>Engine online
+      </div>
+      <div class="pill">Projection: <strong id="hdr-crs" style="margin-left:3px">EPSG:32644</strong></div>
+      <div class="pill">Module: <strong id="hdr-mod" style="margin-left:3px">A · Boundary</strong></div>
+    </div>
+
+    <div class="hdr-right" id="user-bar" style="display:none">
+      <div class="avatar" id="uavatar">?</div>
+      <span class="hdr-uname" id="uname"></span>
+      <button class="hdr-btn" onclick="toggleHist()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M3.05 11a9 9 0 1 0 .5-3"/><path d="M3 4v4h4"/></svg>
+        History <span id="hcnt" style="font-weight:600"></span>
+      </button>
+      <button class="hdr-btn danger" onclick="doLogout()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign out
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- ── LEFT NAV ── -->
+    <div class="panel">
+      <div class="panel-hd"><span class="panel-hd-dot"></span>Module Navigator</div>
+      <div class="panel-body">
+        <div class="nav-group">
+          <div class="nav-item active" onclick="switchTab('A',this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+            A — Boundary
+          </div>
+          <div class="nav-item" onclick="switchTab('B',this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1M3 12h14"/><circle cx="5" cy="12" r="2"/></svg>
+            B — Segmented Forest
+          </div>
+          <div class="nav-item" onclick="switchTab('C',this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            C — Sample Plot
+          </div>
+          <div class="nav-item" onclick="switchTab('D',this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+            D — Multi-Forest
+          </div>
+          <div class="nav-item" onclick="switchTab('E',this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4H8.12a2 2 0 0 0-1.99 1.8L6 13"/><path d="M20 20H8.12a2 2 0 0 1-1.99-1.8L6 11"/></svg>
+            E — Subdivider
+          </div>
+          <div class="nav-item" onclick="switchTab('F',this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 4-8 4 4 4-6 4 10H3z"/></svg>
+            F — Slope Analysis
+          </div>
+        </div>
+
+        <div class="nav-divider"></div>
+
+        <div class="fg">
+          <label>UTM Zone / CRS</label>
+          <select id="zone" onchange="document.getElementById('hdr-crs').textContent='EPSG:326'+this.value">
+            <option value="44">Zone 44N — EPSG:32644</option>
+            <option value="45">Zone 45N — EPSG:32645</option>
+            <option value="43">Zone 43N — EPSG:32643</option>
+            <option value="46">Zone 46N — EPSG:32646</option>
+            <option value="42">Zone 42N — EPSG:32642</option>
+          </select>
+        </div>
+
+        <div class="nav-divider"></div>
+
+        <div class="fg"><label>Map Title</label>
+          <input type="text" id="g-title" placeholder="e.g. Salghari CF 2025"></div>
+        <div class="fg" style="margin-top:6px"><label>Legend Title</label>
+          <input type="text" id="g-legend" value="Legend"></div>
+        <div class="fg" style="margin-top:6px"><label>Feature Label Column</label>
+          <input type="text" id="g-label" placeholder="e.g. Forest / Comp_ID"></div>
+
+        <div class="nav-divider"></div>
+        <div class="badge" style="margin-top:4px;font-size:9.5px">
+          <strong>💡 Coming next:</strong><br>
+          Group G: Forest Inventory (basal area, volume) · Group H: Change Detection alerts · Module E: SVG/DXF export for field use
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CENTER ── -->
+    <div class="center-col">
+      <div class="panel" style="display:flex;flex-direction:column">
+        <div class="panel-hd" style="justify-content:space-between">
+          <span style="display:flex;align-items:center;gap:7px">
+            <span class="panel-hd-dot"></span>Parameter Matrix
+          </span>
+          <div class="mtabs" style="margin:0">
+            <div class="mtab active" id="mt-A" onclick="switchTab('A',null)">A</div>
+            <div class="mtab" id="mt-B" onclick="switchTab('B',null)">B</div>
+            <div class="mtab" id="mt-C" onclick="switchTab('C',null)">C</div>
+            <div class="mtab" id="mt-D" onclick="switchTab('D',null)">D</div>
+            <div class="mtab" id="mt-E" onclick="switchTab('E',null)">E</div>
+            <div class="mtab" id="mt-F" onclick="switchTab('F',null)">F</div>
+          </div>
+        </div>
+        <div class="config-area">
+
+          <!-- A: Boundary Whole -->
+          <div class="card active" id="card-A">
+            <div class="dz" id="dz-A">
+              <div class="dz-icon">📂</div>
+              <div class="dz-main">Select Excel / CSV</div>
+              <div class="dz-sub">Drag & drop or click to browse</div>
+              <input type="file" class="fi" data-card="A">
+            </div>
+            <div class="row2">
+              <div class="fg"><label>X / Easting</label><select data-key="X" data-card="A"></select></div>
+              <div class="fg"><label>Y / Northing</label><select data-key="Y" data-card="A"></select></div>
+            </div>
+            <div class="row2">
+              <div class="fg"><label>Point Order</label><select data-key="Order" data-card="A"></select></div>
+              <div class="fg"><label>Forest Name</label><input type="text" data-key="forest" data-card="A" value="FOREST"></div>
+            </div>
+            <div class="badge"><strong>Output:</strong> Polygon + Line + Point SHP · Area in legend · Labels on map</div>
+          </div>
+
+          <!-- B: Segmented -->
+          <div class="card" id="card-B">
+            <div class="dz" id="dz-B">
+              <div class="dz-icon">📂</div>
+              <div class="dz-main">Select Excel / CSV (multi-forest)</div>
+              <div class="dz-sub">Drag & drop or click to browse</div>
+              <input type="file" class="fi" data-card="B">
+            </div>
+            <div class="row2">
+              <div class="fg"><label>X / Easting</label><select data-key="X" data-card="B"></select></div>
+              <div class="fg"><label>Y / Northing</label><select data-key="Y" data-card="B"></select></div>
+            </div>
+            <div class="row2">
+              <div class="fg"><label>Point Order</label><select data-key="Order" data-card="B"></select></div>
+              <div class="fg"><label>Forest Column</label><select data-key="Forest" data-card="B"></select></div>
+            </div>
+            <div class="fg"><label>Compartment Column (optional)</label><select data-key="Compartment" data-card="B"></select></div>
+            <div class="badge"><strong>Output:</strong> One SHP set per forest/compartment with area & perimeter</div>
+          </div>
+
+          <!-- C: Sample Plot -->
+          <div class="card" id="card-C">
+            <div class="dz" id="dz-C">
+              <div class="dz-icon">📂</div>
+              <div class="dz-main">CSV / XLS or ZIP Shapefile</div>
+              <div class="dz-sub">Drag & drop or click to browse</div>
+              <input type="file" class="fi" data-card="C" id="fi-C">
+            </div>
+            <div class="fg"><label>Input Mode</label>
+              <div class="toggle-row">
+                <div class="tog on" id="ct-A" onclick="setCMode('A')">Simple Poly</div>
+                <div class="tog" id="ct-B" onclick="setCMode('B')">Segmented</div>
+              </div>
+            </div>
+            <div id="c-zip-notice" class="hidden">
+              <div class="badge">
+                <strong>📦 ZIP Detected</strong>
+                <div class="fg" style="margin-top:6px"><label>Target SHP Layer</label>
+                  <select id="c-shp-sel"></select></div>
+              </div>
+            </div>
+            <div id="c-coord-fields">
+              <div class="row2">
+                <div class="fg"><label>X / Easting</label><select data-key="X" data-card="C"></select></div>
+                <div class="fg"><label>Y / Northing</label><select data-key="Y" data-card="C"></select></div>
+              </div>
+              <div class="row2">
+                <div class="fg"><label>Point Order</label><select data-key="Order" data-card="C"></select></div>
+                <div class="fg hidden" id="c-forest-fg"><label>Forest Column</label><select data-key="Forest" data-card="C"></select></div>
+              </div>
+            </div>
+            <div class="sep"></div>
+            <div class="row2">
+              <div class="fg"><label>Cell Width w (m)</label><input type="number" id="cw" value="50" min="1" step="any"></div>
+              <div class="fg"><label>Cell Height h (m)</label><input type="number" id="ch" value="50" min="1" step="any"></div>
+            </div>
+            <div class="row2">
+              <div class="fg"><label>Grid Rows</label><input type="number" id="cr" value="10" min="1" step="1"></div>
+              <div class="fg"><label>Grid Cols</label><input type="number" id="cc2" value="10" min="1" step="1"></div>
+            </div>
+            <div class="badge"><strong>Output:</strong> Boundary SHP + Sample Plot points SHP + Excel table</div>
+          </div>
+
+          <!-- D: Multi-Forest Complex -->
+          <div class="card" id="card-D">
+            <div class="dz" id="dz-D">
+              <div class="dz-icon">🗂</div>
+              <div class="dz-main">Multi-Forest File</div>
+              <div class="dz-sub">Drag & drop or click to browse</div>
+              <input type="file" class="fi" data-card="D">
+            </div>
+            <div class="fg"><label>Sub-Mode</label>
+              <div class="toggle-row">
+                <div class="tog on" id="dt-A" onclick="setDMode('A')">Whole Forest</div>
+                <div class="tog" id="dt-B" onclick="setDMode('B')">Segmented</div>
+              </div>
+            </div>
+            <div class="row2">
+              <div class="fg"><label>X / Easting</label><select data-key="X" data-card="D"></select></div>
+              <div class="fg"><label>Y / Northing</label><select data-key="Y" data-card="D"></select></div>
+            </div>
+            <div class="row2">
+              <div class="fg"><label>Point Order</label><select data-key="Order" data-card="D"></select></div>
+              <div class="fg"><label>Forest Column</label><select data-key="Forest" data-card="D"></select></div>
+            </div>
+            <div class="fg hidden" id="d-comp-fg"><label>Compartment Column</label><select data-key="Compartment" data-card="D"></select></div>
+            <div class="badge"><strong>Output:</strong> One folder per Forest (with sub-folders for each Compartment in Segmented mode)</div>
+          </div>
+
+          <!-- E: Subdivider -->
+          <div class="card" id="card-E">
+            <div class="dz" id="dz-E">
+              <div class="dz-icon">✂️</div>
+              <div class="dz-main">CSV / XLS or ZIP Shapefile</div>
+              <div class="dz-sub">Drag & drop or click to browse</div>
+              <input type="file" class="fi" data-card="E" id="fi-E">
+            </div>
+            <div id="e-zip-notice" class="hidden">
+              <div class="badge"><strong>📦 ZIP Detected — Polygon Layer</strong>
+                <div class="fg" style="margin-top:6px"><label>Target SHP Layer</label><select id="e-shp-sel"></select></div>
+                <div class="fg" style="margin-top:6px"><label>Forest Name Column in SHP</label>
+                  <select id="e-zip-fcol"><option value="">— auto detect —</option></select></div>
+              </div>
+            </div>
+            <div id="e-csv-fields">
+              <div class="fg"><label>Input Mode</label>
+                <div class="toggle-row">
+                  <div class="tog on" id="et-A" onclick="setEMode('A')">Single Forest</div>
+                  <div class="tog" id="et-B" onclick="setEMode('B')">Multi-Forest</div>
+                </div>
+              </div>
+              <div class="row2">
+                <div class="fg"><label>X / Easting</label><select data-key="X" data-card="E"></select></div>
+                <div class="fg"><label>Y / Northing</label><select data-key="Y" data-card="E"></select></div>
+              </div>
+              <div class="row2">
+                <div class="fg"><label>Point Order</label><select data-key="Order" data-card="E"></select></div>
+                <div class="fg" id="e-fname-fg"><label>Forest Name</label><input type="text" data-key="forest" data-card="E" value="FOREST"></div>
+                <div class="fg hidden" id="e-fcol-fg"><label>Forest Column</label><select data-key="Forest" data-card="E"></select></div>
+              </div>
+            </div>
+            <div class="row2">
+              <div class="fg"><label>Compartments (2–15)</label>
+                <input type="number" id="e-n" value="4" min="2" max="15" step="1"
+                       oninput="this.value=Math.max(2,Math.min(15,parseInt(this.value)||4));document.getElementById('e-n-disp').textContent=this.value"></div>
+              <div class="fg"><label>Area Tol ± ha (0.1–0.5)</label>
+                <input type="number" id="e-tol" value="0.3" min="0.1" max="0.5" step="0.05"></div>
+            </div>
+            <div class="fg"><label>Division Method</label>
+              <select id="e-method">
+                <option value="bisect">Recursive Bisection (exact: 2,4,8,16)</option>
+                <option value="ba">Bisection + Boundary Adjustment</option>
+                <option value="voronoi">Voronoi + Iterative Refinement (Lloyd)</option>
+                <option value="grid">Grid Division</option>
+              </select>
+            </div>
+            <div class="badge"><strong>📐 N = <span id="e-n-disp">4</span> compartments</strong> per forest polygon<br>Division-points Excel + SHP exported for ArcGIS field reconstruction</div>
+            <div class="badge info"><strong>✏️ Live Edit:</strong> After running, switch to OSM tab → drag vertices, move/delete features, then Save Edits to update ZIP output.</div>
+          </div>
+
+          <!-- F: Slope Analysis -->
+          <div class="card" id="card-F">
+            <div class="fg"><label>Analysis Mode</label>
+              <div class="toggle-row">
+                <div class="tog on" id="ft-A" onclick="setFMode('A')">Single Forest</div>
+                <div class="tog" id="ft-B" onclick="setFMode('B')">Multi-Forest</div>
+                <div class="tog" id="ft-E" onclick="setFMode('E')">Compartments</div>
+              </div>
+            </div>
+            <div class="badge" id="f-hint">Single boundary → one slope table for the whole forest</div>
+            <div class="fg"><label>Step 1 — Boundary (CSV / XLS or ZIP / SHP)</label></div>
+            <div class="dz" id="dz-F-bnd">
+              <div class="dz-icon">🌲</div>
+              <div class="dz-main" id="f-bnd-lbl">Upload Boundary File</div>
+              <div class="dz-sub">CSV, XLS, or ZIP shapefile</div>
+              <input type="file" id="fi-F-bnd" accept=".csv,.xlsx,.xls,.zip">
+            </div>
+            <div id="f-zip-notice" class="hidden">
+              <div class="badge"><strong>📦 ZIP Detected</strong>
+                <div class="fg" style="margin-top:6px"><label>Boundary Polygon Layer</label><select id="f-shp-sel"></select></div>
+                <div class="fg hidden" id="f-zip-comp-fg" style="margin-top:6px"><label>Grouping Column</label>
+                  <input type="text" id="f-zip-comp-col" placeholder="e.g. Forest"></div>
+              </div>
+            </div>
+            <div id="f-csv-fields">
+              <div class="row2">
+                <div class="fg"><label>X / Easting</label><select id="f-xc"><option>X</option></select></div>
+                <div class="fg"><label>Y / Northing</label><select id="f-yc"><option>Y</option></select></div>
+              </div>
+              <div class="row2">
+                <div class="fg"><label>Point Order</label><select id="f-oc"><option value="">— none —</option></select></div>
+                <div class="fg"><label>Forest Name</label><input type="text" id="f-fname" value="FOREST"></div>
+              </div>
+              <div class="fg hidden" id="f-csv-comp-fg"><label>Grouping Column</label><select id="f-csv-comp"><option value="">— auto detect —</option></select></div>
+            </div>
+            <div class="fg"><label>Step 2 — DEM GeoTIFF</label></div>
+            <div class="dz" id="dz-F-dem">
+              <div class="dz-icon">🏔</div>
+              <div class="dz-main" id="f-dem-lbl">Upload DEM (.tif)</div>
+              <div class="dz-sub">GeoTIFF raster file</div>
+              <input type="file" id="fi-F-dem" accept=".tif,.tiff">
+            </div>
+            <div class="fg"><label>Field Area ha (optional, for recalibration)</label>
+              <input type="number" id="f-fa" step="any" placeholder="e.g. 47.5 — leave blank to skip"></div>
+            <div class="slope-grid">
+              <div class="slope-cls" style="background:#d1fae5;color:#065f46">
+                <div class="slope-cls-n">Class 1</div>
+                <div class="slope-cls-d">&lt;19° Gentle</div>
+              </div>
+              <div class="slope-cls" style="background:#fef3c7;color:#92400e">
+                <div class="slope-cls-n">Class 2</div>
+                <div class="slope-cls-d">19–31° Moderate</div>
+              </div>
+              <div class="slope-cls" style="background:#fee2e2;color:#991b1b">
+                <div class="slope-cls-n">Class 3</div>
+                <div class="slope-cls-d">&gt;31° Steep</div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- config-area -->
+      </div><!-- panel -->
+
+      <!-- CONSOLE -->
+      <div class="console">
+        <button class="run-btn" id="run-btn" onclick="runPipeline()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Execute Pipeline
+        </button>
+        <div class="prog-wrap">
+          <div class="prog-top">
+            <span class="prog-lbl" id="prog-lbl">Ready</span>
+            <span class="prog-pct" id="prog-pct">0%</span>
+          </div>
+          <div class="prog-track"><div class="prog-fill" id="prog-fill"></div></div>
+          <div class="prog-msg" id="prog-msg">Awaiting execution…</div>
+        </div>
+      </div>
+    </div><!-- center-col -->
+
+    <!-- ── RIGHT PANEL ── -->
+    <div class="panel preview-panel">
+      <div class="ptabs">
+        <div class="ptab on" id="pt-static" onclick="switchPView('static')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          PNG Map
+        </div>
+        <div class="ptab" id="pt-osm" onclick="switchPView('osm')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a14.5 14.5 0 0 1 4 9 14.5 14.5 0 0 1-4 9 14.5 14.5 0 0 1-4-9 14.5 14.5 0 0 1 4-9z"/></svg>
+          OpenStreetMap
+        </div>
+        <div class="ptab" id="pt-compose" onclick="switchPView('compose')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+          Composer
+        </div>
+      </div>
+
+      <!-- PNG MAP -->
+      <div id="pv-static" class="prev-body">
+        <div class="canvas-wrap" style="flex:1">
+          <div class="empty-msg" id="empty-msg">
+            <div class="empty-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </div>
+            <div class="empty-title">Run a module to preview</div>
+            <div class="empty-sub">A4 map with North arrow,<br>scale bar, legend & graticule</div>
+          </div>
+          <img id="out-img" alt="Output Map">
+        </div>
+      </div>
+
+      <!-- OSM -->
+      <div id="pv-osm" class="prev-body" style="display:none">
+        <div class="edit-bar" id="edit-toolbar">
+          <div class="etool" id="tool-select" onclick="setTool('select')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>
+            Select
+          </div>
+          <div class="etool" id="tool-vert" onclick="setTool('vertex')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/></svg>
+            Vertices
+          </div>
+          <div class="etool" id="tool-move" onclick="setTool('move')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
+            Move
+          </div>
+          <div class="etool" onclick="deleteSelected()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            Delete
+          </div>
+          <div class="etool save" onclick="saveEdits()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save Edits
+          </div>
+          <div class="etool" onclick="undoEdit()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+            Undo
+          </div>
+        </div>
+        <div class="canvas-wrap" style="flex:1">
+          <div class="osm-idle" id="osm-idle">
+            <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a14.5 14.5 0 0 1 4 9 14.5 14.5 0 0 1-4 9 14.5 14.5 0 0 1-4-9 14.5 14.5 0 0 1 4-9z"/></svg>
+            <div>Run a module first,<br>then your polygon appears here</div>
+          </div>
+          <div id="osm-map"></div>
+        </div>
+        <div style="font-size:8px;color:var(--t3);text-align:right;padding-top:2px">
+          © <a href="https://www.openstreetmap.org/copyright" target="_blank" style="color:var(--mint)">OpenStreetMap</a> contributors
+        </div>
+      </div>
+
+      <!-- COMPOSER -->
+      <div id="pv-compose" class="prev-body" style="display:none">
+        <div class="composer-body">
+          <div class="badge info"><strong>🎨 Map Composer</strong> — Re-render the output PNG with custom settings, then download.</div>
+          <div class="fg"><label>Map Title</label><input type="text" id="comp-title" placeholder="e.g. Salghari CF — Compartment Map 2025"></div>
+          <div class="fg"><label>Legend Title</label><input type="text" id="comp-legend" value="Legend"></div>
+          <div class="fg"><label>Label Feature Column</label><input type="text" id="comp-label" placeholder="e.g. Comp_ID or Forest"></div>
+          <div class="fg"><label>Module (render logic)</label>
+            <select id="comp-module">
+              <option value="A">A — Boundary</option>
+              <option value="B">B — Segmented</option>
+              <option value="C">C — Sample Plot</option>
+              <option value="D">D — Multi-Forest</option>
+              <option value="E">E — Subdivider</option>
+              <option value="F">F — Slope</option>
+            </select>
+          </div>
+          <button class="run-btn" style="width:100%;justify-content:center" onclick="doCompose()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            Re-Render Map
+          </button>
+          <div id="comp-status" style="font-size:10.5px;color:var(--t3);font-family:var(--mono);min-height:16px"></div>
+          <div class="sep"></div>
+          <div class="badge"><strong>📤 Export Options</strong></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="hdr-btn" onclick="window.open(document.getElementById('out-img').src,'_blank')" style="font-size:11px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              Open Full PNG
+            </button>
+            <a id="dl-btn2" class="hdr-btn" style="font-size:11px;text-decoration:none;display:flex;align-items:center;gap:5px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download ZIP
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="prev-foot">
+        <div class="run-meta" id="run-meta">Metrics: Ready</div>
+        <a id="dl-btn" class="dl-btn" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download ZIP
+        </a>
+      </div>
+    </div><!-- preview-panel -->
+
+  </div><!-- main -->
+</div><!-- shell -->
+
 <script>
-let activeModule = "A";
-let groupCSubMode = "A";
-let groupDSubMode = "A";
-let groupESubMode = "A";
-const BACKEND_URL = window.location.origin;
+const BASE = window.location.origin;
+let activeModule='A',cMode='A',dMode='A',eMode='A',fMode='A';
+let currentRunId=null,leafMap=null,leafLayers=[],editHistory=[];
+let activeTool=null,selectedLayer=null,currentGeoJSON=null;
 
-/* ── COLUMN ALIAS RESOLVER ─────────────────────────────────────────────── */
-const COL_ALIASES = {
-    X: new Set([
-        "x","xcoord","xcoordinate","xcord","xcords","xcoords",
-        "east","easting","eastings","lon","long","longitude","lng",
-        "pointx","coordx","utme","utmx"
-    ]),
-    Y: new Set([
-        "y","ycoord","ycoordinate","ycord","ycords","ycoords",
-        "north","northing","northings","lat","latitude",
-        "pointy","coordy","utmn","utmy"
-    ]),
-    Order: new Set([
-        "order","id","sn","sno","serial","serialno","serialnumber",
-        "seq","sequence","index","rowid","fid","no","num","number",
-        "plotid","plotno","pointid","pointno","pid"
-    ]),
-    Forest: new Set([
-        "forest","forestname","forestid","forestno","fname",
-        "forestblock","block"
-    ]),
-    Compartment: new Set([
-        "compartment","comp","compartmentno","compartmentid",
-        "compno","compid","section","sectionno"
-    ])
+/* ─── COLUMN ALIASES ─── */
+const ALIAS={
+  X:new Set(['x','xcoord','xcoordinate','xcord','east','easting','eastings','lon','long','longitude','lng','pointx','coordx','utme','utmx']),
+  Y:new Set(['y','ycoord','ycoordinate','ycord','north','northing','northings','lat','latitude','pointy','coordy','utmn','utmy']),
+  Order:new Set(['order','id','sn','sno','serial','serialno','seq','sequence','index','rowid','fid','no','num','number','plotid','plotno','pointid','pointno','pid']),
+  Forest:new Set(['forest','forestname','forestid','forestno','fname','forestblock','block']),
+  Compartment:new Set(['compartment','comp','compartmentno','compartmentid','compno','compid','section','sectionno'])
 };
-
-function norm(s){
-    return (s || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
+const norm=s=>(s||'').toString().toLowerCase().replace(/[^a-z0-9]/g,'');
+function detectCols(cols){
+  const m={X:null,Y:null,Order:null,Forest:null,Compartment:null};
+  cols.forEach(c=>{const n=norm(c);Object.entries(ALIAS).forEach(([k,a])=>{if(!m[k]&&a.has(n))m[k]=c;});});
+  return m;
 }
-
-function detect(cols){
-    const map = {X:null, Y:null, Order:null, Forest:null, Compartment:null};
-    cols.forEach(c => {
-        const n = norm(c);
-        Object.entries(COL_ALIASES).forEach(([key, aliases]) => {
-            if(!map[key] && aliases.has(n)) map[key] = c;
-        });
-    });
-    return map;
+function fillSelects(card,cols){
+  const map=detectCols(cols);
+  document.querySelectorAll(`select[data-card="${card}"]`).forEach(sel=>{
+    const key=sel.dataset.key;
+    sel.innerHTML='';
+    if(key==='Order'||key==='Compartment'){const o=document.createElement('option');o.value='';o.textContent='— none —';sel.appendChild(o);}
+    cols.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o);});
+    if(map[key])sel.value=map[key];
+    else if(key!=='Order'&&key!=='Compartment'&&cols.length>0)sel.value=cols[0];
+  });
 }
-
-/* ── STATUS RESET ──────────────────────────────────────────────────────── */
-function resetStatus(){
-    document.getElementById("status-headline").textContent = "Core Standby";
-    document.getElementById("status-sub").textContent = "Topology Balanced";
-    document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
+async function parseCSVCols(file){
+  if(!file.name.toLowerCase().endsWith('.csv'))return null;
+  const txt=await file.text();
+  const clean=txt.replace(/^\uFEFF/,'').replace(/\r/g,'');
+  const line=clean.split('\n').find(l=>l.trim())||'';
+  let d=',';if(line.includes(';'))d=';';else if(line.includes('\t'))d='\t';
+  return line.split(d).map(x=>x.trim()).filter(Boolean);
 }
-
-/* ── TAB SWITCH ────────────────────────────────────────────────────────── */
-function switchTab(t){
-    activeModule = t;
-    document.querySelectorAll(".group-content-card").forEach(c => c.classList.remove("active-card"));
-    const activeCard = document.getElementById("card-"+t);
-    if(activeCard) activeCard.classList.add("active-card");
-    document.querySelectorAll(".matrix-tab").forEach(tab => {
-        tab.classList.toggle("active-tab", tab.id === "tab-" + t);
-    });
-    document.querySelectorAll(".tree-node").forEach(node => {
-        node.classList.toggle("active", node.getAttribute("onclick") === "switchTab('"+t+"')");
-    });
-    const labels = {
-        A:"A · Boundary Whole",
-        B:"B · Segment Forest",
-        C:"C · Sample Plot Workspace",
-        D:"D · Complex Version A",
-        E:"E · Polygon Subdivider",
-        F:"F · Slope Analysis"
-    };
-    document.getElementById("header-module").textContent = labels[t];
+function parseDbfCols(buf){
+  try{
+    const v=new DataView(buf);const nc=Math.floor((v.getUint16(8,true)-32)/32);
+    const cols=[];
+    for(let i=0;i<nc;i++){let n='';for(let j=0;j<11;j++){const b=v.getUint8(32+i*32+j);if(b===0)break;n+=String.fromCharCode(b);}if(n)cols.push(n.trim());}
+    return cols;
+  }catch{return [];}
 }
-
-/* ── GROUP C MODE ──────────────────────────────────────────────────────── */
-function setGroupCSubMode(subMode){
-    groupCSubMode = subMode;
-    document.getElementById('c-toggle-A').classList.toggle('active-toggle', subMode==='A');
-    document.getElementById('c-toggle-B').classList.toggle('active-toggle', subMode==='B');
-    const fileInp = document.getElementById('file-c');
-    const isZip = fileInp?.files?.[0]?.name?.toLowerCase().endsWith(".zip");
-    const forestWrapper = document.getElementById('c-forest-wrapper');
-    if(subMode==="B" && !isZip){
-        forestWrapper.classList.remove("hidden");
-    } else {
-        forestWrapper.classList.add("hidden");
+async function handleZipShps(file,selEl,colSelEl){
+  const zip=await JSZip.loadAsync(await file.arrayBuffer());
+  const shps=Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith('.shp'));
+  selEl.innerHTML=shps.length?shps.map(f=>`<option>${f}</option>`).join(''):'<option>No SHP found</option>';
+  if(colSelEl){
+    const dbfs=Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith('.dbf'));
+    if(dbfs.length){
+      try{
+        const data=await zip.files[dbfs[0]].async('arraybuffer');
+        const cols=parseDbfCols(data);
+        if(cols.length){
+          colSelEl.innerHTML='<option value="">— auto detect —</option>'+cols.map(c=>`<option>${c}</option>`).join('');
+          const m=detectCols(cols);if(m.Forest)colSelEl.value=m.Forest;
+        }
+      }catch{}
     }
+  }
 }
 
-/* ── FILL DROPDOWNS ────────────────────────────────────────────────────── */
-function fill(card, cols){
-    const map = detect(cols);
-    card.querySelectorAll("select[data-key]").forEach(sel => {
-        sel.innerHTML = "";
-        const key = sel.dataset.key;
-        if(key === "Order" || key === "Compartment"){
-            const blank = document.createElement("option");
-            blank.value = "";
-            blank.textContent = "— none —";
-            sel.appendChild(blank);
-        }
-        cols.forEach(c => {
-            const opt = document.createElement("option");
-            opt.value = c;
-            opt.textContent = c;
-            sel.appendChild(opt);
-        });
-        if(map[key]) sel.value = map[key];
-        else if(key !== "Order" && key !== "Compartment" && cols.length > 0) sel.value = cols[0];
-    });
-}
-
-/* ── GROUP D MODE ──────────────────────────────────────────────────────── */
-function setGroupDSubMode(subMode){
-    groupDSubMode = subMode;
-    document.getElementById('d-toggle-A').classList.toggle('active-toggle', subMode === 'A');
-    document.getElementById('d-toggle-B').classList.toggle('active-toggle', subMode === 'B');
-
-    const compWrapper = document.getElementById('d-comp-wrapper');
-    const hintTitle   = document.getElementById('d-hint-title');
-    const hintSub     = document.getElementById('d-hint-sub');
-
-    if(subMode === 'B'){
-        compWrapper.style.display = 'block';
-        hintTitle.textContent = '📂 Forest → Compartment subfolders';
-        hintSub.textContent   = 'Forest_A/Comp_1/ → Polygon.shp · Line.shp · Point.shp';
-    } else {
-        compWrapper.style.display = 'none';
-        hintTitle.textContent = '📂 One folder per Forest';
-        hintSub.textContent   = 'Forest_A/ → Polygon.shp · Line.shp · Point.shp';
+/* ─── FILE HANDLERS ─── */
+document.querySelectorAll('.fi').forEach(inp=>{
+  inp.addEventListener('change',async function(){
+    const file=this.files[0];if(!file)return;
+    const card=this.dataset.card;
+    const dzMain=document.querySelector(`#dz-${card} .dz-main`);
+    if(dzMain){dzMain.textContent='📄 '+file.name;}
+    if(card==='C'){
+      const isZip=file.name.toLowerCase().endsWith('.zip');
+      document.getElementById('c-coord-fields').classList.toggle('hidden',isZip);
+      document.getElementById('c-zip-notice').classList.toggle('hidden',!isZip);
+      if(isZip){await handleZipShps(file,document.getElementById('c-shp-sel'),null);return;}
     }
-}
-
-/* ── GROUP E MODE ──────────────────────────────────────────────────────── */
-function setGroupESubMode(subMode){
-    groupESubMode = subMode;
-    document.getElementById('e-toggle-A').classList.toggle('active-toggle', subMode === 'A');
-    document.getElementById('e-toggle-B').classList.toggle('active-toggle', subMode === 'B');
-
-    const forestWrapper     = document.getElementById('e-forest-wrapper');
-    const forestNameWrapper = document.getElementById('e-forestname-wrapper');
-    const hintTitle         = document.getElementById('e-hint-title');
-    const hintSub           = document.getElementById('e-hint-sub');
-
-    if(subMode === 'B'){
-        forestWrapper.style.display     = 'block';
-        forestNameWrapper.style.display = 'none';
-        hintTitle.textContent = '✂️ Each Forest → N compartments (own folder)';
-        hintSub.textContent   = 'Forest_A/ → compartments.shp · compartment_summary.xlsx';
-    } else {
-        forestWrapper.style.display     = 'none';
-        forestNameWrapper.style.display = 'block';
-        hintTitle.textContent = '✂️ One forest → N compartments';
-        hintSub.textContent   = 'compartments.shp · compartment_summary.xlsx';
+    if(card==='E'){
+      const isZip=file.name.toLowerCase().endsWith('.zip');
+      document.getElementById('e-csv-fields').classList.toggle('hidden',isZip);
+      document.getElementById('e-zip-notice').classList.toggle('hidden',!isZip);
+      if(isZip){await handleZipShps(file,document.getElementById('e-shp-sel'),document.getElementById('e-zip-fcol'));return;}
     }
-}
-
-/* ── CSV COLUMN READER (shared utility) ────────────────────────────────── */
-async function readCsvColumns(file){
-    const txt   = await file.text();
-    const clean = txt.replace(/^\uFEFF/, "").replace(/\r/g, "");
-    const line  = clean.split("\n").find(l => l.trim().length > 0) || "";
-    let delim   = ",";
-    if(line.includes(";"))  delim = ";";
-    else if(line.includes("\t")) delim = "\t";
-    return line.split(delim).map(c => c.trim()).filter(Boolean);
-}
-
-/* ── GROUP F FILE HANDLERS ─────────────────────────────────────────────── */
-(function setupGroupF(){
-    const boundaryInp = document.getElementById('file-f-boundary');
-    if(boundaryInp) boundaryInp.addEventListener('change', async function(){
-        const file = this.files[0];
-        if(!file) return;
-        document.getElementById('f-boundary-label').textContent = '📄 ' + file.name;
-
-        const csvFields = document.getElementById('f-csv-fields');
-        const zipNotice = document.getElementById('f-zip-notice');
-        const shpSel    = document.getElementById('f-shp-selector');
-
-        if(file.name.toLowerCase().endsWith('.zip')){
-            csvFields.classList.add('hidden');
-            zipNotice.classList.remove('hidden');
-            const zip = await JSZip.loadAsync(await file.arrayBuffer());
-            const shpFiles = Object.keys(zip.files).filter(p => p.toLowerCase().endsWith('.shp'));
-            shpSel.innerHTML = shpFiles.length
-                ? shpFiles.map(f => `<option>${f}</option>`).join('')
-                : '<option>No SHP found</option>';
-        } else {
-            csvFields.classList.remove('hidden');
-            zipNotice.classList.add('hidden');
-            if(file.name.toLowerCase().endsWith('.csv')){
-                const cols = await readCsvColumns(file);
-                if(cols.length){
-                    const map = detect(cols);
-                    ['f-x-col','f-y-col','f-order-col'].forEach(id => {
-                        const sel = document.getElementById(id);
-                        const key = {'f-x-col':'X','f-y-col':'Y','f-order-col':'Order'}[id];
-                        sel.innerHTML = (key === 'Order' ? '<option value="">— none —</option>' : '')
-                            + cols.map(c => `<option>${c}</option>`).join('');
-                        if(map[key]) sel.value = map[key];
-                    });
-                }
-            }
-        }
+    let cols=['X','Y','Order','Forest','Compartment'];
+    const detected=await parseCSVCols(file);
+    if(detected&&detected.length>0)cols=detected;
+    fillSelects(card,cols);
+  });
+});
+document.getElementById('fi-F-bnd').addEventListener('change',async function(){
+  const file=this.files[0];if(!file)return;
+  document.getElementById('f-bnd-lbl').textContent='📄 '+file.name;
+  const isZip=file.name.toLowerCase().endsWith('.zip');
+  document.getElementById('f-csv-fields').classList.toggle('hidden',isZip);
+  document.getElementById('f-zip-notice').classList.toggle('hidden',!isZip);
+  if(isZip){await handleZipShps(file,document.getElementById('f-shp-sel'),null);return;}
+  const cols=await parseCSVCols(file);
+  if(cols&&cols.length){
+    const m=detectCols(cols);
+    ['f-xc','f-yc','f-oc'].forEach(id=>{
+      const sel=document.getElementById(id);const k={'f-xc':'X','f-yc':'Y','f-oc':'Order'}[id];
+      sel.innerHTML=(k==='Order'?'<option value="">— none —</option>':'')+cols.map(c=>`<option>${c}</option>`).join('');
+      if(m[k])sel.value=m[k];
     });
-
-    const demInp = document.getElementById('file-f-dem');
-    if(demInp) demInp.addEventListener('change', function(){
-        const file = this.files[0];
-        if(file) document.getElementById('f-dem-label').textContent = '🏔️ ' + file.name;
-    });
-
-    // BUG FIX #FE-1: Drag-over for Group F dropzones — wired here exclusively
-    // (global querySelectorAll loop below skips these two IDs to prevent duplicate handlers)
-    ['f-boundary-drop','f-dem-drop'].forEach(id => {
-        const zone = document.getElementById(id);
-        if(!zone) return;
-        const inp  = zone.querySelector('input[type="file"]');
-        ['dragenter','dragover'].forEach(e => zone.addEventListener(e, ev => { ev.preventDefault(); zone.classList.add('drag-over'); }));
-        ['dragleave','drop'].forEach(e => zone.addEventListener(e, ev => { ev.preventDefault(); zone.classList.remove('drag-over'); }));
-        zone.addEventListener('drop', ev => {
-            if(ev.dataTransfer?.files?.length && inp){
-                inp.files = ev.dataTransfer.files;
-                inp.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        });
-    });
-})();
-
-
-/* ── FILE CHANGE HANDLERS FOR GROUPS A–E ──────────────────────────────── */
-// BUG FIX #FE-CRITICAL: The original code had `inp.onchange = async function(){...}`
-// OUTSIDE any loop, making `inp` undefined and leaving ALL file inputs unwired.
-// Fixed: properly iterate and wire each .file input within its card context.
-document.querySelectorAll('.group-content-card').forEach(card => {
-    const inp = card.querySelector('input[type="file"].file');
-    if(!inp) return;
-
-    inp.addEventListener('change', async function(){
-        const file = this.files[0];
-        if(!file) return;
-
-        if(card.id === "card-C") setGroupCSubMode(groupCSubMode);
-
-        const dzText = card.querySelector(".dz-text");
-        if(dzText) dzText.textContent = "📄 " + file.name;
-        resetStatus();
-
-        /* GROUP C ZIP handling */
-        if(card.id === "card-C"){
-            const coordFields = document.getElementById("c-coordinate-fields-container");
-            const zipNotice   = document.getElementById("c-zip-notice");
-            const shpSelector = document.getElementById("c-shp-selector");
-            if(file.name.toLowerCase().endsWith(".zip")){
-                coordFields.classList.add("hidden");
-                zipNotice.classList.remove("hidden");
-                const zip = await JSZip.loadAsync(await file.arrayBuffer());
-                const shpFiles = Object.keys(zip.files).filter(p => p.toLowerCase().endsWith(".shp"));
-                shpSelector.innerHTML = shpFiles.length
-                    ? shpFiles.map(f => `<option>${f}</option>`).join("")
-                    : "<option>No SHP found</option>";
-                return;
-            } else {
-                coordFields.classList.remove("hidden");
-                zipNotice.classList.add("hidden");
-            }
-        }
-
-        /* GROUP E ZIP handling */
-        if(card.id === "card-E"){
-            const csvFields   = document.getElementById("e-csv-fields");
-            const zipNotice   = document.getElementById("e-zip-notice");
-            const shpSelector = document.getElementById("e-shp-selector");
-            if(file.name.toLowerCase().endsWith(".zip")){
-                csvFields.classList.add("hidden");
-                zipNotice.classList.remove("hidden");
-                const zip = await JSZip.loadAsync(await file.arrayBuffer());
-                const shpFiles = Object.keys(zip.files).filter(p => p.toLowerCase().endsWith(".shp"));
-                shpSelector.innerHTML = shpFiles.length
-                    ? shpFiles.map(f => `<option>${f}</option>`).join("")
-                    : "<option>No SHP found</option>";
-                return;
-            } else {
-                csvFields.classList.remove("hidden");
-                zipNotice.classList.add("hidden");
-            }
-        }
-
-        /* CSV column auto-detection */
-        let cols = ["X", "Y", "Order", "Forest", "Compartment"];
-        if(file.name.toLowerCase().endsWith(".csv")){
-            const detected = await readCsvColumns(file);
-            if(detected.length > 0) cols = detected;
-        }
-        fill(card, cols);
-    });
+    const cs=document.getElementById('f-csv-comp');
+    cs.innerHTML='<option value="">— auto detect —</option>'+cols.map(c=>`<option>${c}</option>`).join('');
+    if(m.Forest)cs.value=m.Forest;else if(m.Compartment)cs.value=m.Compartment;
+  }
+});
+document.getElementById('fi-F-dem').addEventListener('change',function(){
+  const f=this.files[0];if(f)document.getElementById('f-dem-lbl').textContent='🏔 '+f.name;
 });
 
-/* ── PAYLOAD BUILDER ───────────────────────────────────────────────────── */
-function buildMappingPayload(card){
-    const m = {};
-    card.querySelectorAll("select[data-key]").forEach(sel => {
-        let hidden = false;
-        let el = sel.parentElement;
-        while(el && el !== card){
-            if(el.classList.contains("hidden") || el.style.display === "none"){
-                hidden = true; break;
-            }
-            el = el.parentElement;
-        }
-        if(!hidden && sel.value) m[sel.dataset.key] = sel.value;
-    });
-    if(!m.X) m.X = "X";
-    if(!m.Y) m.Y = "Y";
-    if(card.id === "card-C"){
-        if(!document.getElementById("c-zip-notice").classList.contains("hidden")){
-            m.target_shp = document.getElementById("c-shp-selector").value;
-        }
-    }
-    if(card.id === "card-E"){
-        if(!document.getElementById("e-zip-notice").classList.contains("hidden")){
-            m.target_shp = document.getElementById("e-shp-selector").value;
-        }
-    }
-    return m;
+/* Drag-over for all dropzones */
+document.querySelectorAll('.dz').forEach(dz=>{
+  const inp=dz.querySelector('input[type=file]');if(!inp)return;
+  ['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over');}));
+  ['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('over');}));
+  dz.addEventListener('drop',ev=>{if(ev.dataTransfer?.files?.length){inp.files=ev.dataTransfer.files;inp.dispatchEvent(new Event('change',{bubbles:true}));}});
+});
+
+/* ─── TAB SWITCHING ─── */
+const MOD_LABELS={A:'A · Boundary',B:'B · Segmented',C:'C · Sample Plot',D:'D · Multi-Forest',E:'E · Subdivider',F:'F · Slope Analysis'};
+function switchTab(t,navEl){
+  activeModule=t;
+  document.querySelectorAll('.card').forEach(c=>c.classList.remove('active'));
+  const card=document.getElementById('card-'+t);if(card)card.classList.add('active');
+  document.querySelectorAll('.mtab').forEach(m=>m.classList.toggle('active',m.id==='mt-'+t));
+  if(navEl){
+    document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+    navEl.classList.add('active');
+  }
+  document.getElementById('hdr-mod').textContent=MOD_LABELS[t]||t;
+  document.getElementById('comp-module').value=t;
+}
+function setCMode(m){cMode=m;['A','B'].forEach(x=>document.getElementById('ct-'+x).classList.toggle('on',x===m));document.getElementById('c-forest-fg').classList.toggle('hidden',m!=='B');}
+function setDMode(m){dMode=m;['A','B'].forEach(x=>document.getElementById('dt-'+x).classList.toggle('on',x===m));document.getElementById('d-comp-fg').classList.toggle('hidden',m!=='B');}
+function setEMode(m){eMode=m;['A','B'].forEach(x=>document.getElementById('et-'+x).classList.toggle('on',x===m));document.getElementById('e-fname-fg').classList.toggle('hidden',m==='B');document.getElementById('e-fcol-fg').classList.toggle('hidden',m!=='B');}
+function setFMode(m){
+  fMode=m;['A','B','E'].forEach(x=>document.getElementById('ft-'+x)?.classList.toggle('on',x===m));
+  document.getElementById('f-zip-comp-fg').classList.toggle('hidden',m==='A');
+  document.getElementById('f-csv-comp-fg').classList.toggle('hidden',m==='A');
+  const hints={A:'Single boundary → one slope table for the whole forest',B:'Groups by Forest column → slope table per forest',E:'Groups by Compartment → slope table per compartment'};
+  document.getElementById('f-hint').textContent=hints[m]||hints.A;
 }
 
-/* ── RUN PIPELINE ──────────────────────────────────────────────────────── */
-async function runPipeline(){
-    if(activeModule === "F"){
-        const boundaryFile = document.getElementById('file-f-boundary')?.files?.[0];
-        const demFile      = document.getElementById('file-f-dem')?.files?.[0];
-        if(!boundaryFile){ alert("Please upload a forest boundary file (CSV/XLS or ZIP)."); return; }
-        if(!demFile){      alert("Please upload a DEM GeoTIFF file."); return; }
-
-        const headline = document.getElementById("status-headline");
-        headline.textContent = "Processing...";
-        document.getElementById("status-sub").textContent = "Running Slope Analysis";
-        document.getElementById("radial-bar").style.strokeDashoffset = "80";
-
-        const fd = new FormData();
-        fd.append("file",     boundaryFile);
-        fd.append("dem_file", demFile);
-        fd.append("module",   "F");
-        fd.append("zone",     document.getElementById("zone").value);
-        fd.append("f_forest", document.getElementById("f-forest-name")?.value || "FOREST");
-
-        const mapping = {};
-        const xSel = document.getElementById('f-x-col');
-        const ySel = document.getElementById('f-y-col');
-        const oSel = document.getElementById('f-order-col');
-        if(xSel?.value) mapping.X = xSel.value;
-        if(ySel?.value) mapping.Y = ySel.value;
-        if(oSel?.value) mapping.Order = oSel.value;
-
-        const zipNotice = document.getElementById('f-zip-notice');
-        if(zipNotice && !zipNotice.classList.contains('hidden')){
-            mapping.target_shp = document.getElementById('f-shp-selector')?.value;
-        }
-        fd.append("mapping", JSON.stringify(mapping));
-
-        try{
-            const res  = await fetch(`${BACKEND_URL}/upload`, { method: "POST", body: fd });
-            const data = await res.json();
-            if(data.error) throw new Error(data.error);
-
-            headline.textContent = "Complete";
-            document.getElementById("status-sub").textContent = "Slope Analysis Ready";
-            document.getElementById("radial-bar").style.strokeDashoffset = "0";
-
-            const img = document.getElementById("output-img");
-            img.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
-            img.style.display = "block";
-            document.getElementById("empty-notice").style.display = "none";
-
-            const dl = document.getElementById("download-btn");
-            dl.href = `${BACKEND_URL}${data.download}`;
-            dl.style.display = "inline-block";
-
-            if(data.kmz_url) activateGoogleEarth(data.kmz_url);
-        } catch(e){
-            document.getElementById("status-headline").textContent = "Error";
-            document.getElementById("status-sub").textContent = "Slope analysis failed";
-            document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
-            alert(e.message || "Backend error");
-        }
-        return;
-    }
-
-    const card = document.getElementById("card-" + activeModule);
-    const file = card.querySelector("input[type=file].file")?.files?.[0];
-    if(!file){ alert("Upload file first"); return; }
-
-    document.getElementById("status-headline").textContent = "Processing...";
-    document.getElementById("status-sub").textContent = "Running GIS Engine";
-    document.getElementById("radial-bar").style.strokeDashoffset = "80";
-
-    const fd = new FormData();
-    fd.append("file",   file);
-    fd.append("module", activeModule);
-    fd.append("mode",   activeModule === "C" ? groupCSubMode : activeModule);
-    if(activeModule === "D") fd.append("d_mode", groupDSubMode);
-    if(activeModule === "E"){
-        fd.append("e_mode", groupESubMode);
-        const nComp = document.getElementById("e-n-compartments");
-        if(nComp && nComp.value) fd.append("n_compartments", nComp.value);
-    }
-    fd.append("zone", document.getElementById("zone").value);
-
-    const mapping = buildMappingPayload(card);
-
-    const forestInput = card.querySelector('input[type="text"][data-key="forest"]');
-    if(forestInput && forestInput.value.trim()){
-        fd.append("forest", forestInput.value.trim());
-    }
-
-    if(activeModule === "C"){
-        const gridFields = {
-            "c-grid-w": "w",
-            "c-grid-h": "h",
-            "c-grid-rows": "rows",
-            "c-grid-cols": "cols"
-        };
-        Object.entries(gridFields).forEach(([elId, formKey]) => {
-            const el = document.getElementById(elId);
-            if(el && el.value !== "" && !isNaN(Number(el.value))){
-                fd.append(formKey, el.value);
-            }
-        });
-    }
-
-    fd.append("mapping", JSON.stringify({
-        X:           mapping.X           || "X",
-        Y:           mapping.Y           || "Y",
-        Order:       mapping.Order       || null,
-        Forest:      mapping.Forest      || null,
-        Compartment: mapping.Compartment || null,
-        target_shp:  mapping.target_shp  || null,
-        forest:      mapping.forest      || null,
-    }));
-
+/* ─── PROGRESS ─── */
+function setProgress(lbl,msg,pct,isErr=false){
+  const pl=document.getElementById('prog-lbl'),pm=document.getElementById('prog-msg');
+  const pf=document.getElementById('prog-fill'),pp=document.getElementById('prog-pct');
+  pl.textContent=lbl;pm.textContent=msg;pf.style.width=pct+'%';pp.textContent=pct+'%';
+  pl.className='prog-lbl'+(isErr?' error':pct>=100?' done':pct>0?' running':'');
+  pf.className='prog-fill'+(isErr?' error':pct>0&&pct<100?' running':'');
+}
+function startSSE(runId){
+  const es=new EventSource(`${BASE}/progress/${runId}`);
+  es.onmessage=e=>{
     try{
-        const res  = await fetch(`${BACKEND_URL}/upload`, { method: "POST", body: fd });
-        const data = await res.json();
-        if(data.error) throw new Error(data.error);
-
-        document.getElementById("status-headline").textContent = "Complete";
-        document.getElementById("status-sub").textContent = "Output Ready";
-        document.getElementById("radial-bar").style.strokeDashoffset = "0";
-
-        const img = document.getElementById("output-img");
-        img.src = `${BACKEND_URL}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
-        img.style.display = "block";
-        document.getElementById("empty-notice").style.display = "none";
-
-        const dl = document.getElementById("download-btn");
-        dl.href = data.download.startsWith("http")
-            ? data.download
-            : `${BACKEND_URL}${data.download}`;
-        dl.style.display = "inline-block";
-
-        if(data.kmz_url) activateGoogleEarth(data.kmz_url);
-
-    } catch(e){
-        console.error(e);
-        document.getElementById("status-headline").textContent = "Error";
-        document.getElementById("status-sub").textContent = "Pipeline failed";
-        document.getElementById("radial-bar").style.strokeDashoffset = "150.7";
-        alert(e.message || "Backend error or mapping mismatch");
-    }
+      const d=JSON.parse(e.data);
+      setProgress(d.pct>=100?'Complete ✓':d.msg.startsWith('ERROR')?'Error':'Processing…',d.msg,d.pct||0,d.msg.startsWith('ERROR'));
+      if(d.pct>=100)es.close();
+    }catch{}
+  };
+  es.onerror=()=>es.close();
+  return es;
 }
 
-/* ── PREVIEW TAB SWITCHER ──────────────────────────────────────────────── */
-function switchPreviewTab(tab){
-    const isStatic = tab === 'static';
-    document.getElementById('ptab-static').classList.toggle('active-toggle', isStatic);
-    document.getElementById('ptab-ge').classList.toggle('active-toggle', !isStatic);
-    // BUG FIX #FE-4: Use consistent display values — 'flex' for both panels since
-    // both are flex containers. Previously 'block' was used for ge panel inconsistently.
-    document.getElementById('preview-static').style.display = isStatic ? 'flex' : 'none';
-    document.getElementById('preview-ge').style.display     = isStatic ? 'none' : 'flex';
+/* ─── BUILD MAPPING ─── */
+function buildMapping(card){
+  const m={};
+  document.querySelectorAll(`select[data-card="${card}"][data-key],input[data-card="${card}"][data-key]`).forEach(el=>{
+    let hidden=false;let p=el.parentElement;
+    while(p&&p.id!=='card-'+card){if(p.classList.contains('hidden')){hidden=true;break;}p=p.parentElement;}
+    if(!hidden&&el.value)m[el.dataset.key]=el.value;
+  });
+  if(!m.X)m.X='X';if(!m.Y)m.Y='Y';
+  if(card==='C'&&!document.getElementById('c-zip-notice').classList.contains('hidden'))m.target_shp=document.getElementById('c-shp-sel').value;
+  if(card==='E'&&!document.getElementById('e-zip-notice').classList.contains('hidden'))m.target_shp=document.getElementById('e-shp-sel').value;
+  return m;
 }
 
-/* ── GOOGLE EARTH PANEL ACTIVATION ────────────────────────────────────── */
-function activateGoogleEarth(kmzInfo){
-    const lat    = kmzInfo.lat;
-    const lon    = kmzInfo.lon;
-    const alt    = kmzInfo.alt;
-    const kmzUrl = BACKEND_URL + kmzInfo.url;
+/* ─── RUN PIPELINE ─── */
+async function runPipeline(){
+  const title=document.getElementById('g-title').value.trim();
+  const legendTitle=document.getElementById('g-legend').value.trim()||'Legend';
+  const labelCol=document.getElementById('g-label').value.trim();
+  const zone=document.getElementById('zone').value;
+  if(activeModule==='F'){await runF(title,legendTitle,labelCol,zone);return;}
+  const card=document.getElementById('card-'+activeModule);
+  const file=card.querySelector('input[type=file]')?.files?.[0];
+  if(!file){alert('Please upload a file first.');return;}
+  document.getElementById('run-btn').disabled=true;
+  setProgress('Processing…','Starting pipeline…',5);
+  const fd=new FormData();
+  fd.append('file',file);fd.append('module',activeModule);
+  fd.append('mode',activeModule==='C'?cMode:activeModule);
+  fd.append('zone',zone);fd.append('title',title);
+  fd.append('legend_title',legendTitle);fd.append('label_col',labelCol);
+  if(activeModule==='D')fd.append('d_mode',dMode);
+  if(activeModule==='E'){
+    fd.append('e_mode',eMode);
+    fd.append('n_compartments',document.getElementById('e-n').value);
+    fd.append('area_tol_ha',document.getElementById('e-tol').value);
+    fd.append('e_method',document.getElementById('e-method').value);
+    const fzc=document.getElementById('e-zip-fcol')?.value;if(fzc)fd.append('forest_col_name',fzc);
+  }
+  if(activeModule==='C'){
+    fd.append('w',document.getElementById('cw').value||50);
+    fd.append('h',document.getElementById('ch').value||50);
+    fd.append('rows',document.getElementById('cr').value||10);
+    fd.append('cols',document.getElementById('cc2').value||10);
+  }
+  const mapping=buildMapping(activeModule);
+  const forestInp=card.querySelector('input[type=text][data-key=forest]');
+  if(forestInp?.value?.trim())fd.append('forest',forestInp.value.trim());
+  fd.append('mapping',JSON.stringify(mapping));
+  await sendRequest(fd);
+}
 
-    const geBaseUrl = `https://earth.google.com/web/@${lat},${lon},${alt}a,${alt}d,0y,0h,0t,0r`;
+async function runF(title,legendTitle,labelCol,zone){
+  const bFile=document.getElementById('fi-F-bnd')?.files?.[0];
+  const dFile=document.getElementById('fi-F-dem')?.files?.[0];
+  if(!bFile){alert('Upload a boundary file.');return;}
+  if(!dFile){alert('Upload a DEM GeoTIFF file.');return;}
+  document.getElementById('run-btn').disabled=true;
+  setProgress('Processing…','Starting Group F…',5);
+  const fd=new FormData();
+  fd.append('file',bFile);fd.append('dem_file',dFile);
+  fd.append('module','F');fd.append('f_mode',fMode);
+  fd.append('zone',zone);fd.append('title',title);
+  fd.append('legend_title',legendTitle);fd.append('label_col',labelCol);
+  fd.append('f_forest',document.getElementById('f-fname')?.value||'FOREST');
+  const fa=document.getElementById('f-fa')?.value?.trim();if(fa&&!isNaN(+fa))fd.append('field_area_ha',fa);
+  const isFZip=!document.getElementById('f-zip-notice').classList.contains('hidden');
+  const mapping={};
+  if(!isFZip){
+    const xv=document.getElementById('f-xc')?.value;if(xv)mapping.X=xv;
+    const yv=document.getElementById('f-yc')?.value;if(yv)mapping.Y=yv;
+    const ov=document.getElementById('f-oc')?.value;if(ov)mapping.Order=ov;
+    const cv=document.getElementById('f-csv-comp')?.value;if(cv)fd.append('comp_col',cv);
+  }else{
+    const sv=document.getElementById('f-shp-sel')?.value;if(sv)mapping.target_shp=sv;
+    const cv=document.getElementById('f-zip-comp-col')?.value;if(cv)fd.append('comp_col',cv);
+  }
+  fd.append('mapping',JSON.stringify(mapping));
+  await sendRequest(fd);
+}
 
-    // BUG FIX #FE-5: Use style.display consistently — ge-idle uses canvas-wrapper class
-    // which has display:flex, so hide/show with display values, not class toggles
-    document.getElementById('ge-idle').style.display  = 'none';
-    document.getElementById('ge-ready').style.display = 'flex';
+async function sendRequest(fd){
+  try{
+    const res=await fetch(`${BASE}/upload`,{method:'POST',body:fd});
+    const data=await res.json();
+    if(data.error)throw new Error(data.error);
+    currentRunId=data.run_id;
+    startSSE(data.run_id);
+    const img=document.getElementById('out-img');
+    img.onload=()=>{img.style.display='block';document.getElementById('empty-msg').style.display='none';};
+    img.src=`${BASE}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
+    const dl=document.getElementById('dl-btn');
+    dl.href=data.download.startsWith('http')?data.download:`${BASE}${data.download}`;
+    dl.style.display='inline-flex';
+    const dl2=document.getElementById('dl-btn2');
+    dl2.href=dl.href;dl2.download='gis_output.zip';
+    if(data.kmz_url)loadOSM(data.run_id,data.kmz_url);
+    document.getElementById('run-meta').textContent=`Run: ${data.run_id.slice(0,8)}… | Module: ${fd.get('module')||'?'}`;
+    document.getElementById('comp-title').value=fd.get('title')||'';
+    document.getElementById('comp-legend').value=fd.get('legend_title')||'Legend';
+    document.getElementById('comp-label').value=fd.get('label_col')||'';
+    setTimeout(async()=>{
+      try{const hr=await fetch(`${BASE}/history`);if(hr.ok){const hd=await hr.json();if(hd.runs)renderHistory(hd.runs);}}catch{}
+    },800);
+  }catch(e){
+    setProgress('Error','Pipeline failed — '+e.message,0,true);
+    alert('Error: '+(e.message||'Backend error'));
+  }finally{
+    document.getElementById('run-btn').disabled=false;
+  }
+}
 
-    const openBtn = document.getElementById('ge-open-btn');
-    openBtn.href = geBaseUrl;
+/* ─── PREVIEW TABS ─── */
+function switchPView(v){
+  ['static','osm','compose'].forEach(t=>{
+    const el=document.getElementById('pv-'+t);
+    if(el)el.style.display=t===v?'flex':'none';
+    document.getElementById('pt-'+t)?.classList.toggle('on',t===v);
+  });
+  if(v==='osm'&&leafMap)setTimeout(()=>leafMap.invalidateSize(),120);
+}
 
-    const kmzBtn = document.getElementById('ge-kmz-btn');
-    kmzBtn.href     = kmzUrl;
-    kmzBtn.download = "output.kmz";
-
-    document.getElementById('ge-coords').textContent =
-        `Centroid: ${lat.toFixed(5)}° N, ${lon.toFixed(5)}° E  ·  View altitude: ${alt.toLocaleString()} m`;
-
-    const iframe  = document.getElementById('ge-iframe');
-    iframe.src    = geBaseUrl;
-
-    const overlay = document.getElementById('ge-iframe-overlay');
-    overlay.style.display = 'flex';
-    iframe.onload = () => {
-        try {
-            const _ = iframe.contentDocument;
-            overlay.style.display = 'none';
-        } catch(e) {
-            // Cross-origin — keep overlay
+/* ─── LEAFLET ─── */
+async function loadOSM(runId,kmzInfo){
+  document.getElementById('osm-idle').style.display='none';
+  document.getElementById('osm-map').style.display='block';
+  document.getElementById('edit-toolbar').classList.add('visible');
+  if(!leafMap){
+    leafMap=L.map('osm-map',{zoomControl:true,attributionControl:false});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(leafMap);
+  }
+  leafLayers.forEach(l=>leafMap.removeLayer(l));leafLayers=[];
+  try{
+    const res=await fetch(`${BASE}/geojson/${runId}`);
+    const gj=await res.json();
+    if(gj.features&&gj.features.length>0){
+      currentGeoJSON=gj;
+      const layer=L.geoJSON(gj,{
+        style:feat=>{
+          const cls=feat.properties?.Class;
+          const fc=cls===1?'#34d399':cls===2?'#fbbf24':cls===3?'#f87171':'#1d9e75';
+          return{fillColor:fc,fillOpacity:0.38,color:'#0f6e56',weight:1.8};
+        },
+        onEachFeature:(feat,layer2)=>{
+          const props=feat.properties||{};
+          const lbl=props.Comp_ID||props.Forest||props.Label||'';
+          const ah=props.Area_ha?` — ${props.Area_ha} ha`:'';
+          if(lbl||ah)layer2.bindPopup(`<b>${lbl}</b>${ah}`);
+          layer2.on('click',()=>{
+            if(selectedLayer)selectedLayer.setStyle({weight:1.8});
+            selectedLayer=layer2;layer2.setStyle({weight:3.5,color:'#059669'});
+          });
         }
-    };
+      }).addTo(leafMap);
+      leafLayers.push(layer);
+      leafMap.fitBounds(layer.getBounds().pad(0.05));
+    }else if(kmzInfo){
+      const zoom=Math.max(10,Math.min(15,Math.round(16-Math.log2(Math.max(kmzInfo.alt/500,1)))));
+      leafMap.setView([kmzInfo.lat,kmzInfo.lon],zoom);
+      const mk=L.circleMarker([kmzInfo.lat,kmzInfo.lon],{radius:8,color:var_mint,fillColor:'#34d399',fillOpacity:0.8,weight:2})
+        .bindPopup(`<b>Centroid</b><br>${kmzInfo.lat.toFixed(5)}°N, ${kmzInfo.lon.toFixed(5)}°E`).addTo(leafMap);
+      leafLayers.push(mk);
+    }
+  }catch(e){console.warn('GeoJSON load error:',e);}
+  setTimeout(()=>leafMap.invalidateSize(),200);
 }
 
-/* ── RESIZABLE LAYOUT ──────────────────────────────────────────────────── */
-(function enableResizers(){
-    const container = document.getElementById('main-layout-container');
-    const workspace = document.getElementById('center-workspace-container');
-    const leftHandle  = document.getElementById('left-col-handle');
-    const rightHandle = document.getElementById('right-col-handle');
-    const rowHandle   = document.getElementById('center-row-handle');
+/* ─── EDIT TOOLS ─── */
+function setTool(t){
+  activeTool=t;
+  document.querySelectorAll('.etool[id^=tool-]').forEach(el=>el.classList.remove('active-tool'));
+  const el=document.getElementById('tool-'+t);if(el)el.classList.add('active-tool');
+  if(t==='vertex'&&selectedLayer&&selectedLayer.editing){try{selectedLayer.editing.enable();}catch{}}
+  else{if(selectedLayer&&selectedLayer.editing)try{selectedLayer.editing.disable();}catch{}}
+}
+function deleteSelected(){
+  if(!selectedLayer){alert('Select a feature first (click on it).');return;}
+  if(!confirm('Delete selected feature?'))return;
+  editHistory.push({type:'delete',layer:selectedLayer,geojson:currentGeoJSON?JSON.parse(JSON.stringify(currentGeoJSON)):null});
+  leafMap.removeLayer(selectedLayer);
+  leafLayers=leafLayers.filter(l=>l!==selectedLayer);
+  selectedLayer=null;
+}
+function undoEdit(){
+  if(!editHistory.length){alert('Nothing to undo.');return;}
+  const last=editHistory.pop();
+  if(last.type==='delete'&&last.layer){last.layer.addTo(leafMap);leafLayers.push(last.layer);selectedLayer=last.layer;}
+}
+async function saveEdits(){
+  if(!currentRunId){alert('No active run to save edits to.');return;}
+  const layers=[];leafLayers.forEach(l=>{if(l.toGeoJSON){try{layers.push(l.toGeoJSON());}catch{}}});
+  const fc={type:'FeatureCollection',features:[]};
+  layers.forEach(gj=>{if(gj.features)fc.features.push(...gj.features);else fc.features.push(gj);});
+  if(!fc.features.length){alert('No features to save.');return;}
+  setProgress('Saving edits…','Sending to server…',50);
+  try{
+    const res=await fetch(`${BASE}/save_edit/${currentRunId}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({geojson:fc,title:document.getElementById('g-title').value,legend_title:document.getElementById('g-legend').value})
+    });
+    const d=await res.json();
+    if(d.error)throw new Error(d.error);
+    setProgress('Edits Saved ✓','Output updated',100);
+    const img=document.getElementById('out-img');
+    img.src=`${BASE}${d.png}`;
+  }catch(e){setProgress('Error','Save failed: '+e.message,0,true);alert('Save error: '+e.message);}
+}
 
-    let leftWidth  = 280;
-    let rightWidth = 420;
+/* ─── COMPOSER ─── */
+async function doCompose(){
+  if(!currentRunId){alert('Run a pipeline first.');return;}
+  document.getElementById('comp-status').textContent='Re-rendering…';
+  try{
+    const res=await fetch(`${BASE}/compose/${currentRunId}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({title:document.getElementById('comp-title').value,legend_title:document.getElementById('comp-legend').value,label_col:document.getElementById('comp-label').value,module:document.getElementById('comp-module').value})
+    });
+    const d=await res.json();
+    if(d.error)throw new Error(d.error);
+    document.getElementById('comp-status').textContent='✅ Map re-rendered!';
+    const img=document.getElementById('out-img');
+    img.style.display='block';img.src=`${BASE}${d.png}`;
+    document.getElementById('empty-msg').style.display='none';
+    switchPView('static');
+  }catch(e){document.getElementById('comp-status').textContent='❌ Error: '+e.message;}
+}
 
-    function applyColumns(){
-        container.style.gridTemplateColumns = `${leftWidth}px 10px 1fr 10px ${rightWidth}px`;
+/* ─── AUTH ─── */
+let _suggs=[];
+function _genSuggs(base){
+  const clean=base.replace(/[_\-]?\d+$/,'').trim()||base;
+  const rn=Math.floor(Math.random()*89+10);
+  return[clean+'_'+rn,clean+(new Date().getFullYear()%100),clean+'_GIS'];
+}
+function trySugg(i){
+  const n=_suggs[i];if(!n)return;
+  document.getElementById('login-inp').value=n;
+  document.getElementById('login-inp').classList.remove('taken');
+  document.getElementById('lerr').style.display='none';
+  document.getElementById('sugg').style.display='none';
+  doLogin();
+}
+async function doLogin(){
+  const inp=document.getElementById('login-inp');const name=inp.value.trim();
+  const errEl=document.getElementById('lerr');const sugg=document.getElementById('sugg');
+  const btn=document.getElementById('login-go');
+  inp.classList.remove('taken');errEl.className='login-err';errEl.style.display='none';sugg.style.display='none';
+  if(!name){errEl.textContent='Please enter a username.';errEl.style.display='block';return;}
+  btn.disabled=true;btn.textContent='Checking…';
+  try{
+    const res=await fetch(`${BASE}/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:name})});
+    const data=await res.json();
+    if(res.status===409||data.taken){
+      inp.classList.add('taken');errEl.className='login-err taken-msg';
+      errEl.textContent=data.error||`"${name}" is already taken.`;errEl.style.display='block';
+      _suggs=_genSuggs(name);const spans=sugg.querySelectorAll('span');
+      _suggs.forEach((s,i)=>{if(spans[i])spans[i].textContent=s;});sugg.style.display='block';
+      btn.disabled=false;btn.textContent='Enter Studio →';return;
     }
-
-    function startDrag(handle, onMove){
-        handle.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            handle.classList.add('dragging');
-            document.body.style.cursor = getComputedStyle(handle).cursor;
-            const move = (ev) => onMove(ev);
-            const up = () => {
-                handle.classList.remove('dragging');
-                document.body.style.cursor = '';
-                document.removeEventListener('mousemove', move);
-                document.removeEventListener('mouseup', up);
-            };
-            document.addEventListener('mousemove', move);
-            document.addEventListener('mouseup', up);
-        });
-    }
-
-    if(leftHandle){
-        let startX, startWidth;
-        leftHandle.addEventListener('mousedown', e => { startX = e.clientX; startWidth = leftWidth; });
-        startDrag(leftHandle, (ev) => {
-            leftWidth = Math.min(Math.max(startWidth + (ev.clientX - startX), 220), 460);
-            applyColumns();
-        });
-    }
-
-    if(rightHandle){
-        let startX, startWidth;
-        rightHandle.addEventListener('mousedown', e => { startX = e.clientX; startWidth = rightWidth; });
-        startDrag(rightHandle, (ev) => {
-            rightWidth = Math.min(Math.max(startWidth - (ev.clientX - startX), 320), 640);
-            applyColumns();
-        });
-    }
-
-    if(rowHandle){
-        let startY, startTopHeight, totalHeight;
-        rowHandle.addEventListener('mousedown', e => {
-            const rect = workspace.getBoundingClientRect();
-            totalHeight     = rect.height;
-            startTopHeight  = workspace.children[0].getBoundingClientRect().height;
-            startY          = e.clientY;
-        });
-        startDrag(rowHandle, (ev) => {
-            let newTop = Math.min(Math.max(startTopHeight + (ev.clientY - startY), 160), totalHeight - 90);
-            workspace.style.gridTemplateRows = `${newTop}px 6px ${totalHeight - newTop - 6}px`;
-        });
-    }
+    if(!res.ok||data.error)throw new Error(data.error||'Login failed');
+    onLoginSuccess(data.username,data.runs||[]);
+  }catch(e){
+    errEl.textContent=e.message||'Login failed. Try again.';errEl.style.display='block';
+    btn.disabled=false;btn.textContent='Enter Studio →';
+  }
+}
+function onLoginSuccess(username,runs){
+  const ov=document.getElementById('login-overlay');
+  ov.style.transition='opacity .4s var(--ease)';ov.style.opacity='0';
+  setTimeout(()=>{ov.style.display='none';},440);
+  document.getElementById('user-bar').style.display='flex';
+  document.getElementById('uname').textContent=username;
+  document.getElementById('uavatar').textContent=username.charAt(0).toUpperCase();
+  renderHistory(runs);
+}
+async function doLogout(){
+  if(!confirm('Sign out?'))return;
+  try{await fetch(`${BASE}/logout`,{method:'POST'});}catch{}
+  document.getElementById('user-bar').style.display='none';
+  const ov=document.getElementById('login-overlay');
+  ov.style.opacity='0';ov.style.display='flex';
+  requestAnimationFrame(()=>{ov.style.transition='opacity .4s var(--ease)';ov.style.opacity='1';});
+  document.getElementById('login-inp').value='';
+  document.getElementById('lerr').style.display='none';
+  document.getElementById('login-go').disabled=false;
+  document.getElementById('login-go').textContent='Enter Studio →';
+  renderHistory([]);
+  setTimeout(()=>document.getElementById('login-inp').focus(),200);
+}
+(async function checkSession(){
+  try{
+    const res=await fetch(`${BASE}/me`);
+    if(res.ok){const d=await res.json();if(d.username){onLoginSuccess(d.username,d.runs||[]);return;}}
+  }catch{}
+  const ov=document.getElementById('login-overlay');
+  ov.style.display='flex';ov.style.opacity='0';
+  requestAnimationFrame(()=>{ov.style.transition='opacity .5s var(--ease)';ov.style.opacity='1';});
+  setTimeout(()=>document.getElementById('login-inp').focus(),500);
 })();
 
-/* ── DRAG-OVER HIGHLIGHT (Groups A–E only) ─────────────────────────────── */
-// BUG FIX #FE-1: Skip Group F dropzones — they're wired exclusively in setupGroupF above
-document.querySelectorAll('.cyber-dropzone').forEach(zone => {
-    // Skip Group F dropzones to prevent duplicate handlers
-    if(zone.id === 'f-boundary-drop' || zone.id === 'f-dem-drop') return;
-    const input = zone.querySelector('input[type="file"]');
-    if(!input) return;
-    ['dragenter','dragover'].forEach(evt => {
-        zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('drag-over'); });
-    });
-    ['dragleave','drop'].forEach(evt => {
-        zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('drag-over'); });
-    });
-    zone.addEventListener('drop', e => {
-        if(e.dataTransfer?.files?.length){
-            input.files = e.dataTransfer.files;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-    });
-});
+/* ─── HISTORY ─── */
+function toggleHist(){
+  const d=document.getElementById('hist-drawer');const bg=document.getElementById('hist-bg');
+  const open=d.classList.contains('open');
+  d.classList.toggle('open',!open);
+  bg.style.display=open?'none':'block';
+  if(!open){
+    bg.style.opacity='0';
+    requestAnimationFrame(()=>{bg.style.transition='opacity .3s';bg.style.opacity='1';});
+    fetch(`${BASE}/history`).then(r=>r.ok?r.json():null).then(d=>{if(d&&d.runs)renderHistory(d.runs);}).catch(()=>{});
+  }else{
+    bg.style.opacity='0';
+    setTimeout(()=>{bg.style.display='none';},300);
+  }
+}
+const MICONS={A:'🌲',B:'🌲',C:'📍',D:'🗂',E:'✂️',F:'🏔'};
+function renderHistory(runs){
+  const body=document.getElementById('hist-body');
+  const hcnt=document.getElementById('hcnt');
+  if(hcnt)hcnt.textContent=runs&&runs.length?` (${runs.length})`:'';
+  if(!runs||!runs.length){
+    body.innerHTML='<div style="text-align:center;color:var(--t3);font-size:11px;padding:40px 20px;font-family:var(--mono)">No runs yet.</div>';
+    return;
+  }
+  body.innerHTML=[...runs].reverse().map((r,i)=>{
+    const ic=MICONS[r.module]||'📄';
+    let ts='—';if(r.timestamp){const d=new Date(r.timestamp);ts=d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+    const short=(r.run_id||'').slice(0,8)+'…';
+    return`<div class="run-card" style="${i===0?'border-color:rgba(29,158,117,.3);':''}" >
+      <div class="run-card-top"><span class="run-mod">${ic} ${r.module}</span><span class="run-time">${ts}</span></div>
+      <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-bottom:3px">ID: ${short}</div>
+      <div class="run-actions">
+        <button class="run-act" onclick="loadRunPrev('${r.run_id}')">🗺 Preview</button>
+        <button class="run-act" onclick="triggerDL('${r.run_id}')">⬇ Download</button>
+      </div></div>`;
+  }).join('');
+}
+function triggerDL(rid){const a=document.createElement('a');a.href=`${BASE}/download/${rid}`;a.download='';a.click();}
+function loadRunPrev(rid){
+  currentRunId=rid;
+  const img=document.getElementById('out-img');
+  img.src=`${BASE}/outputs/${rid}/output.png?t=${Date.now()}`;
+  img.style.display='block';
+  document.getElementById('empty-msg').style.display='none';
+  document.getElementById('dl-btn').href=`${BASE}/download/${rid}`;
+  document.getElementById('dl-btn').style.display='inline-flex';
+  document.getElementById('dl-btn2').href=`${BASE}/download/${rid}`;
+  switchPView('static');toggleHist();
+  loadOSM(rid,null);
+}
 
-/* ── ANIMATED STATUS + PROGRESS ────────────────────────────────────────── */
-(function enableStatusAnimations(){
-    const headline    = document.getElementById('status-headline');
-    const radialBox   = document.querySelector('.radial-progress-box');
-    const radialBar   = document.getElementById('radial-bar');
-    // BUG FIX #FE-2: Target the static preview's canvas-wrapper specifically, not the first
-    // match on the page (which could be ge-idle's canvas-wrapper after DOM reflow)
-    const canvasWrapper = document.getElementById('static-canvas-wrapper');
-    const downloadBtn   = document.getElementById('download-btn');
-    const emptyNotice   = document.getElementById('empty-notice');
-
-    function refreshState(){
-        const text = headline.textContent.trim();
-        headline.classList.remove('is-processing', 'is-error');
-        radialBox.classList.remove('is-processing');
-        radialBar.classList.remove('is-error');
-        if(canvasWrapper) canvasWrapper.classList.remove('is-active');
-        if(text === 'Processing...'){
-            headline.classList.add('is-processing');
-            radialBox.classList.add('is-processing');
-        } else if(text === 'Error'){
-            headline.classList.add('is-error');
-            radialBar.classList.add('is-error');
-        } else if(text === 'Complete'){
-            if(canvasWrapper) canvasWrapper.classList.add('is-active');
-        }
-    }
-
-    new MutationObserver(refreshState).observe(headline, { childList: true, characterData: true, subtree: true });
-
-    new MutationObserver(() => {
-        const img = document.getElementById('output-img');
-        if(img.style.display === 'block'){
-            if(emptyNotice){
-                emptyNotice.style.opacity = '0';
-                setTimeout(() => { emptyNotice.style.display = 'none'; }, 350);
-            }
-        }
-    }).observe(document.getElementById('output-img'), { attributes: true, attributeFilter: ['style'] });
-
-    new MutationObserver(() => {
-        downloadBtn.classList.toggle('is-visible', downloadBtn.style.display === 'inline-block');
-    }).observe(downloadBtn, { attributes: true, attributeFilter: ['style'] });
-})();
+/* fix for Leaflet marker color ref */
+const var_mint='#1d9e75';
 </script>
 </body>
 </html>
