@@ -296,7 +296,9 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
     <div class="nav-sep"></div>
     <div class="badge info" style="margin-top:4px">
       <strong>💡 Suggestions</strong><br>
-      Give if Any
+      Group G: Forest Inventory Tabulation (basal area, volume from sample plots linked to Group C outputs).<br>
+      Group H: Change Detection (compare two boundary datasets for deforestation alert).<br>
+      Upgrade E: Export SVG/DXF of division lines for field use.
     </div>
   </div>
 </div>
@@ -850,7 +852,7 @@ async function runF(title,legendTitle,labelCol,zone) {
 
 async function sendRequest(fd) {
   try {
-    const res=await fetch(${BASE}/upload,{method:'POST',body:fd});
+    const res=await fetch(`${BASE}/upload`,{method:'POST',body:fd});
     const data=await res.json();
     if(data.error) throw new Error(data.error);
     currentRunId=data.run_id;
