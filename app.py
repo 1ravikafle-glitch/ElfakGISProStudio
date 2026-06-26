@@ -136,7 +136,7 @@ def _north_arrow(ax):
     nx = x1 - aw*0.05; ny = y1 - ah*0.04; arrh = ah*0.07
     # Draw thick arrow body
     ax.annotate("", xy=(nx, ny), xytext=(nx, ny-arrh),
-                arrowprops=dict(arrowstyle="-|>", color="black", lw=2.0,
+                arrowprops=dict(arrowstyle="-|>", color="black", linewidth=2.0,
                                 mutation_scale=18), zorder=20)
     # Draw "N" label above the arrow tip
     ax.text(nx, ny + ah*0.008, "N", ha="center", va="bottom",
@@ -155,7 +155,7 @@ def _scale_bar(ax):
     for i in range(4):
         fc = "black" if i%2==0 else "white"
         ax.add_patch(plt.Rectangle((bx+i*bar_m/4, by), bar_m/4, bh,
-                     lw=0.8, edgecolor="black", facecolor=fc, zorder=15, clip_on=False))
+                     linewidth=0.8, edgecolor="black", facecolor=fc, zorder=15, clip_on=False))
     lbl = f"{bar_m:.0f} m" if bar_m<1000 else f"{bar_m/1000:.1f} km"
     ax.text(bx+bar_m/2, by+bh*2.1, lbl, ha="center", va="bottom", fontsize=6.5, fontweight="bold", color="black", zorder=16)
     ax.text(bx, by-bh*0.5, "0", ha="center", va="top", fontsize=5.5, color="black", zorder=16)
@@ -199,7 +199,7 @@ def _label_feat(ax, gdf, col, fs=6.5, color="black"):
             cx, cy = g.centroid.x, g.centroid.y
             ax.annotate(str(row[col]), xy=(cx,cy), ha="center", va="center",
                         fontsize=fs, fontweight="bold", color=color,
-                        path_effects=[pe.Stroke(lw=2.2, foreground="white"), pe.Normal()], zorder=12)
+                        path_effects=[pe.Stroke(linewidth=2.2, foreground="white"), pe.Normal()], zorder=12)
         except: continue
 
 _CCOLORS = ["#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7","#DCEDC8",
@@ -1000,7 +1000,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
                             xytext=(3, 5), textcoords="offset points",
                             ha="left", va="bottom", fontsize=5.5, fontweight="bold",
                             color="black",
-                            path_effects=[pe.Stroke(lw=1.8, foreground="white"), pe.Normal()],
+                            path_effects=[pe.Stroke(linewidth=1.8, foreground="white"), pe.Normal()],
                             zorder=9)
             except: pass
 
