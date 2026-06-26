@@ -132,10 +132,16 @@ def _enforce_poly_gdf(gdf):
 def _north_arrow(ax):
     x0,x1 = ax.get_xlim(); y0,y1 = ax.get_ylim()
     aw = x1-x0; ah = y1-y0
-    nx = x1 - aw*0.04; ny = y1 - ah*0.05; arrh = ah*0.065
+    # Draw proper N arrow in top-right corner
+    nx = x1 - aw*0.05; ny = y1 - ah*0.04; arrh = ah*0.07
+    # Draw thick arrow body
     ax.annotate("", xy=(nx, ny), xytext=(nx, ny-arrh),
-                arrowprops=dict(arrowstyle="-|>", color="black", linewidth=1.6, mutation_scale=15), zorder=20)
-    ax.text(nx, ny+ah*0.003, "N", ha="center", va="bottom", fontsize=8, fontweight="bold", color="black", zorder=20)
+                arrowprops=dict(arrowstyle="-|>", color="black", lw=2.0,
+                                mutation_scale=18), zorder=20)
+    # Draw "N" label above the arrow tip
+    ax.text(nx, ny + ah*0.008, "N", ha="center", va="bottom",
+            fontsize=9, fontweight="bold", color="black", zorder=20,
+            bbox=dict(boxstyle="round,pad=0.1", facecolor="white", edgecolor="none", alpha=0.7))
 
 def _scale_bar(ax):
     x0,x1 = ax.get_xlim(); y0,y1 = ax.get_ylim()
@@ -149,7 +155,7 @@ def _scale_bar(ax):
     for i in range(4):
         fc = "black" if i%2==0 else "white"
         ax.add_patch(plt.Rectangle((bx+i*bar_m/4, by), bar_m/4, bh,
-                     linewidth=0.8, edgecolor="black", facecolor=fc, zorder=15, clip_on=False))
+                     lw=0.8, edgecolor="black", facecolor=fc, zorder=15, clip_on=False))
     lbl = f"{bar_m:.0f} m" if bar_m<1000 else f"{bar_m/1000:.1f} km"
     ax.text(bx+bar_m/2, by+bh*2.1, lbl, ha="center", va="bottom", fontsize=6.5, fontweight="bold", color="black", zorder=16)
     ax.text(bx, by-bh*0.5, "0", ha="center", va="top", fontsize=5.5, color="black", zorder=16)
@@ -164,17 +170,21 @@ def _add_legend(ax, handles, legend_title="Legend", loc="lower right"):
     leg.get_frame().set_linewidth(0.8)
 
 def _graticule(ax):
+    """Draw coordinate grid labels at map edges (no internal grid lines, per reference maps)."""
     ax.tick_params(axis="both", which="both",
                    left=True, right=True, top=True, bottom=True,
-                   labelleft=True, labelright=False, labelbottom=True, labeltop=False,
-                   direction="out", length=4, width=0.7, labelsize=5.5, color="#555")
+                   labelleft=True, labelright=True, labelbottom=True, labeltop=False,
+                   direction="out", length=5, width=0.8, labelsize=5.0, color="#333",
+                   pad=2)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda v,_: f"{int(v):,}"))
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v,_: f"{int(v):,}"))
     ax.xaxis.set_tick_params(labelrotation=45)
-    for sp in ax.spines.values(): sp.set_linewidth(0.7); sp.set_color("#666")
-    ax.grid(False)
-    ax.set_xlabel("Easting (m)", fontsize=6, color="#555", labelpad=3)
-    ax.set_ylabel("Northing (m)", fontsize=6, color="#555", labelpad=3)
+    ax.yaxis.set_tick_params(labelrotation=90)
+    for sp in ax.spines.values():
+        sp.set_linewidth(0.8); sp.set_color("#555")
+    ax.grid(False)   # NO internal grid lines - only edge tick labels
+    ax.set_xlabel("")
+    ax.set_ylabel("")
 
 def _style_ax(ax):
     ax.set_aspect("equal")
@@ -189,7 +199,7 @@ def _label_feat(ax, gdf, col, fs=6.5, color="black"):
             cx, cy = g.centroid.x, g.centroid.y
             ax.annotate(str(row[col]), xy=(cx,cy), ha="center", va="center",
                         fontsize=fs, fontweight="bold", color=color,
-                        path_effects=[pe.Stroke(linewidth=2.2, foreground="white"), pe.Normal()], zorder=12)
+                        path_effects=[pe.Stroke(lw=2.2, foreground="white"), pe.Normal()], zorder=12)
         except: continue
 
 _CCOLORS = ["#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7","#DCEDC8",
@@ -774,14 +784,16 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             except: continue
     if not rtp: raise ValueError("No slope polygons extracted from DEM.")
     rtp_gdf=gpd.GeoDataFrame(rtp,crs=str(dem_crs))
-    rtp_gdf.to_file(os.path.join(out,f"{pfx}_rtp_raw.shp"))
+    rtp_gdf=_enforce_poly_gdf(rtp_gdf)
+    if not rtp_gdf.empty: rtp_gdf.to_file(os.path.join(out,f"{pfx}_rtp_raw.shp"))
 
     if run_id: _prog(run_id,"Dissolving by gridcode…",64)
     try:
         dissolved=rtp_gdf.dissolve(by="gridcode",as_index=False)
         dissolved["gridcode"]=dissolved["gridcode"].astype(int)
     except: dissolved=rtp_gdf.copy()
-    dissolved.to_file(os.path.join(out,f"{pfx}_rtp_dissolved.shp"))
+    dissolved=_enforce_poly_gdf(dissolved)
+    if not dissolved.empty: dissolved.to_file(os.path.join(out,f"{pfx}_rtp_dissolved.shp"))
 
     if run_id: _prog(run_id,"Building analysis groups…",70)
     class_defs={1:("< 19°","Gentle","#2ecc71"),2:("19–31°","Moderate","#f39c12"),3:("> 31°","Steep","#e74c3c")}
@@ -845,7 +857,8 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         vgdf=gpd.GeoDataFrame(all_vec,crs=vcrs); vgdf=_enforce_poly_gdf(vgdf)
         if not vgdf.empty: vgdf.to_file(os.path.join(out,f"{pfx}_slope_polygon.shp"))
     else: vgdf=gpd.GeoDataFrame(columns=["geometry"],crs=vcrs)
-    bgdf.to_file(os.path.join(out,f"{pfx}_boundary_polygon.shp"))
+    bgdf_save = _enforce_poly_gdf(bgdf)
+    if not bgdf_save.empty: bgdf_save.to_file(os.path.join(out,f"{pfx}_boundary_polygon.shp"))
     try:
         with rasterio.open(sp_path) as src:
             fc2,ft2=rio_mask(src,[comp_polygons[0][1].__geo_interface__],crop=True,filled=True,nodata=SN)
@@ -877,72 +890,136 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
 
 # ── PREVIEW FUNCTIONS ────────────────────────────────────────────────────────
 def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID"):
-    fig,ax=plt.subplots(figsize=(A4W,A4H),dpi=DPI)
-    fig.patch.set_facecolor("white"); ax.set_facecolor("#eef5ee")
-    handles=[]
-    for i,(_,row) in enumerate(poly_gdf.iterrows()):
-        geom=row.geometry
+    """Render Group E compartment map exactly like reference: blue boundary, red survey centroids, numbered labels."""
+    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+    handles = []
+
+    # Draw the outer forest boundary first (thick blue)
+    try:
+        union_geom = poly_gdf.unary_union
+        union_gdf  = gpd.GeoDataFrame([{"geometry": union_geom}], crs=poly_gdf.crs)
+        union_gdf.plot(ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=2.2, zorder=4)
+    except: pass
+
+    total_ha = poly_gdf["Area_ha"].sum() if "Area_ha" in poly_gdf.columns else None
+    ha_text  = f"Area = {total_ha:.3f}.ha" if total_ha else ""
+    handles.append(mpatches.Patch(facecolor="none", edgecolor="#1565C0",
+                                  linewidth=2.0, label="Forest Boundary"))
+
+    # Draw compartment interior lines (same blue, thinner) and collect centroids
+    centroids = []
+    for i, (_, row) in enumerate(poly_gdf.iterrows()):
+        geom = row.geometry
         if geom is None or geom.is_empty: continue
-        if geom.geom_type=="Polygon":
-            ext=list(geom.exterior.coords)
-            if ext[0]!=ext[-1]: ext.append(ext[0])
-            geom=Polygon(ext)
-        color=_CCOLORS[i%len(_CCOLORS)]
-        cid=row.get("Comp_ID",f"Comp_{i+1:03d}"); ah=row.get("Area_ha","")
-        lbl=f"{cid} ({ah:.2f} ha)" if isinstance(ah,float) else str(cid)
-        gpd.GeoDataFrame([{"geometry":geom}],crs=poly_gdf.crs).plot(ax=ax,facecolor=color,edgecolor="#222",linewidth=1.5)
-        handles.append(mpatches.Patch(facecolor=color,edgecolor="#222",label=lbl))
-    lc_use=label_col if (label_col and label_col in poly_gdf.columns) else ("Comp_ID" if "Comp_ID" in poly_gdf.columns else None)
-    if lc_use: _label_feat(ax,poly_gdf,lc_use)
+        if geom.geom_type == "Polygon":
+            ext = list(geom.exterior.coords)
+            if ext[0] != ext[-1]: ext.append(ext[0])
+            geom = Polygon(ext)
+        # Internal division lines
+        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
+            ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=1.6, zorder=3)
+        cid = row.get("Comp_ID", f"C{i+1:03d}")
+        ah  = row.get("Area_ha", None)
+        # Centroid as red dot
+        try:
+            cx, cy = geom.centroid.x, geom.centroid.y
+            centroids.append({"cid": cid, "ah": ah, "x": cx, "y": cy})
+        except: pass
+
+    # Red survey centroid dots
+    if centroids:
+        xs = [c["x"] for c in centroids]; ys = [c["y"] for c in centroids]
+        ax.scatter(xs, ys, s=40, c="red", zorder=8, linewidths=0.5, edgecolors="red")
+        handles.append(mpatches.Patch(facecolor="red", edgecolor="red",
+                                      label="Sub-compartment Survey Points"))
+
+    # Compartment labels (C1S1, C1S2... style) in blue
+    lc_use = label_col if (label_col and label_col in poly_gdf.columns) else (
+             "Comp_ID" if "Comp_ID" in poly_gdf.columns else None)
+    if lc_use:
+        _label_feat(ax, poly_gdf, lc_use, fs=8.5, color="#1565C0")
+
+    # Legend area line
+    if ha_text:
+        handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=ha_text))
+
     _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
-    _add_legend(ax,handles,legend_title=legend_title or "Legend")
-    ax.set_title(title.strip() or "Compartment Division Map",fontsize=12,fontweight="bold",color="#0d1f17",pad=10)
-    plt.tight_layout(pad=0.5,rect=[0,0,1,0.97])
-    fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig)
+    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
+    ax.set_title(title.strip() or "Compartment Division Map",
+                 fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
+    plt.tight_layout(pad=0.5, rect=[0, 0, 1, 0.97])
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
             label_col=None, label_pts_gdf=None, area_ha=None, title="",
             legend_title="Legend", user_label_col=None):
-    fig,ax=plt.subplots(figsize=(A4W,A4H),dpi=DPI)
-    fig.patch.set_facecolor("white"); ax.set_facecolor("#eef5ee"); handles=[]
+    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+    handles = []
+
+    # ── Draw polygon boundary (thick blue like reference images) ──────────
     if poly_gdf is not None and not poly_gdf.empty:
         if "Comp_ID" in poly_gdf.columns:
-            for i,(_,row) in enumerate(poly_gdf.iterrows()):
-                g=row.geometry
+            for i, (_, row) in enumerate(poly_gdf.iterrows()):
+                g = row.geometry
                 if g is None or g.is_empty: continue
-                col=_CCOLORS[i%len(_CCOLORS)]
-                cid=row.get("Comp_ID",f"C{i+1}"); ah=row.get("Area_ha","")
-                lbl=f"{cid} ({ah:.2f} ha)" if isinstance(ah,float) else str(cid)
-                gpd.GeoDataFrame([{"geometry":g}],crs=poly_gdf.crs).plot(ax=ax,facecolor=col,edgecolor="#222",linewidth=1.4)
-                handles.append(mpatches.Patch(facecolor=col,edgecolor="#222",label=lbl))
+                col = _CCOLORS[i % len(_CCOLORS)]
+                cid = row.get("Comp_ID", f"Comp_{i+1:03d}")
+                ah  = row.get("Area_ha", "")
+                lbl = f"{cid} ({ah:.2f} ha)" if isinstance(ah, float) else str(cid)
+                gpd.GeoDataFrame([{"geometry": g}], crs=poly_gdf.crs).plot(
+                    ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=1.8)
+                handles.append(mpatches.Patch(facecolor=col, edgecolor="#1565C0", label=lbl))
         else:
-            poly_gdf.plot(ax=ax,facecolor="none",edgecolor="#1565C0",linewidth=1.6)
-            handles.append(mpatches.Patch(facecolor="none",edgecolor="#1565C0",linewidth=1.6,label="Forest Boundary"))
-    if line_gdf is not None and not line_gdf.empty:
-        line_gdf.plot(ax=ax,color=lc,linewidth=1.1)
+            poly_gdf.plot(ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=2.0)
+            ha_lbl = f"Area = {area_ha:.3f}.ha" if area_ha else "Forest Boundary"
+            handles.append(mpatches.Patch(facecolor="none", edgecolor="#1565C0",
+                                          linewidth=2.0, label=ha_lbl))
+
+    # ── Survey/point markers (red filled circles) ─────────────────────────
     if pts_gdf is not None and not pts_gdf.empty:
-        pts_gdf.plot(ax=ax,color=ptc,markersize=5,zorder=5)
-        handles.append(mpatches.Patch(facecolor=ptc,label="Survey Points"))
-    lbl_src=label_pts_gdf if label_pts_gdf is not None else pts_gdf
-    lc_use=user_label_col or label_col
+        pts_gdf.plot(ax=ax, color=ptc, markersize=18, zorder=8,
+                     marker="o", markeredgecolor=ptc, markeredgewidth=0.5)
+        pt_lbl = "Sub-compartment Survey Points" if (
+            poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns
+        ) else "Survey Points"
+        handles.append(mpatches.Patch(
+            facecolor=ptc, edgecolor=ptc, label=pt_lbl))
+
+    # ── Point number labels ───────────────────────────────────────────────
+    lbl_src  = label_pts_gdf if label_pts_gdf is not None else pts_gdf
+    lc_use   = user_label_col or label_col
     if lc_use and lbl_src is not None and not lbl_src.empty and lc_use in lbl_src.columns:
-        for _,row in lbl_src.iterrows():
+        for _, row in lbl_src.iterrows():
             try:
-                ax.annotate(str(row[lc_use]),xy=(row.geometry.x,row.geometry.y),
-                            xytext=(0,7),textcoords="offset points",
-                            ha="center",va="bottom",fontsize=5.5,fontweight="bold",color="black",
-                            path_effects=[pe.Stroke(linewidth=1.8,foreground="white"),pe.Normal()],zorder=6)
+                ax.annotate(str(row[lc_use]),
+                            xy=(row.geometry.x, row.geometry.y),
+                            xytext=(3, 5), textcoords="offset points",
+                            ha="left", va="bottom", fontsize=5.5, fontweight="bold",
+                            color="black",
+                            path_effects=[pe.Stroke(lw=1.8, foreground="white"), pe.Normal()],
+                            zorder=9)
             except: pass
+
+    # ── Compartment or forest name labels ─────────────────────────────────
     if poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns:
-        _label_feat(ax,poly_gdf,"Comp_ID")
+        _label_feat(ax, poly_gdf, "Comp_ID", fs=8, color="#1565C0")
     elif poly_gdf is not None and not poly_gdf.empty and "Forest" in poly_gdf.columns:
-        _label_feat(ax,poly_gdf,"Forest")
+        _label_feat(ax, poly_gdf, "Forest", fs=8, color="#1565C0")
+
     _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
-    _add_legend(ax,handles,legend_title=legend_title or "Legend")
-    head=title.strip() if title.strip() else (f"Forest Area: {area_ha:.2f} ha" if area_ha else "Forest Boundary Map")
-    ax.set_title(head,fontsize=12,fontweight="bold",color="#0d1f17",pad=10)
-    plt.tight_layout(pad=0.5,rect=[0,0,1,0.97])
-    fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig)
+    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
+
+    head = title.strip() if title.strip() else (
+        f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
+    ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
+    plt.tight_layout(pad=0.5, rect=[0, 0, 1, 0.97])
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                   per_group_summaries=None, title="", legend_title="Slope Classes"):
@@ -953,6 +1030,7 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
     fig=plt.figure(figsize=(A4W,A4H),dpi=DPI,facecolor="white")
     gs=gridspec.GridSpec(2,1,height_ratios=[1,tr],hspace=0.20,left=0.10,right=0.96,top=0.94,bottom=0.04)
     ax1=fig.add_subplot(gs[0]); ax2=fig.add_subplot(gs[1])
+    ax1.set_facecolor("white"); ax2.set_facecolor("white")
     if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
         for cid,color in cc.items():
             sub=vec_gdf[vec_gdf["Class"]==cid]
@@ -1045,7 +1123,7 @@ def generate_kmz(poly_gdf,line_gdf,pts_gdf,out_dir,run_id):
         if gdf is None or gdf.empty: return None
         try: return gdf.to_crs("EPSG:4326") if gdf.crs else None
         except: return None
-    pw=w84(poly_gdf); linewidth=w84(line_gdf); ptw=w84(pts_gdf)
+    pw=w84(poly_gdf); lw=w84(line_gdf); ptw=w84(pts_gdf)
     ref=pw if pw is not None and not pw.empty else lw
     if ref is not None and not ref.empty:
         u=ref.unary_union; cx,cy=u.centroid.x,u.centroid.y
