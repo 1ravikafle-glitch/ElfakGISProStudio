@@ -3,35 +3,43 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Elfak GIS Engine Pro</title>
+<title>Elfak GIS Engine Pro — Forest Studio</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#f0f4f1;--panel:rgba(255,255,255,0.72);--border:rgba(20,50,30,0.10);
+  --bg:#eef7f0;--panel:rgba(255,255,255,0.82);--border:rgba(16,185,129,0.14);
   --mint:#10b981;--mint-d:#059669;--mint-g:linear-gradient(135deg,#34d399,#059669);
-  --txt:#1a2e22;--txt2:#4a6358;--muted:#8aab96;
+  --txt:#0d1f17;--txt2:#3a5a48;--muted:#7a9d8a;
   --red:#ef4444;--amber:#f59e0b;--blue:#3b82f6;
   --r:14px;--r2:10px;--r3:8px;
-  --shadow:0 4px 24px rgba(10,40,20,0.10);
-  --shadow2:0 8px 40px rgba(10,40,20,0.15);
+  --shadow:0 4px 28px rgba(10,40,20,0.12);
+  --shadow2:0 10px 48px rgba(10,40,20,0.18);
   --ease:cubic-bezier(0.22,1,0.36,1);
   --mono:'JetBrains Mono',ui-monospace,monospace;
   --sans:'Inter',system-ui,sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:rgba(16,185,129,.3) transparent}
 body{font-family:var(--sans);background:var(--bg);color:var(--txt);height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;
-  background-image:radial-gradient(circle at 20% 20%,rgba(16,185,129,.06) 0,transparent 50%),
-  radial-gradient(circle at 80% 80%,rgba(5,150,105,.05) 0,transparent 50%)}
+  background:linear-gradient(145deg,#e8f5e9 0%,#f0f7f2 25%,#e6f3ea 50%,#eef5ef 75%,#e4f0e7 100%);
+  background-attachment:fixed;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.55;
+  background-image:
+    radial-gradient(ellipse at 10% 15%,rgba(16,185,129,.12) 0,transparent 40%),
+    radial-gradient(ellipse at 90% 85%,rgba(5,150,105,.10) 0,transparent 40%),
+    radial-gradient(ellipse at 50% 50%,rgba(52,211,153,.06) 0,transparent 60%);
+  background-size:100% 100%;}
+.shell{position:relative;z-index:1;}
 /* ── LAYOUT ── */
 .shell{display:flex;flex-direction:column;height:100vh;opacity:0;animation:fadeIn .5s var(--ease) forwards}
 @keyframes fadeIn{to{opacity:1}}
 /* ── HEADER ── */
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;
-  background:rgba(255,255,255,0.85);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);
-  flex-shrink:0;gap:16px;min-height:52px}
+  background:rgba(255,255,255,0.92);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  border-bottom:1px solid rgba(16,185,129,.15);flex-shrink:0;gap:16px;min-height:54px;
+  box-shadow:0 2px 12px rgba(10,40,20,.08)}
 .logo{display:flex;align-items:center;gap:10px;flex-shrink:0}
 .logo-mark{width:32px;height:32px;border-radius:9px;background:var(--mint-g);display:flex;align-items:center;justify-content:center;
   box-shadow:0 4px 12px rgba(16,185,129,.35);flex-shrink:0;transition:transform .3s var(--ease)}
@@ -40,8 +48,9 @@ body{font-family:var(--sans);background:var(--bg);color:var(--txt);height:100vh;
 .logo-text{font-size:13px;font-weight:700;color:var(--txt);letter-spacing:-.01em}
 .logo-sub{font-size:9px;font-family:var(--mono);color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
 .hdr-pills{display:flex;align-items:center;gap:8px;flex:1;justify-content:center;flex-wrap:wrap}
-.pill{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;
-  background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.18);font-size:10px;font-family:var(--mono);color:var(--txt2)}
+.pill{display:flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;
+  background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.22);font-size:10px;font-family:var(--mono);color:var(--txt2);
+  box-shadow:0 1px 4px rgba(16,185,129,.1)}
 .pill-dot{width:5px;height:5px;border-radius:50%;background:var(--mint);box-shadow:0 0 6px rgba(16,185,129,.6);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .hdr-user{display:none;align-items:center;gap:8px;flex-shrink:0}
@@ -54,11 +63,13 @@ body{font-family:var(--sans);background:var(--bg);color:var(--txt);height:100vh;
 /* ── MAIN GRID ── */
 .main{display:grid;grid-template-columns:230px 1fr 380px;flex:1;gap:0;min-height:0;padding:12px 14px;column-gap:8px}
 /* ── PANELS ── */
-.panel{background:var(--panel);backdrop-filter:blur(24px);border:1px solid var(--border);border-radius:var(--r);
-  display:flex;flex-direction:column;box-shadow:var(--shadow);overflow:hidden;position:relative;transition:border-color .3s,box-shadow .3s}
+.panel{background:rgba(255,255,255,0.80);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+  border:1px solid rgba(16,185,129,.12);border-radius:var(--r);
+  display:flex;flex-direction:column;box-shadow:0 4px 28px rgba(10,40,20,.10);overflow:hidden;position:relative;transition:border-color .3s,box-shadow .3s}
 .panel:hover{border-color:rgba(16,185,129,.22);box-shadow:var(--shadow2)}
-.panel-hd{padding:10px 14px;border-bottom:1px solid var(--border);font-size:9.5px;font-family:var(--mono);
-  font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--txt2);display:flex;align-items:center;gap:7px;flex-shrink:0}
+.panel-hd{padding:11px 16px;border-bottom:1px solid rgba(16,185,129,.1);font-size:9.5px;font-family:var(--mono);
+  font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--txt2);display:flex;align-items:center;gap:7px;flex-shrink:0;
+  background:rgba(16,185,129,.03)}
 .panel-hd::before{content:'';width:5px;height:5px;border-radius:1.5px;background:var(--mint);
   box-shadow:0 0 6px rgba(16,185,129,.5);flex-shrink:0;transition:transform .3s}
 .panel:hover .panel-hd::before{transform:rotate(45deg) scale(1.2)}
@@ -113,10 +124,12 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
 .sep{height:1px;background:rgba(16,185,129,.1);margin:2px 0}
 /* ── CONSOLE ── */
 .console{display:flex;align-items:center;gap:12px;padding:10px 14px;flex-shrink:0}
-.run-btn{background:var(--mint-g);color:white;border:none;padding:9px 22px;border-radius:var(--r3);
-  font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;
-  box-shadow:0 4px 16px rgba(16,185,129,.4);transition:all .25s var(--ease)}
-.run-btn:hover{transform:translateY(-1px) scale(1.02);box-shadow:0 7px 24px rgba(16,185,129,.5)}
+.run-btn{background:var(--mint-g);color:white;border:none;padding:10px 26px;border-radius:var(--r3);
+  font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;letter-spacing:.02em;
+  box-shadow:0 4px 20px rgba(16,185,129,.45);transition:all .25s var(--ease);position:relative;overflow:hidden}
+.run-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.25) 50%,transparent 70%);transform:translateX(-100%);transition:transform .5s}
+.run-btn:hover{transform:translateY(-2px) scale(1.02);box-shadow:0 8px 28px rgba(16,185,129,.55)}
+.run-btn:hover::after{transform:translateX(100%)}
 .run-btn:active{transform:scale(.97)}
 .run-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
 /* Progress bar */
@@ -139,11 +152,12 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
   cursor:pointer;transition:all .2s;color:var(--muted);background:rgba(255,255,255,.5)}
 .ptab:hover:not(.on){background:rgba(16,185,129,.06);color:var(--txt2)}
 .ptab.on{background:rgba(16,185,129,.16);color:#065f46;border-bottom:2px solid var(--mint)}
-.canvas-wrap{flex:1;background:rgba(255,255,255,.5);border-radius:var(--r3);border:1px solid var(--border);
-  display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0;position:relative}
+.canvas-wrap{flex:1;background:#ffffff;border-radius:var(--r3);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0;position:relative;
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.04)}
 #out-img{max-width:100%;max-height:100%;object-fit:contain;display:none;border-radius:7px}
 .empty-msg{text-align:center;color:var(--muted);font-family:var(--mono);font-size:10px;padding:20px;line-height:1.8}
-#osm-map{width:100%;height:100%;display:none;border-radius:7px}
+#osm-map{width:100%;height:100%;min-height:200px;display:none;border-radius:7px;z-index:1}
 .osm-idle{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
   width:100%;height:100%;color:var(--muted);font-family:var(--mono);font-size:10px;text-align:center}
 .preview-foot{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding-top:4px;
@@ -220,7 +234,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
   <div class="login-card">
     <h2>🌲 Elfak GIS Engine Pro</h2>
     <p>Enter a username to access the Premium Forest Studio</p>
-    <input type="text" id="login-inp" placeholder="Your username (e.g. Forest_1_A)" maxlength="40"
+    <input type="text" id="login-inp" placeholder="Your username (e.g. RamBahadur)" maxlength="40"
            onkeydown="if(event.key==='Enter')doLogin()">
     <div class="login-err" id="lerr"></div>
     <div id="sugg">Try: <span onclick="trySugg(0)">…</span> <span onclick="trySugg(1)">…</span> <span onclick="trySugg(2)">…</span></div>
@@ -522,7 +536,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
     <div class="ptabs">
       <div class="ptab on" id="pt-static" onclick="switchPView('static')">🖼 PNG Map</div>
       <div class="ptab" id="pt-osm" onclick="switchPView('osm')">🌍 OpenStreetMap</div>
-      <div class="ptab" id="pt-compose" onclick="switchPView('compose')">🎨 Map Composer</div>
+      <div class="ptab" id="pt-compose" onclick="switchPView('compose')">🎨 Composer</div>
     </div>
 
     <!-- Static PNG -->
@@ -867,8 +881,8 @@ async function sendRequest(fd) {
     dl.style.display='inline-block';
     const dl2=document.getElementById('dl-btn2');
     dl2.href=dl.href; dl2.download='gis_output.zip';
-    // OSM
-    if(data.kmz_url) loadOSM(data.run_id, data.kmz_url);
+    // OSM - always try to load geojson for the run
+    loadOSM(data.run_id, data.kmz_url || null);
     document.getElementById('run-meta').textContent=`Run: ${data.run_id.slice(0,8)}… | Module: ${fd.get('module')||'?'}`;
     // Compose sync
     document.getElementById('comp-title').value=fd.get('title')||'';
@@ -888,56 +902,109 @@ async function sendRequest(fd) {
 
 /* ── PREVIEW TABS ────────────────────────────────────────────────────────── */
 function switchPView(v) {
-  ['static','osm','compose'].forEach(t=>{
-    document.getElementById('pv-'+t).style.display=t===v?(t==='static'?'flex':'flex'):'none';
-    document.getElementById('pt-'+t).classList.toggle('on',t===v);
+  ['static','osm','compose'].forEach(t => {
+    const el = document.getElementById('pv-'+t);
+    if (el) el.style.display = (t === v) ? 'flex' : 'none';
+    const tab = document.getElementById('pt-'+t);
+    if (tab) tab.classList.toggle('on', t === v);
   });
-  if(v==='osm' && leafMap) setTimeout(()=>leafMap.invalidateSize(),120);
+  if (v === 'osm') {
+    // Make sure the osm-map div is visible before Leaflet renders
+    document.getElementById('osm-map').style.display = 'block';
+    if (leafMap) {
+      setTimeout(() => leafMap.invalidateSize(), 150);
+    }
+  }
 }
 
 /* ── OPENSTREETMAP LEAFLET ───────────────────────────────────────────────── */
+function _ensureLeafMap() {
+  if (leafMap) return;
+  // The osm-map div MUST be visible before initializing Leaflet
+  const el = document.getElementById('osm-map');
+  el.style.display = 'block';
+  leafMap = L.map('osm-map', {
+    zoomControl: true,
+    attributionControl: true,
+    preferCanvas: true
+  });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(leafMap);
+}
+
 async function loadOSM(runId, kmzInfo) {
-  document.getElementById('osm-idle').style.display='none';
-  document.getElementById('osm-map').style.display='block';
+  // Show the OSM container immediately so Leaflet can measure it
+  document.getElementById('osm-idle').style.display = 'none';
+  document.getElementById('osm-map').style.display  = 'block';
   document.getElementById('edit-toolbar').classList.add('visible');
-  if(!leafMap){
-    leafMap=L.map('osm-map',{zoomControl:true,attributionControl:false});
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(leafMap);
-  }
-  leafLayers.forEach(l=>leafMap.removeLayer(l)); leafLayers=[];
-  try {
-    const res=await fetch(`${BASE}/geojson/${runId}`);
-    const gj=await res.json();
-    if(gj.features&&gj.features.length>0){
-      currentGeoJSON=gj;
-      const layer=L.geoJSON(gj,{
-        style:feat=>{
-          const cls=feat.properties?.Class;
-          const fc=cls===1?'#2ecc71':cls===2?'#f39c12':cls===3?'#e74c3c':'#10b981';
-          return{fillColor:fc,fillOpacity:0.40,color:'#1a2e22',weight:2};
-        },
-        onEachFeature:(feat,layer2)=>{
-          const props=feat.properties||{};
-          const lbl=props.Comp_ID||props.Forest||props.Label||'';
-          const ah=props.Area_ha?` — ${props.Area_ha} ha`:'';
-          if(lbl||ah) layer2.bindPopup(`<b>${lbl}</b>${ah}`);
-          layer2.on('click',()=>{
-            if(selectedLayer) selectedLayer.setStyle({weight:2});
-            selectedLayer=layer2; layer2.setStyle({weight:4,color:'#059669'});
-          });
-        }
-      }).addTo(leafMap);
-      leafLayers.push(layer);
-      leafMap.fitBounds(layer.getBounds().pad(0.05));
-    } else if(kmzInfo) {
-      const zoom=Math.max(10,Math.min(15,Math.round(16-Math.log2(Math.max(kmzInfo.alt/500,1)))));
-      leafMap.setView([kmzInfo.lat,kmzInfo.lon],zoom);
-      const mk=L.circleMarker([kmzInfo.lat,kmzInfo.lon],{radius:8,color:'#10b981',fillColor:'#34d399',fillOpacity:0.8,weight:2})
-        .bindPopup(`<b>Centroid</b><br>${kmzInfo.lat.toFixed(5)}°N, ${kmzInfo.lon.toFixed(5)}°E`).addTo(leafMap);
-      leafLayers.push(mk);
-    }
-  } catch(e){console.warn('GeoJSON load error:',e);}
-  setTimeout(()=>leafMap.invalidateSize(),200);
+
+  // Init map only after container is visible
+  _ensureLeafMap();
+
+  // Clear old layers
+  leafLayers.forEach(l => { try { leafMap.removeLayer(l); } catch {} });
+  leafLayers = []; selectedLayer = null;
+
+  // Force size recalc before loading data
+  setTimeout(async () => {
+    leafMap.invalidateSize();
+    try {
+      const res = await fetch(`${BASE}/geojson/${runId}`);
+      if (!res.ok) throw new Error('GeoJSON fetch failed: ' + res.status);
+      const gj = await res.json();
+
+      if (gj.features && gj.features.length > 0) {
+        currentGeoJSON = gj;
+        const COLORS_BY_CLASS = {1:'#2ecc71', 2:'#f39c12', 3:'#e74c3c'};
+        const COMP_COLORS = ['#C8E6C9','#B3E5FC','#FFE0B2','#F8BBD0','#E1BEE7',
+                             '#DCEDC8','#B2EBF2','#FFF9C4','#D7CCC8','#CFD8DC',
+                             '#C5CAE9','#F0F4C3','#FFCCBC','#B2DFDB','#E8EAF6'];
+        let compIdx = 0;
+        const layer = L.geoJSON(gj, {
+          style: feat => {
+            const props = feat.properties || {};
+            const cls   = props.Class;
+            let fc = '#10b981';
+            if (cls === 1 || cls === 2 || cls === 3) {
+              fc = COLORS_BY_CLASS[cls];
+            } else if (props.Comp_ID) {
+              fc = COMP_COLORS[compIdx++ % COMP_COLORS.length];
+            }
+            return { fillColor: fc, fillOpacity: 0.42, color: '#1a3a22', weight: 2 };
+          },
+          onEachFeature: (feat, lyr) => {
+            const p   = feat.properties || {};
+            const lbl = p.Comp_ID || p.Forest || p.Label || p.Slope_Range || '';
+            const ah  = p.Area_ha  ? ` — ${parseFloat(p.Area_ha).toFixed(3)} ha` : '';
+            const cl  = p.Class    ? ` [Class ${p.Class}: ${p.Slope_Range||''}]` : '';
+            const popup = `<div style="font-family:monospace;font-size:12px"><b>${lbl}</b>${ah}${cl}</div>`;
+            lyr.bindPopup(popup);
+            lyr.on('click', () => {
+              if (selectedLayer && selectedLayer !== lyr) {
+                selectedLayer.setStyle({ weight: 2, color: '#1a3a22' });
+              }
+              selectedLayer = lyr;
+              lyr.setStyle({ weight: 4, color: '#059669' });
+            });
+            lyr.on('mouseover', () => { if (lyr !== selectedLayer) lyr.setStyle({ weight: 3 }); });
+            lyr.on('mouseout',  () => { if (lyr !== selectedLayer) lyr.setStyle({ weight: 2 }); });
+          }
+        }).addTo(leafMap);
+        leafLayers.push(layer);
+        try { leafMap.fitBounds(layer.getBounds().pad(0.06)); } catch {}
+      } else if (kmzInfo && kmzInfo.lat && kmzInfo.lon) {
+        const zoom = Math.max(10, Math.min(15, Math.round(16 - Math.log2(Math.max(kmzInfo.alt / 500, 1)))));
+        leafMap.setView([kmzInfo.lat, kmzInfo.lon], zoom);
+        const mk = L.circleMarker([kmzInfo.lat, kmzInfo.lon], {
+          radius: 10, color: '#10b981', fillColor: '#34d399', fillOpacity: 0.9, weight: 2
+        }).bindPopup(`<b>Centroid</b><br>${kmzInfo.lat.toFixed(5)}°N, ${kmzInfo.lon.toFixed(5)}°E`).addTo(leafMap);
+        leafLayers.push(mk);
+      }
+    } catch(e) { console.warn('OSM GeoJSON load error:', e); }
+    leafMap.invalidateSize();
+  }, 250);
 }
 
 /* ── LEAFLET EDIT TOOLS ──────────────────────────────────────────────────── */
@@ -1096,14 +1163,14 @@ function triggerDL(rid){const a=document.createElement('a');a.href=`${BASE}/down
 function loadRunPrev(rid){
   currentRunId=rid;
   const img=document.getElementById('out-img');
+  img.onload=()=>{img.style.display='block';document.getElementById('empty-msg').style.display='none';};
   img.src=`${BASE}/outputs/${rid}/output.png?t=${Date.now()}`;
-  img.style.display='block'; document.getElementById('empty-msg').style.display='none';
   document.getElementById('dl-btn').href=`${BASE}/download/${rid}`;
   document.getElementById('dl-btn').style.display='inline-block';
   document.getElementById('dl-btn2').href=`${BASE}/download/${rid}`;
   switchPView('static'); toggleHist();
-  // Load OSM too
-  loadOSM(rid,null);
+  // Also pre-load OSM in background for quick tab switch
+  loadOSM(rid, null);
 }
 </script>
 </body>
