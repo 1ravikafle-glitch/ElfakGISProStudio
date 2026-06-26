@@ -134,7 +134,7 @@ def _north_arrow(ax):
     aw = x1-x0; ah = y1-y0
     nx = x1 - aw*0.04; ny = y1 - ah*0.05; arrh = ah*0.065
     ax.annotate("", xy=(nx, ny), xytext=(nx, ny-arrh),
-                arrowprops=dict(arrowstyle="-|>", color="black", lw=1.6, mutation_scale=15), zorder=20)
+                arrowprops=dict(arrowstyle="-|>", color="black", linewidth=1.6, mutation_scale=15), zorder=20)
     ax.text(nx, ny+ah*0.003, "N", ha="center", va="bottom", fontsize=8, fontweight="bold", color="black", zorder=20)
 
 def _scale_bar(ax):
@@ -149,7 +149,7 @@ def _scale_bar(ax):
     for i in range(4):
         fc = "black" if i%2==0 else "white"
         ax.add_patch(plt.Rectangle((bx+i*bar_m/4, by), bar_m/4, bh,
-                     lw=0.8, edgecolor="black", facecolor=fc, zorder=15, clip_on=False))
+                     linewidth=0.8, edgecolor="black", facecolor=fc, zorder=15, clip_on=False))
     lbl = f"{bar_m:.0f} m" if bar_m<1000 else f"{bar_m/1000:.1f} km"
     ax.text(bx+bar_m/2, by+bh*2.1, lbl, ha="center", va="bottom", fontsize=6.5, fontweight="bold", color="black", zorder=16)
     ax.text(bx, by-bh*0.5, "0", ha="center", va="top", fontsize=5.5, color="black", zorder=16)
@@ -189,7 +189,7 @@ def _label_feat(ax, gdf, col, fs=6.5, color="black"):
             cx, cy = g.centroid.x, g.centroid.y
             ax.annotate(str(row[col]), xy=(cx,cy), ha="center", va="center",
                         fontsize=fs, fontweight="bold", color=color,
-                        path_effects=[pe.Stroke(lw=2.2, foreground="white"), pe.Normal()], zorder=12)
+                        path_effects=[pe.Stroke(linewidth=2.2, foreground="white"), pe.Normal()], zorder=12)
         except: continue
 
 _CCOLORS = ["#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7","#DCEDC8",
@@ -931,7 +931,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
                 ax.annotate(str(row[lc_use]),xy=(row.geometry.x,row.geometry.y),
                             xytext=(0,7),textcoords="offset points",
                             ha="center",va="bottom",fontsize=5.5,fontweight="bold",color="black",
-                            path_effects=[pe.Stroke(lw=1.8,foreground="white"),pe.Normal()],zorder=6)
+                            path_effects=[pe.Stroke(linewidth=1.8,foreground="white"),pe.Normal()],zorder=6)
             except: pass
     if poly_gdf is not None and not poly_gdf.empty and "Comp_ID" in poly_gdf.columns:
         _label_feat(ax,poly_gdf,"Comp_ID")
@@ -1045,7 +1045,7 @@ def generate_kmz(poly_gdf,line_gdf,pts_gdf,out_dir,run_id):
         if gdf is None or gdf.empty: return None
         try: return gdf.to_crs("EPSG:4326") if gdf.crs else None
         except: return None
-    pw=w84(poly_gdf); lw=w84(line_gdf); ptw=w84(pts_gdf)
+    pw=w84(poly_gdf); linewidth=w84(line_gdf); ptw=w84(pts_gdf)
     ref=pw if pw is not None and not pw.empty else lw
     if ref is not None and not ref.empty:
         u=ref.unary_union; cx,cy=u.centroid.x,u.centroid.y
