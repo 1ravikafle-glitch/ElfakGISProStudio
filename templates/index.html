@@ -108,10 +108,17 @@
 }
 
 /* ── DARK MODE ── */
-[data-theme="dark"] {
-  --bg-1:#060e09; --bg-2:#08140b; --bg-3:#071009; --bg-4:#091508;
-  --aurora-1:rgba(16,185,129,.07); --aurora-2:rgba(5,150,105,.055);
-  --aurora-3:rgba(52,211,153,.04); --aurora-4:rgba(110,231,183,.025);
+[data-theme="dark"]{
+  --bg-1:#040806;
+  --bg-2:#07110a;
+  --bg-3:#0b1710;
+  --bg-4:#0e1c14;
+
+  --aurora-1:rgba(16,185,129,.08);
+  --aurora-2:rgba(59,130,246,.045);
+  --aurora-3:rgba(139,92,246,.035);
+  --aurora-4:rgba(236,72,153,.025);
+}
 
   --panel:rgba(10,22,14,0.75);
   --panel-elevated:rgba(14,30,19,0.90);
@@ -139,8 +146,22 @@
   --login-card:rgba(10,22,14,.98);
   --login-txt:#c6f6e0;
 
-  --txt:#c6f6e0; --txt2:#5ecea0; --muted:#2d6b4f;
-  --txt-dim:rgba(198,246,224,.38);
+  :root{
+  /* ===========================
+   Premium Dark Typography
+   =========================== */
+
+--txt:#ffffff;
+--txt2:#f3f4f6;
+--txt3:#d1d5db;
+--muted:#9ca3af;
+--txt-dim:rgba(255,255,255,.55);
+--txt-disabled:rgba(255,255,255,.28);
+
+--txt-success:#22c55e;
+--txt-warning:#f59e0b;
+--txt-error:#ef4444;
+--txt-info:#3b82f6;
 
   --mint-glow:rgba(16,185,129,.3);
   --mint-glow-strong:rgba(16,185,129,.55);
@@ -972,7 +993,7 @@ select:focus, input:focus {
   <div class="login-card">
     <h2>🌲 Elfak GIS Engine Pro</h2>
     <p>Enter a username to access the Premium Forest Studio</p>
-    <input type="text" id="login-inp" placeholder="Your username (e.g.Forest_1_A)" maxlength="40"
+    <input type="text" id="login-inp" placeholder="Your username (e.g. RamBahadur)" maxlength="40"
            onkeydown="if(event.key==='Enter')doLogin()">
     <div class="login-err" id="lerr"></div>
     <div id="sugg">Try: <span onclick="trySugg(0)">…</span> <span onclick="trySugg(1)">…</span> <span onclick="trySugg(2)">…</span></div>
