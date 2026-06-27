@@ -10,31 +10,28 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#eef7f0;--panel:rgba(255,255,255,0.82);--border:rgba(16,185,129,0.14);
+  --bg:#edf5f0;--panel:rgba(255,255,255,0.82);--border:rgba(16,185,129,0.13);
   --mint:#10b981;--mint-d:#059669;--mint-g:linear-gradient(135deg,#34d399,#059669);
   --txt:#0d1f17;--txt2:#3a5a48;--muted:#7a9d8a;
   --red:#ef4444;--amber:#f59e0b;--blue:#3b82f6;
   --r:14px;--r2:10px;--r3:8px;
-  --shadow:0 4px 28px rgba(10,40,20,0.12);
-  --shadow2:0 10px 48px rgba(10,40,20,0.18);
+  --shadow:0 4px 28px rgba(10,40,20,0.11);
+  --shadow2:0 10px 44px rgba(10,40,20,0.17);
   --ease:cubic-bezier(0.22,1,0.36,1);
   --mono:'JetBrains Mono',ui-monospace,monospace;
   --sans:'Inter',system-ui,sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:rgba(16,185,129,.3) transparent}
-body{font-family:var(--sans);background:var(--bg);color:var(--txt);height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;
-  background:linear-gradient(145deg,#e8f5e9 0%,#f0f7f2 25%,#e6f3ea 50%,#eef5ef 75%,#e4f0e7 100%);
+body{font-family:var(--sans);color:var(--txt);height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;
+  background:linear-gradient(145deg,#e6f4ec 0%,#f0f8f3 30%,#e8f5ee 60%,#edf7f1 100%);
   background-attachment:fixed;}
-body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.55;
-  background-image:
-    radial-gradient(ellipse at 10% 15%,rgba(16,185,129,.12) 0,transparent 40%),
-    radial-gradient(ellipse at 90% 85%,rgba(5,150,105,.10) 0,transparent 40%),
-    radial-gradient(ellipse at 50% 50%,rgba(52,211,153,.06) 0,transparent 60%);
-  background-size:100% 100%;}
-.shell{position:relative;z-index:1;}
-/* ── LAYOUT ── */
-.shell{display:flex;flex-direction:column;height:100vh;opacity:0;animation:fadeIn .5s var(--ease) forwards}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse at 12% 18%,rgba(16,185,129,.10) 0,transparent 42%),
+              radial-gradient(ellipse at 88% 82%,rgba(5,150,105,.08) 0,transparent 42%),
+              radial-gradient(ellipse at 50% 50%,rgba(52,211,153,.05) 0,transparent 65%);}
+.shell{display:flex;flex-direction:column;height:100vh;opacity:0;animation:fadeIn .5s var(--ease) forwards;position:relative;z-index:1}
 @keyframes fadeIn{to{opacity:1}}
+
 /* ── HEADER ── */
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;
   background:rgba(255,255,255,0.92);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
@@ -49,8 +46,8 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
 .logo-sub{font-size:9px;font-family:var(--mono);color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
 .hdr-pills{display:flex;align-items:center;gap:8px;flex:1;justify-content:center;flex-wrap:wrap}
 .pill{display:flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;
-  background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.22);font-size:10px;font-family:var(--mono);color:var(--txt2);
-  box-shadow:0 1px 4px rgba(16,185,129,.1)}
+  background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.22);
+  font-size:10px;font-family:var(--mono);color:var(--txt2);box-shadow:0 1px 4px rgba(16,185,129,.1)}
 .pill-dot{width:5px;height:5px;border-radius:50%;background:var(--mint);box-shadow:0 0 6px rgba(16,185,129,.6);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .hdr-user{display:none;align-items:center;gap:8px;flex-shrink:0}
@@ -60,91 +57,95 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opa
   font-size:11px;cursor:pointer;font-family:var(--sans);color:var(--txt2);transition:all .2s}
 .hdr-btn:hover{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.3)}
 .hdr-btn.danger:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#b91c1c}
+
 /* ── MAIN GRID ── */
-.main{display:grid;grid-template-columns:230px 1fr 380px;flex:1;gap:0;min-height:0;padding:12px 14px;column-gap:8px}
+.main{display:grid;grid-template-columns:235px 1fr 390px;flex:1;gap:0;min-height:0;padding:12px 14px;column-gap:8px}
+
 /* ── PANELS ── */
-.panel{background:rgba(255,255,255,0.80);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
-  border:1px solid rgba(16,185,129,.12);border-radius:var(--r);
-  display:flex;flex-direction:column;box-shadow:0 4px 28px rgba(10,40,20,.10);overflow:hidden;position:relative;transition:border-color .3s,box-shadow .3s}
-.panel:hover{border-color:rgba(16,185,129,.22);box-shadow:var(--shadow2)}
-.panel-hd{padding:11px 16px;border-bottom:1px solid rgba(16,185,129,.1);font-size:9.5px;font-family:var(--mono);
-  font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--txt2);display:flex;align-items:center;gap:7px;flex-shrink:0;
-  background:rgba(16,185,129,.03)}
+.panel{background:rgba(255,255,255,0.82);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+  border:1px solid rgba(16,185,129,.13);border-radius:var(--r);
+  display:flex;flex-direction:column;box-shadow:0 4px 28px rgba(10,40,20,.10);
+  overflow:hidden;position:relative;transition:border-color .3s,box-shadow .3s}
+.panel:hover{border-color:rgba(16,185,129,.25);box-shadow:var(--shadow2)}
+.panel-hd{padding:11px 16px;border-bottom:1px solid rgba(16,185,129,.10);font-size:9.5px;font-family:var(--mono);
+  font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--txt2);
+  display:flex;align-items:center;gap:7px;flex-shrink:0;background:rgba(16,185,129,.03)}
 .panel-hd::before{content:'';width:5px;height:5px;border-radius:1.5px;background:var(--mint);
   box-shadow:0 0 6px rgba(16,185,129,.5);flex-shrink:0;transition:transform .3s}
 .panel:hover .panel-hd::before{transform:rotate(45deg) scale(1.2)}
 .panel-body{flex:1;overflow-y:auto;padding:12px 14px;min-height:0}
+
 /* ── LEFT NAV ── */
 .nav-item{padding:8px 10px;border-radius:var(--r3);font-size:11.5px;color:var(--txt2);cursor:pointer;
   display:flex;align-items:center;gap:8px;margin-bottom:3px;transition:all .25s var(--ease)}
 .nav-item:hover{background:rgba(20,50,30,.05);color:var(--txt);transform:translateX(2px)}
-.nav-item.active{background:rgba(16,185,129,.12);color:var(--txt);font-weight:600;
-  box-shadow:inset 2px 0 0 var(--mint)}
-.nav-sep{height:1px;background:rgba(16,185,129,.1);margin:8px 0}
-/* ── CENTER WORKSPACE ── */
+.nav-item.active{background:rgba(16,185,129,.13);color:var(--txt);font-weight:600;box-shadow:inset 2px 0 0 var(--mint)}
+.nav-sep{height:1px;background:rgba(16,185,129,.12);margin:8px 0}
+
+/* ── CENTER ── */
 .center{display:grid;grid-template-rows:1fr auto;gap:8px;min-height:0}
-.mtabs{display:flex;gap:6px;margin-bottom:10px;flex-shrink:0}
-.mtab{width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.6);border:1px solid var(--border);
-  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;font-weight:600;
-  color:var(--muted);cursor:pointer;transition:all .25s var(--ease)}
-.mtab:hover{color:var(--txt);border-color:rgba(20,50,30,.2);transform:scale(1.06)}
-.mtab.active{color:var(--txt);background:rgba(16,185,129,.14);border-color:var(--mint);
-  box-shadow:0 0 16px rgba(16,185,129,.2)}
+.mtabs{display:flex;gap:5px;margin-left:auto}
+.mtab{width:32px;height:32px;border-radius:7px;background:rgba(255,255,255,.6);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700;
+  color:var(--muted);cursor:pointer;transition:all .22s var(--ease)}
+.mtab:hover{color:var(--txt);border-color:rgba(20,50,30,.2);transform:scale(1.07)}
+.mtab.active{color:var(--txt);background:rgba(16,185,129,.15);border-color:var(--mint);box-shadow:0 0 14px rgba(16,185,129,.22)}
 .config-area{flex:1;overflow-y:auto;min-height:0}
 .card{display:none;flex-direction:column;gap:10px}
-.card.active{display:flex;animation:cardIn .3s var(--ease)}
-@keyframes cardIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-/* ── FORM ELEMENTS ── */
+.card.active{display:flex;animation:cardIn .28s var(--ease)}
+@keyframes cardIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* ── FORMS ── */
 .fg{display:flex;flex-direction:column;gap:3px}
 .fg label{font-size:9px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:500;transition:color .2s}
 .fg:focus-within label{color:var(--mint)}
-select,input[type=number],input[type=text]{width:100%;background:rgba(255,255,255,.9);border:1px solid rgba(20,50,30,.14);
+select,input[type=number],input[type=text]{width:100%;background:rgba(255,255,255,.92);border:1px solid rgba(20,50,30,.13);
   border-radius:var(--r3);padding:6px 10px;font-size:11px;color:var(--txt);font-family:var(--sans);outline:none;
-  transition:border-color .2s,box-shadow .2s,background .2s}
-select:focus,input:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(16,185,129,.15);background:#fff}
+  transition:border-color .2s,box-shadow .2s}
+select:focus,input:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(16,185,129,.14);background:#fff}
 select:hover,input:hover{border-color:rgba(16,185,129,.4)}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.dz{border:1.5px dashed rgba(20,50,30,.18);background:rgba(255,255,255,.35);border-radius:var(--r3);
+.dz{border:1.5px dashed rgba(20,50,30,.17);background:rgba(255,255,255,.35);border-radius:var(--r3);
   padding:12px;text-align:center;cursor:pointer;position:relative;transition:all .25s var(--ease)}
-.dz:hover{border-color:var(--mint);background:rgba(16,185,129,.04);transform:translateY(-1px);box-shadow:0 4px 16px rgba(16,185,129,.1)}
+.dz:hover{border-color:var(--mint);background:rgba(16,185,129,.04);transform:translateY(-1px);box-shadow:0 4px 14px rgba(16,185,129,.1)}
 .dz.over{border-color:var(--mint);background:rgba(16,185,129,.07);box-shadow:0 0 0 3px rgba(16,185,129,.15)}
 .dz input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
 .dz-text{font-size:10.5px;color:var(--txt2);font-weight:500;pointer-events:none}
-.toggle-row{display:flex;border:1px solid rgba(20,50,30,.14);border-radius:var(--r3);overflow:hidden;background:rgba(255,255,255,.5)}
+.toggle-row{display:flex;border:1px solid rgba(20,50,30,.13);border-radius:var(--r3);overflow:hidden;background:rgba(255,255,255,.5)}
 .tog{flex:1;padding:5px 8px;text-align:center;font-size:10px;font-family:var(--mono);font-weight:600;
   cursor:pointer;transition:all .2s;color:var(--muted)}
 .tog:hover:not(.on){background:rgba(16,185,129,.06);color:var(--txt2)}
 .tog.on{background:rgba(16,185,129,.18);color:#065f46;border-bottom:2px solid var(--mint)}
-.badge{background:rgba(16,185,129,.07);border:1px solid rgba(16,185,129,.22);border-radius:var(--r3);
+.badge{background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.20);border-radius:var(--r3);
   padding:7px 10px;font-size:9.5px;color:var(--txt2);line-height:1.55}
 .badge strong{color:#065f46;font-size:10px}
 .badge.warn{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.3);color:#92400e}
 .badge.info{background:rgba(59,130,246,.07);border-color:rgba(59,130,246,.3);color:#1e40af}
+.badge.purple{background:rgba(139,92,246,.07);border-color:rgba(139,92,246,.25);color:#5b21b6}
 .sep{height:1px;background:rgba(16,185,129,.1);margin:2px 0}
+
 /* ── CONSOLE ── */
 .console{display:flex;align-items:center;gap:12px;padding:10px 14px;flex-shrink:0}
 .run-btn{background:var(--mint-g);color:white;border:none;padding:10px 26px;border-radius:var(--r3);
   font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;letter-spacing:.02em;
   box-shadow:0 4px 20px rgba(16,185,129,.45);transition:all .25s var(--ease);position:relative;overflow:hidden}
-.run-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.25) 50%,transparent 70%);transform:translateX(-100%);transition:transform .5s}
+.run-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.22) 50%,transparent 70%);
+  transform:translateX(-100%);transition:transform .5s}
 .run-btn:hover{transform:translateY(-2px) scale(1.02);box-shadow:0 8px 28px rgba(16,185,129,.55)}
 .run-btn:hover::after{transform:translateX(100%)}
 .run-btn:active{transform:scale(.97)}
 .run-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
-/* Progress bar */
 .prog-wrap{flex:1;display:flex;flex-direction:column;gap:4px}
 .prog-top{display:flex;justify-content:space-between;align-items:center}
 .prog-label{font-size:11px;font-weight:600;color:var(--txt);transition:color .3s}
-.prog-label.running{color:var(--mint)}
-.prog-label.error{color:var(--red)}
+.prog-label.running{color:var(--mint)} .prog-label.error{color:var(--red)}
 .prog-pct{font-family:var(--mono);font-size:10px;color:var(--muted)}
 .prog-bar-bg{height:6px;background:rgba(16,185,129,.12);border-radius:3px;overflow:hidden}
-.prog-bar-fill{height:100%;background:var(--mint-g);border-radius:3px;width:0%;
-  transition:width .5s var(--ease);box-shadow:0 0 8px rgba(16,185,129,.4)}
+.prog-bar-fill{height:100%;background:var(--mint-g);border-radius:3px;width:0%;transition:width .5s var(--ease);box-shadow:0 0 8px rgba(16,185,129,.4)}
 .prog-bar-fill.error{background:linear-gradient(90deg,#ef4444,#dc2626)}
-.prog-msg{font-size:9.5px;font-family:var(--mono);color:var(--muted);min-height:14px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prog-msg{font-size:9.5px;font-family:var(--mono);color:var(--muted);min-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 /* ── RIGHT PANEL ── */
 .preview-panel{display:flex;flex-direction:column;gap:8px}
 .ptabs{display:flex;gap:1px;border:1px solid var(--border);border-radius:var(--r3);overflow:hidden;flex-shrink:0}
@@ -152,7 +153,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
   cursor:pointer;transition:all .2s;color:var(--muted);background:rgba(255,255,255,.5)}
 .ptab:hover:not(.on){background:rgba(16,185,129,.06);color:var(--txt2)}
 .ptab.on{background:rgba(16,185,129,.16);color:#065f46;border-bottom:2px solid var(--mint)}
-.canvas-wrap{flex:1;background:#ffffff;border-radius:var(--r3);border:1px solid var(--border);
+.canvas-wrap{flex:1;background:#fff;border-radius:var(--r3);border:1px solid var(--border);
   display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0;position:relative;
   box-shadow:inset 0 2px 8px rgba(0,0,0,.04)}
 #out-img{max-width:100%;max-height:100%;object-fit:contain;display:none;border-radius:7px}
@@ -166,19 +167,24 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
 .dl-btn{display:none;padding:6px 14px;border-radius:6px;background:rgba(16,185,129,.12);
   border:1px solid rgba(16,185,129,.3);color:#065f46;font-size:11px;font-weight:600;text-decoration:none;transition:all .2s}
 .dl-btn:hover{background:rgba(16,185,129,.22);box-shadow:0 3px 10px rgba(16,185,129,.2)}
-/* Edit toolbar */
 .edit-toolbar{display:none;gap:4px;flex-wrap:wrap;padding:6px 8px;
-  background:rgba(255,255,255,.8);border:1px solid rgba(16,185,129,.2);border-radius:var(--r3)}
+  background:rgba(255,255,255,.85);border:1px solid rgba(16,185,129,.2);border-radius:var(--r3)}
 .edit-toolbar.visible{display:flex}
 .etool{padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:rgba(255,255,255,.7);
   font-size:10px;cursor:pointer;font-family:var(--mono);color:var(--txt2);transition:all .2s}
 .etool:hover{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.4);color:#065f46}
 .etool.active-tool{background:rgba(16,185,129,.18);border-color:var(--mint);color:#065f46}
-/* Map Composer */
 .composer{display:none;flex-direction:column;gap:8px;padding:8px;
-  background:rgba(255,255,255,.8);border:1px solid rgba(16,185,129,.2);border-radius:var(--r3)}
+  background:rgba(255,255,255,.85);border:1px solid rgba(16,185,129,.2);border-radius:var(--r3)}
 .composer.visible{display:flex}
-/* ── LOGIN OVERLAY ── */
+
+/* ── G SUMMARY BOX ── */
+.g-summary{display:none;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.22);
+  border-radius:var(--r3);padding:10px 12px;font-size:10px;font-family:var(--mono);color:var(--txt2);line-height:1.8}
+.g-summary.visible{display:block}
+.g-summary strong{color:#065f46;font-weight:700}
+
+/* ── LOGIN ── */
 #login-overlay{display:none;position:fixed;inset:0;z-index:9000;background:rgba(5,20,12,.65);
   backdrop-filter:blur(20px);align-items:center;justify-content:center}
 .login-card{background:white;border-radius:18px;padding:36px 40px;width:380px;max-width:92vw;
@@ -201,7 +207,8 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
 #sugg span{cursor:pointer;padding:2px 7px;border-radius:5px;background:rgba(16,185,129,.1);
   color:#065f46;font-weight:600;margin:0 3px;transition:background .2s}
 #sugg span:hover{background:rgba(16,185,129,.22)}
-/* ── HISTORY DRAWER ── */
+
+/* ── HISTORY ── */
 #hist-drawer{position:fixed;right:-340px;top:0;height:100%;width:320px;z-index:8500;
   background:white;box-shadow:-4px 0 32px rgba(5,20,12,.15);display:flex;flex-direction:column;
   transition:right .35s var(--ease);border-left:1px solid rgba(16,185,129,.1)}
@@ -215,15 +222,13 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
   background:rgba(255,255,255,.7);transition:all .2s}
 .run-card:hover{border-color:rgba(16,185,129,.28);box-shadow:0 3px 12px rgba(16,185,129,.1)}
 .run-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-.run-mod{font-family:var(--mono);font-size:10px;font-weight:700;color:#065f46;
-  background:rgba(16,185,129,.12);padding:2px 7px;border-radius:4px}
+.run-mod{font-family:var(--mono);font-size:10px;font-weight:700;color:#065f46;background:rgba(16,185,129,.12);padding:2px 7px;border-radius:4px}
 .run-time{font-family:var(--mono);font-size:9px;color:var(--muted)}
 .run-actions{display:flex;gap:6px;margin-top:6px}
 .run-act{flex:1;padding:4px 0;border:1px solid var(--border);border-radius:5px;
   background:rgba(255,255,255,.7);font-size:10px;cursor:pointer;font-family:var(--sans);color:var(--txt2);transition:all .2s}
 .run-act:hover{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.3);color:#065f46}
 #hist-bg{display:none;position:fixed;inset:0;z-index:7999;background:rgba(0,0,0,.12)}
-/* ── HIDDEN UTIL ── */
 .hidden{display:none!important}
 </style>
 </head>
@@ -234,7 +239,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
   <div class="login-card">
     <h2>🌲 Elfak GIS Engine Pro</h2>
     <p>Enter a username to access the Premium Forest Studio</p>
-    <input type="text" id="login-inp" placeholder="Your username (e.g. RamBahadur)" maxlength="40"
+    <input type="text" id="login-inp" placeholder="Your username (e.g. Forest_1_A)" maxlength="40"
            onkeydown="if(event.key==='Enter')doLogin()">
     <div class="login-err" id="lerr"></div>
     <div id="sugg">Try: <span onclick="trySugg(0)">…</span> <span onclick="trySugg(1)">…</span> <span onclick="trySugg(2)">…</span></div>
@@ -288,8 +293,9 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
     <div class="nav-item" onclick="switchTab('D')">🗂 D — Multi-Forest Complex</div>
     <div class="nav-item" onclick="switchTab('E')">✂️ E — Polygon Subdivider</div>
     <div class="nav-item" onclick="switchTab('F')">🏔 F — Slope Analysis</div>
+    <div class="nav-item" onclick="switchTab('G')">📌 G — Survey Point Generator</div>
     <div class="nav-sep"></div>
-    <div class="fg" style="margin-top:10px">
+    <div class="fg" style="margin-top:6px">
       <label>UTM Zone / CRS</label>
       <select id="zone" onchange="document.getElementById('hdr-crs').textContent='EPSG:326'+this.value">
         <option value="44">Zone 44N — EPSG:32644</option>
@@ -300,20 +306,12 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
       </select>
     </div>
     <div class="nav-sep"></div>
-    <!-- Map Title & Legend controls (global) -->
     <div class="fg"><label>Map Title</label>
       <input type="text" id="g-title" placeholder="e.g. Salghari CF 2025"></div>
-    <div class="fg"><label>Legend Title (word shown)</label>
+    <div class="fg"><label>Legend Title</label>
       <input type="text" id="g-legend" value="Legend" placeholder="Legend"></div>
     <div class="fg"><label>Feature Label Column</label>
       <input type="text" id="g-label" placeholder="e.g. Forest / Comp_ID / SN"></div>
-    <div class="nav-sep"></div>
-    <div class="badge info" style="margin-top:4px">
-      <strong>💡 Suggestions</strong><br>
-      Group G: Forest Inventory Tabulation (basal area, volume from sample plots linked to Group C outputs).<br>
-      Group H: Change Detection (compare two boundary datasets for deforestation alert).<br>
-      Upgrade E: Export SVG/DXF of division lines for field use.
-    </div>
   </div>
 </div>
 
@@ -321,13 +319,14 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
 <div class="center">
   <div class="panel">
     <div class="panel-hd">⚙️ Parameter Matrix
-      <div class="mtabs" style="margin-left:auto">
+      <div class="mtabs">
         <div class="mtab active" id="mt-A" onclick="switchTab('A')">A</div>
         <div class="mtab" id="mt-B" onclick="switchTab('B')">B</div>
         <div class="mtab" id="mt-C" onclick="switchTab('C')">C</div>
         <div class="mtab" id="mt-D" onclick="switchTab('D')">D</div>
         <div class="mtab" id="mt-E" onclick="switchTab('E')">E</div>
         <div class="mtab" id="mt-F" onclick="switchTab('F')">F</div>
+        <div class="mtab" id="mt-G" onclick="switchTab('G')" style="background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.3);color:#5b21b6">G</div>
       </div>
     </div>
     <div class="panel-body config-area">
@@ -358,7 +357,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
           <div class="fg"><label>Forest Column</label><select data-key="Forest" data-card="B"></select></div>
         </div>
         <div class="fg"><label>Compartment Column (optional)</label><select data-key="Compartment" data-card="B"></select></div>
-        <div class="badge"><strong>ℹ️ Output:</strong> One SHP set per forest/compartment with area & perimeter</div>
+        <div class="badge"><strong>ℹ️ Output:</strong> One SHP set per forest/compartment with area &amp; perimeter</div>
       </div>
 
       <!-- C -->
@@ -372,8 +371,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
         </div>
         <div id="c-zip-notice" class="hidden">
           <div class="badge"><strong>📦 ZIP Detected</strong>
-            <div class="fg" style="margin-top:6px"><label>Target SHP Layer</label>
-              <select id="c-shp-sel"></select></div>
+            <div class="fg" style="margin-top:6px"><label>Target SHP Layer</label><select id="c-shp-sel"></select></div>
           </div>
         </div>
         <div id="c-coord-fields">
@@ -416,7 +414,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
           <div class="fg"><label>Forest Column</label><select data-key="Forest" data-card="D"></select></div>
         </div>
         <div class="fg hidden" id="d-comp-fg"><label>Compartment Column</label><select data-key="Compartment" data-card="D"></select></div>
-        <div class="badge"><strong>ℹ️ Output:</strong> One folder per Forest (with sub-folders for each Compartment in Segmented mode)</div>
+        <div class="badge"><strong>ℹ️ Output:</strong> One folder per Forest (with sub-folders per Compartment in Segmented mode)</div>
       </div>
 
       <!-- E -->
@@ -425,8 +423,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
         <div id="e-zip-notice" class="hidden">
           <div class="badge"><strong>📦 ZIP Detected — Polygon Layer</strong>
             <div class="fg" style="margin-top:6px"><label>Target SHP Layer</label><select id="e-shp-sel"></select></div>
-            <div class="fg" style="margin-top:6px"><label>Forest Name Column in SHP</label>
-              <select id="e-zip-fcol"><option value="">— auto detect —</option></select></div>
+            <div class="fg" style="margin-top:6px"><label>Forest Name Column</label><select id="e-zip-fcol"><option value="">— auto detect —</option></select></div>
           </div>
         </div>
         <div id="e-csv-fields">
@@ -451,21 +448,19 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
             <input type="number" id="e-n" value="4" min="2" max="15" step="1"
                    oninput="this.value=Math.max(2,Math.min(15,parseInt(this.value)||4));document.getElementById('e-n-disp').textContent=this.value">
           </div>
-          <div class="fg"><label>Area Tol ± ha (0.1–0.5)</label>
+          <div class="fg"><label>Area Tol ± ha</label>
             <input type="number" id="e-tol" value="0.3" min="0.1" max="0.5" step="0.05"></div>
         </div>
         <div class="fg"><label>Division Method</label>
           <select id="e-method">
             <option value="bisect">Recursive Bisection (exact: 2,4,8,16)</option>
             <option value="ba">Bisection + Boundary Adjustment</option>
-            <option value="voronoi">Voronoi + Iterative Refinement (Lloyd)</option>
+            <option value="voronoi">Voronoi + Iterative Refinement</option>
             <option value="grid">Grid Division</option>
           </select>
         </div>
-        <div class="badge"><strong>📐 N = <span id="e-n-disp">4</span> compartments</strong> per forest polygon<br>
-          Division-points Excel + SHP exported for ArcGIS field reconstruction</div>
-        <!-- Live Edit hint -->
-        <div class="badge info"><strong>✏️ Live Edit:</strong> After running, switch to OpenStreetMap tab → use Edit Tools to drag vertices, move/delete features, then Save Edits to update the ZIP output.</div>
+        <div class="badge"><strong>📐 N = <span id="e-n-disp">4</span> compartments</strong> per forest polygon</div>
+        <div class="badge info"><strong>✏️ Live Edit:</strong> After running, switch to OpenStreetMap tab → use Edit Tools to drag vertices, then Save Edits.</div>
       </div>
 
       <!-- F -->
@@ -483,8 +478,7 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
         <div id="f-zip-notice" class="hidden">
           <div class="badge"><strong>📦 ZIP Detected</strong>
             <div class="fg" style="margin-top:6px"><label>Boundary Polygon Layer</label><select id="f-shp-sel"></select></div>
-            <div class="fg hidden" id="f-zip-comp-fg" style="margin-top:6px"><label>Grouping Column (Forest/Comp)</label>
-              <input type="text" id="f-zip-comp-col" placeholder="e.g. Forest"></div>
+            <div class="fg hidden" id="f-zip-comp-fg" style="margin-top:6px"><label>Grouping Column</label><input type="text" id="f-zip-comp-col" placeholder="e.g. Forest"></div>
           </div>
         </div>
         <div id="f-csv-fields">
@@ -500,82 +494,99 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
         </div>
         <div class="fg"><label>Step 2 — DEM GeoTIFF</label></div>
         <div class="dz" id="dz-F-dem"><span class="dz-text" id="f-dem-lbl">🏔 Upload DEM (.tif)</span><input type="file" id="fi-F-dem" accept=".tif,.tiff"></div>
-        <div class="fg"><label>Field Area ha (optional, for recalibration)</label>
-          <input type="number" id="f-fa" step="any" placeholder="e.g. 47.5 — leave blank to skip"></div>
-        <div class="badge" style="background:rgba(16,185,129,.06)">
-          <strong>Workflow:</strong> Rect DEM extract (20% buffer) → Slope (Horn) → Reclassify (&lt;19°, 19-31°, &gt;31°) → Raster→Polygon (gridcode) → Dissolve by class → Clip to boundary → Slope table per group
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:7px">
-            <div style="background:#2ecc71;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9px;font-weight:700">Class 1<br>&lt;19° Gentle</div>
-            <div style="background:#f39c12;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9px;font-weight:700">Class 2<br>19-31° Moderate</div>
-            <div style="background:#e74c3c;color:white;border-radius:5px;padding:5px;text-align:center;font-size:9px;font-weight:700">Class 3<br>&gt;31° Steep</div>
-          </div>
+        <div class="fg"><label>Field Area ha (optional recalibration)</label>
+          <input type="number" id="f-fa" placeholder="e.g. 464.4" step="any" min="0"></div>
+        <div class="badge warn"><strong>⚠️ DEM must cover the boundary extent.</strong> Mismatched extents → empty result.</div>
+      </div>
+
+      <!-- G — Forest Point Generator -->
+      <div class="card" id="card-G">
+        <div class="badge purple">
+          <strong>📌 Group G — Forest Survey Point Generator</strong><br>
+          Generates Vertex, Boundary, and Divider points from a compartment polygon shapefile.<br>
+          Exports SHP + CSV + Excel with Point_ID, Point_Type, Source, and Compartments fields.
         </div>
+        <div class="dz" id="dz-G">
+          <span class="dz-text">📦 Upload Compartment SHP or ZIP-of-SHP</span>
+          <input type="file" id="fi-G" accept=".shp,.zip">
+        </div>
+        <div class="row2">
+          <div class="fg"><label>Compartment ID Column</label>
+            <input type="text" id="g-comp-col" placeholder="e.g. Comp_ID, Comp_No"></div>
+          <div class="fg"><label>Point Spacing (m)</label>
+            <input type="number" id="g-spacing" value="20" min="1" step="any"></div>
+        </div>
+        <div class="fg"><label>Map Title</label>
+          <input type="text" id="g-map-title" placeholder="e.g. Salghari CF — Survey Points 2025"></div>
+        <div class="sep"></div>
+        <div class="badge info">
+          <strong>📋 Output Fields:</strong><br>
+          Point_ID · Point_Type (Vertex/Boundary/Divider) · Source · Compartments · Easting · Northing<br><br>
+          <strong>🔀 Dedup Priority:</strong> Divider &gt; Vertex &gt; Boundary<br>
+          Compartment names merged alphabetically where points coincide.
+        </div>
+        <div class="g-summary" id="g-result-box"></div>
       </div>
 
     </div><!-- config-area -->
   </div><!-- panel -->
 
   <!-- CONSOLE -->
-  <div class="panel console">
-    <button class="run-btn" id="run-btn" onclick="runPipeline()">▶ Execute Pipeline</button>
-    <div class="prog-wrap">
-      <div class="prog-top">
-        <span class="prog-label" id="prog-lbl">Ready</span>
-        <span class="prog-pct" id="prog-pct">0%</span>
+  <div class="panel" style="flex-direction:row;padding:0">
+    <div class="console" style="flex:1">
+      <button class="run-btn" id="run-btn" onclick="runPipeline()">▶ Run Pipeline</button>
+      <div class="prog-wrap">
+        <div class="prog-top">
+          <div class="prog-label" id="prog-lbl">Ready</div>
+          <div class="prog-pct" id="prog-pct">0%</div>
+        </div>
+        <div class="prog-bar-bg"><div class="prog-bar-fill" id="prog-fill"></div></div>
+        <div class="prog-msg" id="prog-msg">Upload a file and click Run Pipeline</div>
       </div>
-      <div class="prog-bar-bg"><div class="prog-bar-fill" id="prog-fill"></div></div>
-      <div class="prog-msg" id="prog-msg">Awaiting execution…</div>
     </div>
   </div>
 </div><!-- center -->
 
-<!-- RIGHT PANEL -->
+<!-- RIGHT PANEL — Preview -->
 <div class="panel preview-panel">
-  <div class="panel-hd">🗺 Preview & Export</div>
-  <div class="panel-body" style="display:flex;flex-direction:column;gap:8px;padding:10px 12px">
-    <div class="ptabs">
-      <div class="ptab on" id="pt-static" onclick="switchPView('static')">🖼 PNG Map</div>
-      <div class="ptab" id="pt-osm" onclick="switchPView('osm')">🌍 OpenStreetMap</div>
-      <div class="ptab" id="pt-compose" onclick="switchPView('compose')">🎨 Composer</div>
-    </div>
+  <div class="panel-hd">🗺 Preview &amp; Export</div>
+  <div class="ptabs">
+    <div class="ptab on" id="pt-static" onclick="switchPView('static')">🖼 PNG Map</div>
+    <div class="ptab" id="pt-osm" onclick="switchPView('osm')">🌍 OpenStreetMap</div>
+    <div class="ptab" id="pt-compose" onclick="switchPView('compose')">🎨 Composer</div>
+  </div>
 
-    <!-- Static PNG -->
-    <div id="pv-static" style="flex:1;display:flex;flex-direction:column;min-height:0">
-      <div class="canvas-wrap" style="flex:1">
-        <div class="empty-msg" id="empty-msg">⌛ Run a module to see A4 map preview<br><span style="font-size:9px;opacity:.7">North arrow · Scale bar · Legend · Graticule labels</span></div>
-        <img id="out-img" alt="Output Map">
-      </div>
+  <!-- PNG view -->
+  <div id="pv-static" style="flex:1;display:flex;flex-direction:column;gap:6px;min-height:0">
+    <div class="canvas-wrap">
+      <img id="out-img" alt="Map Output">
+      <div class="empty-msg" id="empty-msg">🌲 Run a pipeline to see your A4 map here.<br><br>
+        Supports Groups A–G<br>PNG · SHP · CSV · Excel</div>
     </div>
+  </div>
 
-    <!-- OSM + Edit -->
-    <div id="pv-osm" style="flex:1;display:none;flex-direction:column;min-height:0;gap:8px">
-      <!-- Edit toolbar -->
-      <div class="edit-toolbar" id="edit-toolbar">
-        <div class="etool" id="tool-select" onclick="setTool('select')" title="Select/Move Feature">↖ Select</div>
-        <div class="etool" id="tool-vert" onclick="setTool('vertex')" title="Edit Vertices">◆ Vertices</div>
-        <div class="etool" id="tool-move" onclick="setTool('move')" title="Move Feature">✥ Move</div>
-        <div class="etool" id="tool-delete" onclick="deleteSelected()" title="Delete Selected">🗑 Delete</div>
-        <div class="etool" id="tool-add" onclick="setTool('add')" title="Add Vertex">+ Add Pt</div>
-        <div class="etool" onclick="saveEdits()" style="background:rgba(16,185,129,.15);border-color:var(--mint);color:#065f46">💾 Save Edits</div>
-        <div class="etool" onclick="undoEdit()" title="Undo last edit">↩ Undo</div>
-      </div>
-      <div class="canvas-wrap" style="flex:1">
-        <div class="osm-idle" id="osm-idle">
-          <div style="font-size:28px">🌍</div>
-          <div>Run a module first, then the polygon will appear here on OpenStreetMap</div>
-        </div>
-        <div id="osm-map" style="width:100%;height:100%;display:none;border-radius:7px"></div>
-      </div>
-      <div style="font-size:8px;color:var(--muted);text-align:right">© <a href="https://www.openstreetmap.org/copyright" target="_blank" style="color:var(--mint)">OpenStreetMap</a> contributors</div>
+  <!-- OSM view -->
+  <div id="pv-osm" style="flex:1;display:none;flex-direction:column;gap:6px;min-height:0">
+    <div class="canvas-wrap" style="position:relative">
+      <div class="osm-idle" id="osm-idle">🌍 OpenStreetMap preview loads after pipeline runs.<br>Click a tab above after running.</div>
+      <div id="osm-map"></div>
     </div>
+    <div class="edit-toolbar" id="edit-toolbar">
+      <span style="font-size:9px;font-family:var(--mono);color:var(--muted);padding:2px 4px">Edit Tools:</span>
+      <button class="etool" id="tool-vertex" onclick="setTool('vertex')">✏️ Vertices</button>
+      <button class="etool" onclick="deleteSelected()">🗑 Delete</button>
+      <button class="etool" onclick="undoEdit()">↩ Undo</button>
+      <button class="etool" onclick="saveEdits()">💾 Save Edits</button>
+    </div>
+  </div>
 
-    <!-- Map Composer -->
-    <div id="pv-compose" style="flex:1;display:none;flex-direction:column;gap:8px;overflow-y:auto">
-      <div class="badge info"><strong>🎨 Map Composer</strong> — Re-render the output PNG with custom settings below, then download.</div>
+  <!-- Composer view -->
+  <div id="pv-compose" style="flex:1;display:none;flex-direction:column;gap:6px;min-height:0;overflow-y:auto">
+    <div class="composer visible">
       <div class="fg"><label>Map Title</label><input type="text" id="comp-title" placeholder="e.g. Salghari CF — Compartment Map 2025"></div>
       <div class="fg"><label>Legend Title</label><input type="text" id="comp-legend" value="Legend"></div>
       <div class="fg"><label>Label Feature Column</label><input type="text" id="comp-label" placeholder="e.g. Comp_ID or Forest"></div>
-      <div class="fg"><label>Module (for render logic)</label>
+      <div class="fg"><label>Module (render logic)</label>
         <select id="comp-module">
           <option value="A">A — Boundary</option>
           <option value="B">B — Segmented</option>
@@ -583,24 +594,24 @@ select:hover,input:hover{border-color:rgba(16,185,129,.4)}
           <option value="D">D — Multi-Forest</option>
           <option value="E">E — Subdivider</option>
           <option value="F">F — Slope</option>
+          <option value="G">G — Survey Points</option>
         </select>
       </div>
       <button class="run-btn" style="width:100%" onclick="doCompose()">🎨 Re-Render Map</button>
       <div id="comp-status" style="font-size:10px;color:var(--muted);font-family:var(--mono);min-height:16px"></div>
       <div class="sep"></div>
-      <div class="badge"><strong>📤 Export Options</strong></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="etool" onclick="window.open(document.getElementById('out-img').src,'_blank')">🖼 Open Full PNG</button>
         <a id="dl-btn2" class="etool" style="text-decoration:none">📦 Download ZIP</a>
       </div>
     </div>
-
-    <div class="preview-foot">
-      <div class="run-meta" id="run-meta">Metrics: Ready</div>
-      <a id="dl-btn" class="dl-btn" href="#">⬇ Download ZIP</a>
-    </div>
   </div>
-</div>
+
+  <div class="preview-foot">
+    <div class="run-meta" id="run-meta">Metrics: Ready</div>
+    <a id="dl-btn" class="dl-btn" href="#">⬇ Download ZIP</a>
+  </div>
+</div><!-- right panel -->
 
 </div><!-- main -->
 </div><!-- shell -->
@@ -617,7 +628,7 @@ const ALIAS = {
   Y: new Set(['y','ycoord','ycoordinate','ycord','north','northing','northings','lat','latitude','pointy','coordy','utmn','utmy']),
   Order: new Set(['order','id','sn','sno','serial','serialno','seq','sequence','index','rowid','fid','no','num','number','plotid','plotno','pointid','pointno','pid']),
   Forest: new Set(['forest','forestname','forestid','forestno','fname','forestblock','block']),
-  Compartment: new Set(['compartment','comp','compartmentno','compartmentid','compno','compid','section','sectionno'])
+  Compartment: new Set(['compartment','comp','compartmentno','compartmentid','compno','compid','comp_id','comp_no','section','sectionno'])
 };
 const norm = s => (s||'').toString().toLowerCase().replace(/[^a-z0-9]/g,'');
 function detectCols(cols) {
@@ -628,11 +639,8 @@ function detectCols(cols) {
 function fillSelects(card, cols) {
   const map = detectCols(cols);
   document.querySelectorAll(`select[data-card="${card}"]`).forEach(sel => {
-    const key = sel.dataset.key;
-    sel.innerHTML = '';
-    if (key==='Order'||key==='Compartment') {
-      const o=document.createElement('option'); o.value=''; o.textContent='— none —'; sel.appendChild(o);
-    }
+    const key = sel.dataset.key; sel.innerHTML = '';
+    if (key==='Order'||key==='Compartment') { const o=document.createElement('option'); o.value=''; o.textContent='— none —'; sel.appendChild(o); }
     cols.forEach(c => { const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
     if (map[key]) sel.value = map[key];
     else if (key!=='Order'&&key!=='Compartment'&&cols.length>0) sel.value = cols[0];
@@ -648,8 +656,7 @@ async function parseCSVCols(file) {
 }
 function parseDbfCols(buf) {
   try {
-    const v=new DataView(buf); const nc=Math.floor((v.getUint16(8,true)-32)/32);
-    const cols=[];
+    const v=new DataView(buf); const nc=Math.floor((v.getUint16(8,true)-32)/32); const cols=[];
     for(let i=0;i<nc;i++){let n='';for(let j=0;j<11;j++){const b=v.getUint8(32+i*32+j);if(b===0)break;n+=String.fromCharCode(b);}if(n)cols.push(n.trim());}
     return cols;
   } catch{return [];}
@@ -662,8 +669,7 @@ async function handleZipShps(file, selEl, colSelEl) {
     const dbfs = Object.keys(zip.files).filter(p=>p.toLowerCase().endsWith('.dbf'));
     if (dbfs.length) {
       try {
-        const data = await zip.files[dbfs[0]].async('arraybuffer');
-        const cols = parseDbfCols(data);
+        const data = await zip.files[dbfs[0]].async('arraybuffer'); const cols = parseDbfCols(data);
         if (cols.length) {
           colSelEl.innerHTML = '<option value="">— auto detect —</option>' + cols.map(c=>`<option>${c}</option>`).join('');
           const m=detectCols(cols); if(m.Forest) colSelEl.value=m.Forest;
@@ -680,7 +686,6 @@ document.querySelectorAll('.fi').forEach(inp => {
     const card = this.dataset.card;
     const dzText = document.querySelector(`#dz-${card} .dz-text`);
     if (dzText) dzText.textContent = '📄 ' + file.name;
-
     if (card==='C') {
       const isZip = file.name.toLowerCase().endsWith('.zip');
       document.getElementById('c-coord-fields').classList.toggle('hidden', isZip);
@@ -723,8 +728,12 @@ document.getElementById('fi-F-bnd').addEventListener('change', async function() 
 document.getElementById('fi-F-dem').addEventListener('change', function() {
   const f=this.files[0]; if(f) document.getElementById('f-dem-lbl').textContent='🏔 '+f.name;
 });
+document.getElementById('fi-G').addEventListener('change', function() {
+  const f=this.files[0]; if(!f) return;
+  document.querySelector('#dz-G .dz-text').textContent = '📄 '+f.name;
+});
 
-/* Drag-over for all dropzones */
+/* Drag-over */
 document.querySelectorAll('.dz').forEach(dz => {
   const inp=dz.querySelector('input[type=file]'); if(!inp) return;
   ['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over');}));
@@ -733,22 +742,23 @@ document.querySelectorAll('.dz').forEach(dz => {
 });
 
 /* ── TAB SWITCHING ──────────────────────────────────────────────────────── */
-const MOD_LABELS = {A:'A · Boundary',B:'B · Segmented',C:'C · Sample Plot',D:'D · Multi-Forest',E:'E · Subdivider',F:'F · Slope Analysis'};
+const MOD_LABELS = {A:'A · Boundary',B:'B · Segmented',C:'C · Sample Plot',D:'D · Multi-Forest',E:'E · Subdivider',F:'F · Slope Analysis',G:'G · Survey Points'};
 function switchTab(t) {
-  activeModule=t;
+  activeModule = t;
   document.querySelectorAll('.card').forEach(c=>c.classList.remove('active'));
   const card=document.getElementById('card-'+t); if(card) card.classList.add('active');
   document.querySelectorAll('.mtab').forEach(m=>m.classList.toggle('active',m.id==='mt-'+t));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.getAttribute('onclick')===`switchTab('${t}')`));
   document.getElementById('hdr-mod').textContent = MOD_LABELS[t]||t;
-  // sync compose module selector
   document.getElementById('comp-module').value = t;
+  // Update run button label for G
+  document.getElementById('run-btn').textContent = t==='G' ? '📌 Generate Points' : '▶ Run Pipeline';
 }
-function setCMode(m) { cMode=m; ['A','B'].forEach(x=>document.getElementById('ct-'+x).classList.toggle('on',x===m)); document.getElementById('c-forest-fg').classList.toggle('hidden',m!=='B'); }
-function setDMode(m) { dMode=m; ['A','B'].forEach(x=>document.getElementById('dt-'+x).classList.toggle('on',x===m)); document.getElementById('d-comp-fg').classList.toggle('hidden',m!=='B'); }
-function setEMode(m) { eMode=m; ['A','B'].forEach(x=>document.getElementById('et-'+x).classList.toggle('on',x===m)); document.getElementById('e-fname-fg').classList.toggle('hidden',m==='B'); document.getElementById('e-fcol-fg').classList.toggle('hidden',m!=='B'); }
-function setFMode(m) {
-  fMode=m; ['A','B','E'].forEach(x=>document.getElementById('ft-'+x)?.classList.toggle('on',x===m));
+function setCMode(m){cMode=m;['A','B'].forEach(x=>document.getElementById('ct-'+x).classList.toggle('on',x===m));document.getElementById('c-forest-fg').classList.toggle('hidden',m!=='B');}
+function setDMode(m){dMode=m;['A','B'].forEach(x=>document.getElementById('dt-'+x).classList.toggle('on',x===m));document.getElementById('d-comp-fg').classList.toggle('hidden',m!=='B');}
+function setEMode(m){eMode=m;['A','B'].forEach(x=>document.getElementById('et-'+x).classList.toggle('on',x===m));document.getElementById('e-fname-fg').classList.toggle('hidden',m==='B');document.getElementById('e-fcol-fg').classList.toggle('hidden',m!=='B');}
+function setFMode(m){
+  fMode=m;['A','B','E'].forEach(x=>document.getElementById('ft-'+x)?.classList.toggle('on',x===m));
   document.getElementById('f-zip-comp-fg').classList.toggle('hidden',m==='A');
   document.getElementById('f-csv-comp-fg').classList.toggle('hidden',m==='A');
   const hints={A:'Single boundary → one slope table for the whole forest',B:'Groups by Forest column → slope table per forest',E:'Groups by Compartment → slope table per compartment'};
@@ -768,7 +778,7 @@ function startSSE(runId) {
   es.onmessage=e=>{
     try{
       const d=JSON.parse(e.data);
-      setProgress(d.pct>=100?'Complete ✓':d.msg.startsWith('ERROR')?'Error':'Processing…', d.msg, d.pct||0, d.msg.startsWith('ERROR'));
+      setProgress(d.pct>=100?'Complete ✓':d.msg.startsWith('ERROR')?'Error':'Processing…',d.msg,d.pct||0,d.msg.startsWith('ERROR'));
       if(d.pct>=100) es.close();
     }catch{}
   };
@@ -794,20 +804,17 @@ function buildMapping(card) {
 
 /* ── RUN PIPELINE ────────────────────────────────────────────────────────── */
 async function runPipeline() {
+  if (activeModule === 'G') { await runG(); return; }
   const title=document.getElementById('g-title').value.trim();
   const legendTitle=document.getElementById('g-legend').value.trim()||'Legend';
   const labelCol=document.getElementById('g-label').value.trim();
   const zone=document.getElementById('zone').value;
-
   if(activeModule==='F') { await runF(title,legendTitle,labelCol,zone); return; }
-
   const card=document.getElementById('card-'+activeModule);
   const file=card.querySelector('input[type=file]')?.files?.[0];
   if(!file){alert('Please upload a file first.'); return;}
-
   document.getElementById('run-btn').disabled=true;
   setProgress('Processing…','Starting pipeline…',5);
-
   const fd=new FormData();
   fd.append('file',file); fd.append('module',activeModule);
   fd.append('mode',activeModule==='C'?cMode:activeModule);
@@ -831,11 +838,10 @@ async function runPipeline() {
   const forestInp=card.querySelector('input[type=text][data-key=forest]');
   if(forestInp?.value?.trim()) fd.append('forest',forestInp.value.trim());
   fd.append('mapping',JSON.stringify(mapping));
-
   await sendRequest(fd);
 }
 
-async function runF(title,legendTitle,labelCol,zone) {
+async function runF(title, legendTitle, labelCol, zone) {
   const bFile=document.getElementById('fi-F-bnd')?.files?.[0];
   const dFile=document.getElementById('fi-F-dem')?.files?.[0];
   if(!bFile){alert('Upload a boundary file.'); return;}
@@ -864,6 +870,74 @@ async function runF(title,legendTitle,labelCol,zone) {
   await sendRequest(fd);
 }
 
+/* ── GROUP G RUNNER ─────────────────────────────────────────────────────── */
+async function runG() {
+  const file = document.getElementById('fi-G').files?.[0];
+  if (!file) { alert('Please upload a compartment shapefile or ZIP first.'); return; }
+  const spacing = parseFloat(document.getElementById('g-spacing').value);
+  if (!spacing || spacing <= 0) { alert('Please enter a valid point spacing (metres).'); return; }
+  const compCol = document.getElementById('g-comp-col').value.trim();
+  const mapTitle = document.getElementById('g-map-title').value.trim()
+                   || document.getElementById('g-title').value.trim()
+                   || 'Forest Survey Points';
+  const zone = document.getElementById('zone').value;
+  document.getElementById('run-btn').disabled = true;
+  setProgress('Processing…', 'Starting Group G…', 5);
+  document.getElementById('g-result-box').classList.remove('visible');
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('zone', zone);
+  fd.append('spacing', spacing);
+  fd.append('title', mapTitle);
+  if (compCol) fd.append('comp_col', compCol);
+
+  try {
+    const res = await fetch(`${BASE}/run_g`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    currentRunId = data.run_id;
+    startSSE(data.run_id);
+
+    // Show PNG
+    const img = document.getElementById('out-img');
+    img.onload = () => { img.style.display = 'block'; document.getElementById('empty-msg').style.display = 'none'; };
+    img.src = `${BASE}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
+
+    // Download button
+    const dl = document.getElementById('dl-btn');
+    dl.href = `${BASE}${data.download}`; dl.style.display = 'inline-block';
+    document.getElementById('dl-btn2').href = dl.href;
+
+    // Summary box
+    if (data.summary) {
+      const s = data.summary;
+      document.getElementById('g-result-box').innerHTML =
+        `<strong>✅ Generation Complete</strong><br>` +
+        `Total Points: <strong>${s.total}</strong> &nbsp;|&nbsp; Compartments: <strong>${s.compartments}</strong><br>` +
+        `Vertex: <strong>${s.vertex}</strong> &nbsp; Boundary: <strong>${s.boundary}</strong> &nbsp; Divider: <strong>${s.divider}</strong><br>` +
+        `Area: <strong>${s.area_ha} ha</strong> &nbsp;|&nbsp; Spacing: <strong>${s.spacing}m</strong> &nbsp;|&nbsp; CRS: <strong>EPSG:${s.epsg}</strong><br>` +
+        `Comp Col: <strong>${s.comp_col}</strong>`;
+      document.getElementById('g-result-box').classList.add('visible');
+    }
+
+    document.getElementById('run-meta').textContent = `Run: ${data.run_id.slice(0,8)}… | Module: G`;
+
+    // Load OSM
+    loadOSM(data.run_id, data.kmz_url || null);
+
+    setTimeout(async () => {
+      try { const hr=await fetch(`${BASE}/history`); if(hr.ok){const hd=await hr.json();if(hd.runs)renderHistory(hd.runs);} } catch {}
+    }, 900);
+  } catch(e) {
+    setProgress('Error', 'Group G failed — ' + e.message, 0, true);
+    alert('Error: ' + (e.message || 'Backend error'));
+  } finally {
+    document.getElementById('run-btn').disabled = false;
+  }
+}
+
+/* ── SEND REQUEST (A–F) ──────────────────────────────────────────────────── */
 async function sendRequest(fd) {
   try {
     const res=await fetch(`${BASE}/upload`,{method:'POST',body:fd});
@@ -871,27 +945,18 @@ async function sendRequest(fd) {
     if(data.error) throw new Error(data.error);
     currentRunId=data.run_id;
     startSSE(data.run_id);
-    // Load preview image
     const img=document.getElementById('out-img');
-    img.onload=()=>{img.style.display='block'; document.getElementById('empty-msg').style.display='none';};
+    img.onload=()=>{img.style.display='block';document.getElementById('empty-msg').style.display='none';};
     img.src=`${BASE}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
-    // Download btn
     const dl=document.getElementById('dl-btn');
-    dl.href=data.download.startsWith('http')?data.download:`${BASE}${data.download}`;
-    dl.style.display='inline-block';
-    const dl2=document.getElementById('dl-btn2');
-    dl2.href=dl.href; dl2.download='gis_output.zip';
-    // OSM - always try to load geojson for the run
-    loadOSM(data.run_id, data.kmz_url || null);
+    dl.href=data.download.startsWith('http')?data.download:`${BASE}${data.download}`; dl.style.display='inline-block';
+    document.getElementById('dl-btn2').href=dl.href;
+    loadOSM(data.run_id, data.kmz_url||null);
     document.getElementById('run-meta').textContent=`Run: ${data.run_id.slice(0,8)}… | Module: ${fd.get('module')||'?'}`;
-    // Compose sync
     document.getElementById('comp-title').value=fd.get('title')||'';
     document.getElementById('comp-legend').value=fd.get('legend_title')||'Legend';
     document.getElementById('comp-label').value=fd.get('label_col')||'';
-    // History refresh
-    setTimeout(async()=>{
-      try{const hr=await fetch(`${BASE}/history`);if(hr.ok){const hd=await hr.json();if(hd.runs)renderHistory(hd.runs);}}catch{}
-    },800);
+    setTimeout(async()=>{try{const hr=await fetch(`${BASE}/history`);if(hr.ok){const hd=await hr.json();if(hd.runs)renderHistory(hd.runs);}}catch{}},800);
   } catch(e) {
     setProgress('Error','Pipeline failed — '+e.message,0,true);
     alert('Error: '+(e.message||'Backend error'));
@@ -902,52 +967,44 @@ async function sendRequest(fd) {
 
 /* ── PREVIEW TABS ────────────────────────────────────────────────────────── */
 function switchPView(v) {
-  ['static','osm','compose'].forEach(t => {
-    const el = document.getElementById('pv-'+t);
-    if (el) el.style.display = (t === v) ? 'flex' : 'none';
-    const tab = document.getElementById('pt-'+t);
-    if (tab) tab.classList.toggle('on', t === v);
+  ['static','osm','compose'].forEach(t=>{
+    const el=document.getElementById('pv-'+t); if(el) el.style.display=(t===v)?'flex':'none';
+    const tab=document.getElementById('pt-'+t); if(tab) tab.classList.toggle('on',t===v);
   });
-  if (v === 'osm') {
-    // Make sure the osm-map div is visible before Leaflet renders
+  if (v==='osm') {
+    // Ensure osm-map div is visible before Leaflet measures it
     document.getElementById('osm-map').style.display = 'block';
-    if (leafMap) {
-      setTimeout(() => leafMap.invalidateSize(), 150);
-    }
+    if (leafMap) setTimeout(() => leafMap.invalidateSize(), 150);
   }
 }
 
-/* ── OPENSTREETMAP LEAFLET ───────────────────────────────────────────────── */
+/* ── OSM / LEAFLET ───────────────────────────────────────────────────────── */
 function _ensureLeafMap() {
   if (leafMap) return;
-  // The osm-map div MUST be visible before initializing Leaflet
   const el = document.getElementById('osm-map');
   el.style.display = 'block';
-  leafMap = L.map('osm-map', {
-    zoomControl: true,
-    attributionControl: true,
-    preferCanvas: true
-  });
+  leafMap = L.map('osm-map', { zoomControl: true, attributionControl: true, preferCanvas: true });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(leafMap);
 }
 
+const COMP_COLORS_OSM = [
+  '#2196F3','#FF9800','#4CAF50','#9C27B0','#F48FB1',
+  '#607D8B','#CDDC39','#00BCD4','#FF5722','#795548',
+  '#E91E63','#009688','#FFC107','#3F51B5','#8BC34A'
+];
+
 async function loadOSM(runId, kmzInfo) {
-  // Show the OSM container immediately so Leaflet can measure it
   document.getElementById('osm-idle').style.display = 'none';
   document.getElementById('osm-map').style.display  = 'block';
   document.getElementById('edit-toolbar').classList.add('visible');
-
-  // Init map only after container is visible
   _ensureLeafMap();
-
   // Clear old layers
-  leafLayers.forEach(l => { try { leafMap.removeLayer(l); } catch {} });
+  leafLayers.forEach(l => { try { leafMap.removeLayer(l); } catch{} });
   leafLayers = []; selectedLayer = null;
 
-  // Force size recalc before loading data
   setTimeout(async () => {
     leafMap.invalidateSize();
     try {
@@ -957,45 +1014,52 @@ async function loadOSM(runId, kmzInfo) {
 
       if (gj.features && gj.features.length > 0) {
         currentGeoJSON = gj;
-        const COLORS_BY_CLASS = {1:'#2ecc71', 2:'#f39c12', 3:'#e74c3c'};
-        const COMP_COLORS = ['#C8E6C9','#B3E5FC','#FFE0B2','#F8BBD0','#E1BEE7',
-                             '#DCEDC8','#B2EBF2','#FFF9C4','#D7CCC8','#CFD8DC',
-                             '#C5CAE9','#F0F4C3','#FFCCBC','#B2DFDB','#E8EAF6'];
         let compIdx = 0;
         const layer = L.geoJSON(gj, {
           style: feat => {
-            const props = feat.properties || {};
-            const cls   = props.Class;
+            const p = feat.properties || {};
+            const cls = p.Class;
             let fc = '#10b981';
-            if (cls === 1 || cls === 2 || cls === 3) {
-              fc = COLORS_BY_CLASS[cls];
-            } else if (props.Comp_ID) {
-              fc = COMP_COLORS[compIdx++ % COMP_COLORS.length];
-            }
-            return { fillColor: fc, fillOpacity: 0.42, color: '#1a3a22', weight: 2 };
+            if      (cls===1) fc = '#4CAF50';
+            else if (cls===2) fc = '#FFC107';
+            else if (cls===3) fc = '#FF9800';
+            else if (p.Point_Type)   fc = '#ef4444';  // G points
+            else if (p.Comp_ID||p.Forest) fc = COMP_COLORS_OSM[compIdx++ % COMP_COLORS_OSM.length];
+            // Points use circle markers
+            return { fillColor: fc, fillOpacity: 0.45, color: '#1a3a22', weight: 2 };
+          },
+          pointToLayer: (feat, latlng) => {
+            const p = feat.properties || {};
+            const col = p.Point_Type === 'Divider' ? '#9C27B0'
+                      : p.Point_Type === 'Vertex'   ? '#2196F3'
+                      : p.Point_Type === 'Boundary' ? '#FF9800' : '#ef4444';
+            return L.circleMarker(latlng, {
+              radius: 5, color: col, fillColor: col, fillOpacity: 0.9, weight: 1.5
+            });
           },
           onEachFeature: (feat, lyr) => {
-            const p   = feat.properties || {};
-            const lbl = p.Comp_ID || p.Forest || p.Label || p.Slope_Range || '';
-            const ah  = p.Area_ha  ? ` — ${parseFloat(p.Area_ha).toFixed(3)} ha` : '';
-            const cl  = p.Class    ? ` [Class ${p.Class}: ${p.Slope_Range||''}]` : '';
-            const popup = `<div style="font-family:monospace;font-size:12px"><b>${lbl}</b>${ah}${cl}</div>`;
-            lyr.bindPopup(popup);
+            const p = feat.properties || {};
+            const lbl = p.Point_ID || p.Comp_ID || p.Forest || p.Label || p.Slope_Range || '';
+            const ah  = p.Area_ha   ? ` — ${parseFloat(p.Area_ha).toFixed(3)} ha` : '';
+            const pt  = p.Point_Type ? `<br>Type: <b>${p.Point_Type}</b>` : '';
+            const src = p.Source    ? `<br>Source: ${p.Source}`           : '';
+            const cp  = p.Compartments ? `<br>Comps: ${p.Compartments}`  : '';
+            const cl  = p.Class     ? ` [Class ${p.Class}]`               : '';
+            lyr.bindPopup(`<div style="font-family:monospace;font-size:12px"><b>${lbl}</b>${ah}${cl}${pt}${src}${cp}</div>`);
             lyr.on('click', () => {
-              if (selectedLayer && selectedLayer !== lyr) {
-                selectedLayer.setStyle({ weight: 2, color: '#1a3a22' });
-              }
-              selectedLayer = lyr;
-              lyr.setStyle({ weight: 4, color: '#059669' });
+              if (selectedLayer && selectedLayer !== lyr) try { selectedLayer.setStyle({weight:2,color:'#1a3a22'}); } catch{}
+              selectedLayer = lyr; try { lyr.setStyle({weight:4,color:'#059669'}); } catch{}
             });
-            lyr.on('mouseover', () => { if (lyr !== selectedLayer) lyr.setStyle({ weight: 3 }); });
-            lyr.on('mouseout',  () => { if (lyr !== selectedLayer) lyr.setStyle({ weight: 2 }); });
+            lyr.on('mouseover', () => { if(lyr!==selectedLayer) try{lyr.setStyle({weight:3});}catch{} });
+            lyr.on('mouseout',  () => { if(lyr!==selectedLayer) try{lyr.setStyle({weight:2,color:'#1a3a22'});}catch{} });
           }
         }).addTo(leafMap);
         leafLayers.push(layer);
-        try { leafMap.fitBounds(layer.getBounds().pad(0.06)); } catch {}
+        // AUTO-ZOOM to features
+        try { leafMap.fitBounds(layer.getBounds().pad(0.06)); } catch(e) { console.warn('fitBounds error:', e); }
       } else if (kmzInfo && kmzInfo.lat && kmzInfo.lon) {
-        const zoom = Math.max(10, Math.min(15, Math.round(16 - Math.log2(Math.max(kmzInfo.alt / 500, 1)))));
+        // Fallback centroid
+        const zoom = Math.max(10, Math.min(16, Math.round(17 - Math.log2(Math.max(kmzInfo.alt/500, 1)))));
         leafMap.setView([kmzInfo.lat, kmzInfo.lon], zoom);
         const mk = L.circleMarker([kmzInfo.lat, kmzInfo.lon], {
           radius: 10, color: '#10b981', fillColor: '#34d399', fillOpacity: 0.9, weight: 2
@@ -1004,35 +1068,32 @@ async function loadOSM(runId, kmzInfo) {
       }
     } catch(e) { console.warn('OSM GeoJSON load error:', e); }
     leafMap.invalidateSize();
-  }, 250);
+  }, 280);
 }
 
 /* ── LEAFLET EDIT TOOLS ──────────────────────────────────────────────────── */
 function setTool(t) {
-  activeTool=t;
-  document.querySelectorAll('.etool[id^=tool-]').forEach(el=>el.classList.remove('active-tool'));
+  activeTool=t; document.querySelectorAll('.etool[id^=tool-]').forEach(el=>el.classList.remove('active-tool'));
   const el=document.getElementById('tool-'+t); if(el) el.classList.add('active-tool');
-  if(t==='vertex' && selectedLayer && selectedLayer.editing) { try{selectedLayer.editing.enable();}catch{} }
-  else { if(selectedLayer&&selectedLayer.editing) try{selectedLayer.editing.disable();}catch{} }
+  if(t==='vertex'&&selectedLayer&&selectedLayer.editing){try{selectedLayer.editing.enable();}catch{}}
+  else{if(selectedLayer&&selectedLayer.editing)try{selectedLayer.editing.disable();}catch{}}
 }
-function deleteSelected() {
+function deleteSelected(){
   if(!selectedLayer){alert('Select a feature first (click on it).'); return;}
   if(!confirm('Delete selected feature?')) return;
   editHistory.push({type:'delete',layer:selectedLayer,geojson:currentGeoJSON?JSON.parse(JSON.stringify(currentGeoJSON)):null});
-  leafMap.removeLayer(selectedLayer);
-  leafLayers=leafLayers.filter(l=>l!==selectedLayer);
-  selectedLayer=null;
+  leafMap.removeLayer(selectedLayer); leafLayers=leafLayers.filter(l=>l!==selectedLayer); selectedLayer=null;
 }
-function undoEdit() {
+function undoEdit(){
   if(!editHistory.length){alert('Nothing to undo.'); return;}
   const last=editHistory.pop();
-  if(last.type==='delete'&&last.layer) { last.layer.addTo(leafMap); leafLayers.push(last.layer); selectedLayer=last.layer; }
+  if(last.type==='delete'&&last.layer){last.layer.addTo(leafMap);leafLayers.push(last.layer);selectedLayer=last.layer;}
 }
-async function saveEdits() {
-  if(!currentRunId){alert('No active run to save edits to.'); return;}
-  const layers=[]; leafLayers.forEach(l=>{ if(l.toGeoJSON) { try{layers.push(l.toGeoJSON());}catch{} } });
+async function saveEdits(){
+  if(!currentRunId){alert('No active run.'); return;}
+  const layers=[]; leafLayers.forEach(l=>{if(l.toGeoJSON){try{layers.push(l.toGeoJSON());}catch{}}});
   const fc={type:'FeatureCollection',features:[]};
-  layers.forEach(gj=>{ if(gj.features) fc.features.push(...gj.features); else fc.features.push(gj); });
+  layers.forEach(gj=>{if(gj.features)fc.features.push(...gj.features);else fc.features.push(gj);});
   if(!fc.features.length){alert('No features to save.'); return;}
   setProgress('Saving edits…','Sending to server…',50);
   try{
@@ -1040,16 +1101,14 @@ async function saveEdits() {
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({geojson:fc,title:document.getElementById('g-title').value,legend_title:document.getElementById('g-legend').value})
     });
-    const d=await res.json();
-    if(d.error) throw new Error(d.error);
+    const d=await res.json(); if(d.error) throw new Error(d.error);
     setProgress('Edits Saved ✓','Output updated',100);
-    const img=document.getElementById('out-img');
-    img.src=`${BASE}${d.png}`;
-  }catch(e){setProgress('Error','Save failed: '+e.message,0,true); alert('Save error: '+e.message);}
+    const img=document.getElementById('out-img'); img.src=`${BASE}${d.png}`;
+  }catch(e){setProgress('Error','Save failed: '+e.message,0,true);alert('Save error: '+e.message);}
 }
 
 /* ── MAP COMPOSER ────────────────────────────────────────────────────────── */
-async function doCompose() {
+async function doCompose(){
   if(!currentRunId){alert('Run a pipeline first.'); return;}
   document.getElementById('comp-status').textContent='Re-rendering…';
   try{
@@ -1057,35 +1116,21 @@ async function doCompose() {
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({title:document.getElementById('comp-title').value,legend_title:document.getElementById('comp-legend').value,label_col:document.getElementById('comp-label').value,module:document.getElementById('comp-module').value})
     });
-    const d=await res.json();
-    if(d.error) throw new Error(d.error);
+    const d=await res.json(); if(d.error) throw new Error(d.error);
     document.getElementById('comp-status').textContent='✅ Map re-rendered successfully!';
     const img=document.getElementById('out-img');
     img.style.display='block'; img.src=`${BASE}${d.png}`;
-    document.getElementById('empty-msg').style.display='none';
-    switchPView('static');
+    document.getElementById('empty-msg').style.display='none'; switchPView('static');
   }catch(e){document.getElementById('comp-status').textContent='❌ Error: '+e.message;}
 }
 
 /* ── AUTH ────────────────────────────────────────────────────────────────── */
 let _suggs=[];
-function _genSuggs(base) {
-  const clean=base.replace(/[_\-]?\d+$/,'').trim()||base;
-  const rn=Math.floor(Math.random()*89+10);
-  return [clean+'_'+rn, clean+(new Date().getFullYear()%100), clean+'_GIS'];
-}
-function trySugg(i) {
-  const n=_suggs[i]; if(!n) return;
-  document.getElementById('login-inp').value=n;
-  document.getElementById('login-inp').classList.remove('taken');
-  document.getElementById('lerr').style.display='none';
-  document.getElementById('sugg').style.display='none';
-  doLogin();
-}
-async function doLogin() {
+function _genSuggs(base){const clean=base.replace(/[_\-]?\d+$/,'').trim()||base;const rn=Math.floor(Math.random()*89+10);return[clean+'_'+rn,clean+(new Date().getFullYear()%100),clean+'_GIS'];}
+function trySugg(i){const n=_suggs[i];if(!n)return;document.getElementById('login-inp').value=n;document.getElementById('login-inp').classList.remove('taken');document.getElementById('lerr').style.display='none';document.getElementById('sugg').style.display='none';doLogin();}
+async function doLogin(){
   const inp=document.getElementById('login-inp'); const name=inp.value.trim();
-  const errEl=document.getElementById('lerr'); const sugg=document.getElementById('sugg');
-  const btn=document.getElementById('login-go');
+  const errEl=document.getElementById('lerr'); const sugg=document.getElementById('sugg'); const btn=document.getElementById('login-go');
   inp.classList.remove('taken'); errEl.className='login-err'; errEl.style.display='none'; sugg.style.display='none';
   if(!name){errEl.textContent='Please enter a username.';errEl.style.display='block';return;}
   btn.disabled=true; btn.textContent='Checking…';
@@ -1101,21 +1146,17 @@ async function doLogin() {
     }
     if(!res.ok||data.error) throw new Error(data.error||'Login failed');
     onLoginSuccess(data.username,data.runs||[]);
-  }catch(e){
-    errEl.textContent=e.message||'Login failed. Try again.'; errEl.style.display='block';
-    btn.disabled=false; btn.textContent='Enter Studio →';
-  }
+  }catch(e){errEl.textContent=e.message||'Login failed.';errEl.style.display='block';btn.disabled=false;btn.textContent='Enter Studio →';}
 }
-function onLoginSuccess(username,runs) {
-  const ov=document.getElementById('login-overlay');
-  ov.style.transition='opacity .4s'; ov.style.opacity='0';
+function onLoginSuccess(username,runs){
+  const ov=document.getElementById('login-overlay'); ov.style.transition='opacity .4s'; ov.style.opacity='0';
   setTimeout(()=>{ov.style.display='none';},420);
   document.getElementById('user-bar').style.display='flex';
   document.getElementById('uname').textContent=username;
   document.getElementById('uavatar').textContent=username.charAt(0).toUpperCase();
   renderHistory(runs);
 }
-async function doLogout() {
+async function doLogout(){
   if(!confirm('Sign out?')) return;
   try{await fetch(`${BASE}/logout`,{method:'POST'});}catch{}
   document.getElementById('user-bar').style.display='none';
@@ -1126,33 +1167,31 @@ async function doLogout() {
   setTimeout(()=>document.getElementById('login-inp').focus(),200);
 }
 (async function checkSession(){
-  try{
-    const res=await fetch(`${BASE}/me`);
-    if(res.ok){const d=await res.json();if(d.username){onLoginSuccess(d.username,d.runs||[]);return;}}
-  }catch{}
+  try{const res=await fetch(`${BASE}/me`);if(res.ok){const d=await res.json();if(d.username){onLoginSuccess(d.username,d.runs||[]);return;}}}catch{}
   document.getElementById('login-overlay').style.display='flex';
   setTimeout(()=>document.getElementById('login-inp').focus(),400);
 })();
 
 /* ── HISTORY ─────────────────────────────────────────────────────────────── */
 function toggleHist(){
-  const d=document.getElementById('hist-drawer'); const bg=document.getElementById('hist-bg');
+  const d=document.getElementById('hist-drawer');const bg=document.getElementById('hist-bg');
   const open=d.classList.contains('open'); d.classList.toggle('open',!open); bg.style.display=open?'none':'block';
   if(!open){fetch(`${BASE}/history`).then(r=>r.ok?r.json():null).then(d=>{if(d&&d.runs)renderHistory(d.runs);}).catch(()=>{});}
 }
-const MICONS={A:'🌲',B:'🌲',C:'📍',D:'🗂',E:'✂️',F:'🏔'};
-function renderHistory(runs) {
-  const body=document.getElementById('hist-body');
-  const hcnt=document.getElementById('hcnt');
+const MICONS={A:'🌲',B:'🌲',C:'📍',D:'🗂',E:'✂️',F:'🏔',G:'📌'};
+function renderHistory(runs){
+  const body=document.getElementById('hist-body'); const hcnt=document.getElementById('hcnt');
   if(hcnt) hcnt.textContent=runs&&runs.length?` (${runs.length})`:'';
   if(!runs||!runs.length){body.innerHTML='<div style="text-align:center;color:var(--muted);font-size:11px;padding:40px 20px;font-family:var(--mono)">No runs yet.</div>';return;}
   body.innerHTML=[...runs].reverse().map((r,i)=>{
     const ic=MICONS[r.module]||'📄';
     let ts='—'; if(r.timestamp){const d=new Date(r.timestamp);ts=d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
     const short=(r.run_id||'').slice(0,8)+'…';
+    const desc=r.description?`<div style="font-size:9px;color:var(--mint);font-family:var(--mono);margin-bottom:2px">${r.description}</div>`:'';
     return `<div class="run-card" style="${i===0?'border-color:rgba(16,185,129,.35);':''}"">
       <div class="run-card-top"><span class="run-mod">${ic} ${r.module}</span><span class="run-time">${ts}</span></div>
-      <div style="font-size:9px;color:var(--muted);font-family:var(--mono);margin-bottom:3px">ID: ${short}</div>
+      <div style="font-size:9px;color:var(--muted);font-family:var(--mono);margin-bottom:2px">ID: ${short}</div>
+      ${desc}
       <div class="run-actions">
         <button class="run-act" onclick="loadRunPrev('${r.run_id}')">🗺 Preview</button>
         <button class="run-act" onclick="triggerDL('${r.run_id}')">⬇ Download</button>
@@ -1169,7 +1208,6 @@ function loadRunPrev(rid){
   document.getElementById('dl-btn').style.display='inline-block';
   document.getElementById('dl-btn2').href=`${BASE}/download/${rid}`;
   switchPView('static'); toggleHist();
-  // Also pre-load OSM in background for quick tab switch
   loadOSM(rid, null);
 }
 </script>
