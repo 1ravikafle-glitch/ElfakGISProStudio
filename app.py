@@ -1061,242 +1061,330 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
     return p,l,pt
 
 # ── GROUP F ──────────────────────────────────────────────────────────────────
+def _bnd_from_df(df,mapping):
+    df=normalize_order(df)
+    xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
+    oc=safe_col(df,mapping,"Order","Order")
+    if not xc: raise ValueError("X column not found.")
+    if not yc: raise ValueError("Y column not found.")
+    if oc: df=df.sort_values(oc)
+    coords=list(zip(df[xc],df[yc]))
+    if len(coords)<3: raise ValueError("Need ≥3 boundary points.")
+    coords.append(coords[0]); return safe_polygon(coords)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GROUP F — SLOPE ANALYSIS  (7-step correct workflow)
+# Step 1: Rectangular DEM clip with 20% buffer around boundary polygon
+# Step 2: Compute slope on the rectangular DEM  (Horn method)
+# Step 3: Reclassify: 1=<19°  2=19-31°  3=31-45°  4=>45°
+# Step 4: Raster → polygon (vectorize the classified raster)
+# Step 5: Dissolve by gridcode
+# Step 6: Clip dissolved RTP with our original boundary polygon
+#          (intersection ensures no missing boundary pixels)
+# Step 7: Calculate area table per slope class per compartment/forest
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
+    """Extract boundary shapefile from a ZIP, reproject to DEM CRS."""
+    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+    os.makedirs(folder, exist_ok=True)
+    zp = os.path.join(folder, "b.zip")
+    zip_file.save(zp)
+    with zipfile.ZipFile(zp) as z:
+        z.extractall(folder)
+    shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+            for f in fs if f.endswith(".shp")]
+    if not shps:
+        raise ValueError("No .shp found in the boundary ZIP.")
+    sp = shps[0]
+    if target_shp:
+        for s in shps:
+            if os.path.basename(s) == os.path.basename(target_shp):
+                sp = s; break
+    gdf = gpd.read_file(sp)
+    if gdf.empty:
+        raise ValueError("Boundary shapefile is empty.")
+    gdf = gdf.set_crs(src_crs) if gdf.crs is None else gdf
+    gdf = gdf.to_crs(dem_crs)
+    return _repair(gdf.unary_union), gdf
+
 def group_f(boundary_file, dem_file, crs, out, mapping=None,
             boundary_is_zip=False, forest_name="FOREST",
             f_mode="A", comp_col_name=None, field_area_ha=None, run_id=None):
+    """
+    7-Step Group F workflow:
+    1. Extract rectangular DEM (20% buffer around boundary polygon)
+    2. Compute slope on the rectangular DEM (Horn method)
+    3. Reclassify: 1=0-19°  2=19-31°  3=31-45°  4=>45°
+    4. Raster → polygon (vectorise classified raster over entire rectangle)
+    5. Dissolve by gridcode
+    6. Clip dissolved RTP polygons with the original boundary polygon
+       (NOT with the rectangle — this gives perfect boundary-edge accuracy)
+    7. Calculate slope area table for each class / compartment
+    """
     try:
         import rasterio
         from rasterio.mask import mask as rio_mask
         from rasterio.features import shapes as rio_shapes
         import scipy.ndimage as ndi
     except ImportError:
-        raise ValueError("rasterio and scipy required for Group F.")
+        raise ValueError("rasterio and scipy are required for Group F. "
+                         "Install with: pip install rasterio scipy")
+
     os.makedirs(out, exist_ok=True)
     pfx = _safe_dn(forest_name)
     SN  = -9999.0
 
-    # ── STEP 1: Load DEM ──────────────────────────────────────────────────
-    if run_id: _prog(run_id, "Loading DEM…", 5)
+    # ── STEP 0: Save DEM to disk ──────────────────────────────────────────────
+    if run_id: _prog(run_id, "Step 0 — Loading DEM…", 5)
     dem_path = os.path.join(UPLOAD, f"{uuid.uuid4()}_dem.tif")
-    dem_file.save(dem_path)
-    with rasterio.open(dem_path) as src:
-        dem_crs   = src.crs
-        nodata    = src.nodata
-        transform = src.transform
-        profile   = src.profile.copy()
+    try:
+        dem_file.save(dem_path)
+    except Exception as e:
+        raise ValueError(f"Could not save DEM file: {e}")
+    if not os.path.exists(dem_path) or os.path.getsize(dem_path) < 100:
+        raise ValueError("DEM file is empty or could not be written to disk.")
 
-    # ── STEP 2: Load boundary polygon ─────────────────────────────────────
-    if run_id: _prog(run_id, "Loading boundary…", 10)
+    with rasterio.open(dem_path) as _src:
+        dem_crs   = _src.crs
+        dem_nodata = _src.nodata
+        dem_profile = _src.profile.copy()
+
+    # ── STEP 1: Load boundary, reproject to DEM CRS ──────────────────────────
+    if run_id: _prog(run_id, "Step 1 — Loading & reprojecting boundary…", 10)
     if boundary_is_zip:
         ts = (mapping or {}).get("target_shp")
         bpoly, bgdf = _bnd_from_zip(boundary_file, ts, crs, str(dem_crs))
     else:
-        df    = read_input(boundary_file)
-        bpoly = _bnd_from_df(df, mapping)
-        bgdf  = gpd.GeoDataFrame(
-            [{"Forest": forest_name, "geometry": bpoly}], crs=crs
-        ).to_crs(str(dem_crs))
-        bpoly = bgdf.unary_union
+        try:
+            df   = read_input(boundary_file)
+            bpoly = _bnd_from_df(df, mapping)
+            bgdf  = gpd.GeoDataFrame(
+                [{"Forest": forest_name, "geometry": bpoly}], crs=crs
+            ).to_crs(str(dem_crs))
+            bpoly = bgdf.unary_union
+        except Exception as e:
+            raise ValueError(f"Failed to read/project boundary: {e}")
 
-    # ── STEP 3: Extract RECTANGULAR DEM with 20% buffer ───────────────────
-    if run_id: _prog(run_id, "Extracting rectangular DEM (20 % buffer)…", 18)
-    b = bpoly.bounds
+    if bpoly is None or bpoly.is_empty:
+        raise ValueError("Boundary polygon is empty after loading — check input file.")
+
+    # Validate boundary intersects DEM extent
+    with rasterio.open(dem_path) as _src:
+        from shapely.geometry import box as _box
+        dem_bounds_poly = _box(*_src.bounds)
+    bpoly_wgs = gpd.GeoDataFrame([{"geometry":bpoly}], crs=str(dem_crs)).to_crs("EPSG:4326").unary_union
+    dem_wgs   = gpd.GeoDataFrame([{"geometry":dem_bounds_poly}], crs=str(dem_crs)).to_crs("EPSG:4326").unary_union
+    if not bpoly_wgs.intersects(dem_wgs):
+        raise ValueError("Boundary polygon does not overlap the DEM extent. "
+                         "Make sure your DEM covers the boundary area.")
+
+    # ── STEP 1: Build rectangle = bbox + 20% buffer ───────────────────────────
+    b  = bpoly.bounds
     bx = (b[2] - b[0]) * 0.20
     by = (b[3] - b[1]) * 0.20
-    rect = _sbox(b[0] - bx, b[1] - by, b[2] + bx, b[3] + by)
-    nd   = nodata if nodata is not None else SN
+    rect_poly = _sbox(b[0]-bx, b[1]-by, b[2]+bx, b[3]+by)
 
+    nd = dem_nodata if dem_nodata is not None else SN
+
+    if run_id: _prog(run_id, "Step 1 — Clipping rectangular DEM (20% buffer)…", 18)
     try:
-        with rasterio.open(dem_path) as src:
-            ra, rt = rio_mask(src, [rect.__geo_interface__], crop=True, filled=True, nodata=nd)
+        with rasterio.open(dem_path) as _src:
+            ra, rt = rio_mask(
+                _src, [rect_poly.__geo_interface__],
+                crop=True, filled=True, nodata=nd, all_touched=True
+            )
         rdm = ra[0].astype(np.float32)
         rdm[rdm == nd] = np.nan
-    except Exception:
-        with rasterio.open(dem_path) as src:
-            ra = src.read(1).astype(np.float32)
-            rt = src.transform
-        rdm = ra
-        rdm[rdm == nd] = np.nan
-    rx = abs(rt.a)
-    ry = abs(rt.e)
+    except Exception as e:
+        # Fallback: read entire DEM (boundary may be near edge)
+        log.warning(f"Rect clip failed ({e}), reading full DEM")
+        with rasterio.open(dem_path) as _src:
+            ra  = _src.read(1).astype(np.float32)
+            rt  = _src.transform
+        nd_val = nd if nd is not None else SN
+        rdm = ra.copy()
+        rdm[rdm == nd_val] = np.nan
 
-    # ── STEP 4: Compute slope on FULL RECTANGLE (Horn method) ─────────────
-    if run_id: _prog(run_id, "Computing slope on full rectangle…", 30)
+    rx = abs(rt.a)   # pixel width  in metres
+    ry = abs(rt.e)   # pixel height in metres
+    if rx < 0.01 or ry < 0.01:
+        raise ValueError(f"DEM pixel size is too small ({rx}m × {ry}m). "
+                         "Check that DEM is in a projected CRS (e.g. UTM).")
+
+    # ── STEP 2: Compute slope (Horn method) ───────────────────────────────────
+    if run_id: _prog(run_id, "Step 2 — Computing slope (Horn method)…", 28)
     valid  = ~np.isnan(rdm)
     filled = np.nan_to_num(rdm, nan=0.0)
-    dzdx   = ndi.sobel(filled, axis=1) / (8 * max(rx, 1e-9))
-    dzdy   = ndi.sobel(filled, axis=0) / (8 * max(ry, 1e-9))
+    dzdx   = ndi.sobel(filled, axis=1) / (8.0 * rx)
+    dzdy   = ndi.sobel(filled, axis=0) / (8.0 * ry)
     slope  = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2))).astype(np.float32)
-    # Erode valid mask one pixel to remove edge artefacts
-    fnv = ndi.binary_erosion(valid, structure=np.ones((3, 3), dtype=bool), border_value=0)
+    # Erode 1-pixel border (Sobel artifact) to nodata
+    fnv = ndi.binary_erosion(valid, structure=np.ones((3,3), bool), border_value=0)
     slope[~fnv] = SN
 
     # Save rectangular slope raster
-    rp = profile.copy()
+    rp = dem_profile.copy()
     rp.update(dtype="float32", nodata=SN, count=1,
               height=slope.shape[0], width=slope.shape[1], transform=rt)
     sp_path = os.path.join(out, f"{pfx}_slope_rect.tif")
     with rasterio.open(sp_path, "w", **rp) as dst:
         dst.write(slope, 1)
+    if run_id: _prog(run_id, f"Step 2 — Slope raster saved ({slope.shape[1]}×{slope.shape[0]}px)", 35)
 
-    # ── STEP 5: Reclassify FULL RECTANGLE → 3 classes ─────────────────────
-    if run_id: _prog(run_id, "Reclassifying slope (full rectangle)…", 42)
+    # ── STEP 3: Reclassify slope ──────────────────────────────────────────────
+    #   1 = 0–19°  (Gentle)    2 = 19–31° (Moderate)
+    #   3 = 31–45° (Steep)     4 = >45°   (Very Steep)
+    if run_id: _prog(run_id, "Step 3 — Reclassifying slope into 4 classes…", 40)
     vm  = (slope != SN) & ~np.isnan(slope)
     cls = np.zeros_like(slope, dtype=np.uint8)
-    cls[vm & (slope <  19)]              = 1   # Gentle
-    cls[vm & (slope >= 19) & (slope <= 31)] = 2   # Moderate
-    cls[vm & (slope >  31)]              = 3   # Steep
-
+    cls[vm & (slope <  19)]                        = 1
+    cls[vm & (slope >= 19) & (slope <= 31)]        = 2
+    cls[vm & (slope >  31) & (slope <= 45)]        = 3
+    cls[vm & (slope >  45)]                        = 4
     cp = rp.copy(); cp.update(dtype="uint8", nodata=0)
     cls_path = os.path.join(out, f"{pfx}_class_rect.tif")
     with rasterio.open(cls_path, "w", **cp) as dst:
         dst.write(cls, 1)
 
-    # ── STEP 6: Raster → Polygon on FULL RECTANGLE ────────────────────────
-    if run_id: _prog(run_id, "Raster → polygon (full rectangle)…", 54)
+    # ── STEP 4: Raster → Polygon (entire rectangle) ──────────────────────────
+    if run_id: _prog(run_id, "Step 4 — Vectorising classified raster…", 50)
     rtp = []
-    with rasterio.open(cls_path) as src:
-        ca, ct = src.read(1), src.transform
-        for shp, val in rio_shapes(ca, mask=(ca > 0).astype(np.uint8), transform=ct):
+    with rasterio.open(cls_path) as _src:
+        ca, ct = _src.read(1), _src.transform
+        mask_valid = (ca > 0).astype(np.uint8)
+        for shp, val in rio_shapes(ca, mask=mask_valid, transform=ct):
             cid = int(val)
             if cid == 0: continue
             try:
-                rings = shp["coordinates"]
-                ext   = rings[0]
-                holes = rings[1:] if len(rings) > 1 else None
-                geom  = _repair(Polygon(ext, holes=holes))
+                coords = shp["coordinates"]
+                ext    = coords[0]
+                holes  = coords[1:] if len(coords) > 1 else None
+                geom   = _repair(Polygon(ext, holes=holes))
                 if geom and not geom.is_empty and geom.area > 1e-10:
                     rtp.append({"gridcode": cid, "geometry": geom})
-            except:
+            except Exception:
                 continue
-    if not rtp:
-        raise ValueError("No slope polygons extracted from DEM.")
-    rtp_gdf = gpd.GeoDataFrame(rtp, crs=str(dem_crs))
-    rtp_gdf.to_file(os.path.join(out, f"{pfx}_rtp_raw.shp"))
 
-    # ── STEP 7: Dissolve by gridcode ──────────────────────────────────────
-    if run_id: _prog(run_id, "Dissolving by gridcode…", 64)
+    if not rtp:
+        raise ValueError(
+            "Raster-to-polygon produced no features. "
+            "Check that the DEM overlaps the boundary and is in a projected CRS."
+        )
+    rtp_gdf = gpd.GeoDataFrame(rtp, crs=str(dem_crs))
+    _rtp_save = _enforce_poly_gdf(rtp_gdf)
+    if not _rtp_save.empty:
+        _rtp_save.to_file(os.path.join(out, f"{pfx}_rtp_raw.shp"))
+    if run_id: _prog(run_id, f"Step 4 — {len(rtp)} slope polygons vectorised", 56)
+
+    # ── STEP 5: Dissolve by gridcode ─────────────────────────────────────────
+    if run_id: _prog(run_id, "Step 5 — Dissolving by gridcode…", 62)
     try:
         dissolved = rtp_gdf.dissolve(by="gridcode", as_index=False)
         dissolved["gridcode"] = dissolved["gridcode"].astype(int)
-    except:
+    except Exception as e:
+        log.warning(f"dissolve failed ({e}), using raw rtp")
         dissolved = rtp_gdf.copy()
-    dissolved.to_file(os.path.join(out, f"{pfx}_rtp_dissolved.shp"))
+    _dis_save = _enforce_poly_gdf(dissolved)
+    if not _dis_save.empty:
+        _dis_save.to_file(os.path.join(out, f"{pfx}_rtp_dissolved.shp"))
+    if run_id: _prog(run_id, f"Step 5 — Dissolved into {len(dissolved)} gridcode classes", 66)
 
-    # ── STEP 8: Clip dissolved polygons to boundary ────────────────────────
-    # Key fix: clip the FULL dissolved result to the boundary polygon.
-    # We do a proper intersection of each class against the boundary union,
-    # which guarantees no edge zones are missed.
-    if run_id: _prog(run_id, "Clipping dissolved slope polygons to boundary…", 72)
+    # ── STEP 6: Clip dissolved RTP with the original boundary polygon ─────────
+    #   We clip dissolved (rect-level RTP) with the actual boundary polygon.
+    #   This is the KEY step that gives perfect boundary-edge accuracy:
+    #   - The rectangle RTP ensures no pixels near the boundary edge are lost
+    #   - The clip then trims exactly to the boundary shape
+    if run_id: _prog(run_id, "Step 6 — Clipping dissolved polygons to boundary…", 70)
 
-    # Determine which polygons to clip against (for multi-group modes)
+    # 4-class definitions (matching step 3)
+    class_defs = {
+        1: ("0-19 degree",  "Gentle",     "#2e8b57"),
+        2: ("19-31 degree", "Moderate",   "#90ee90"),
+        3: ("31-45 degree", "Steep",      "#ffd700"),
+        4: ("45> degree",   "Very Steep", "#e74c3c"),
+    }
+
+    # Determine which polygons to analyse (single / multi-forest / compartments)
+    comp_polygons = []
     if f_mode == "A":
         comp_polygons = [(forest_name, bpoly)]
     else:
         grp_col = None
         if comp_col_name:
             for c in bgdf.columns:
-                if c.lower() == comp_col_name.lower():
-                    grp_col = c; break
-        if grp_col is None:
-            grp_col = _find_col(bgdf, _FA if f_mode == "B" else _CA)
-        if grp_col is None and f_mode == "E":
-            grp_col = _find_col(bgdf, _FA)
-        if grp_col is None:
-            comp_polygons = [(forest_name, bpoly)]
-        else:
-            comp_polygons = []
+                if c.lower() == comp_col_name.lower(): grp_col = c; break
+        if grp_col is None: grp_col = _find_col(bgdf, _FA if f_mode == "B" else _CA)
+        if grp_col is None and f_mode == "E": grp_col = _find_col(bgdf, _FA)
+        if grp_col:
             for val, grp in bgdf.groupby(grp_col):
                 up = _repair(grp.unary_union)
                 if up and not up.is_empty:
                     comp_polygons.append((str(val), up))
-        if not comp_polygons:
+        if not comp_polygons or all(cp is None or (hasattr(cp,"is_empty") and cp.is_empty) for _,cp in comp_polygons):
             comp_polygons = [(forest_name, bpoly)]
 
-    class_defs = {
-        1: ("< 19°",   "Gentle",   "#2ecc71"),
-        2: ("19–31°",  "Moderate", "#f39c12"),
-        3: ("> 31°",   "Steep",    "#e74c3c"),
-    }
-
-    def _clip_to_boundary(clip_poly, label):
-        """
-        Proper clip: for each slope class in dissolved, intersect with
-        clip_poly. This is the corrected step 8 — full dissolved polygon
-        is clipped to the exact boundary, including all edge pixels.
-        """
-        vrecs = []
-        total = 0.0
+    def _clip_group(clip_poly, label):
+        """Clip dissolved slope polygons with one boundary polygon, return records."""
+        vrecs = []; total = 0.0
         for _, drow in dissolved.iterrows():
             cid   = int(drow["gridcode"])
             dgeom = _repair(drow.geometry)
-            if dgeom is None or dgeom.is_empty:
-                continue
+            if dgeom is None or dgeom.is_empty: continue
+            if cid not in class_defs: continue
             try:
                 clipped = _repair(dgeom.intersection(clip_poly))
-            except:
-                continue
-            if clipped is None or clipped.is_empty:
-                continue
-
-            # Accept Polygon or MultiPolygon; extract largest if needed
-            if clipped.geom_type == "Polygon":
-                final_geom = _close_poly(clipped)
-            elif clipped.geom_type == "MultiPolygon":
+            except Exception as e:
+                log.debug(f"intersection error cid={cid}: {e}"); continue
+            if clipped is None or clipped.is_empty: continue
+            # Normalise to (Multi)Polygon
+            if clipped.geom_type in ("Polygon", "MultiPolygon"):
+                pg = _close_poly(clipped)
+            elif hasattr(clipped, "geoms"):
                 parts = [_as_poly(_repair(g)) for g in clipped.geoms
-                         if g.geom_type in ("Polygon",) and not g.is_empty]
-                parts = [p for p in parts if p and p.area > 1e-10]
-                if not parts:
-                    continue
-                # Keep all parts merged — do NOT discard smaller fragments
-                merged = _as_poly(_repair(unary_union(parts)))
-                final_geom = _close_poly(merged) if merged else _close_poly(parts[0])
-            elif clipped.geom_type == "GeometryCollection":
-                polys = [_as_poly(_repair(g)) for g in clipped.geoms
                          if g.geom_type in ("Polygon", "MultiPolygon")]
-                polys = [p for p in polys if p and p.area > 1e-10]
-                if not polys:
-                    continue
-                merged = _as_poly(_repair(unary_union(polys)))
-                final_geom = _close_poly(merged) if merged else None
+                parts = [p for p in parts if p and p.area > 1e-10]
+                if not parts: continue
+                pg = _close_poly(max(parts, key=lambda x: x.area))
             else:
-                continue
-
-            if final_geom is None or final_geom.is_empty:
-                continue
-
-            ah = round(final_geom.area / 10000, 4)
-            total += ah
+                pg = _as_poly(clipped)
+            if pg is None or pg.is_empty or pg.area < 1e-10: continue
+            ah = round(pg.area / 10000, 4); total += ah
             vrecs.append({
                 "Label":       label,
                 "Class":       cid,
                 "Slope_Range": class_defs[cid][0],
-                "Descr":       class_defs[cid][1],
+                "Description": class_defs[cid][1],
                 "Area_ha":     ah,
-                "geometry":    final_geom,
+                "geometry":    pg,
             })
-
         total = max(total, 1e-6)
         rows = [{
             "Label":       vr["Label"],
             "Class":       vr["Class"],
             "Slope_Range": vr["Slope_Range"],
-            "Description": vr["Descr"],
+            "Description": vr["Description"],
             "Area_ha":     vr["Area_ha"],
             "Pct_Area":    round(vr["Area_ha"] / total * 100, 2),
             "Total_ha":    round(total, 4),
         } for vr in vrecs]
         return rows, vrecs
 
-    # ── STEP 9: Run clip for each group and collect results ────────────────
     all_sum, all_vec, per_grp = [], [], {}
-    for lb, cp in comp_polygons:
-        rows, vrecs = _clip_to_boundary(cp, lb)
-        all_sum.extend(rows)
-        all_vec.extend(vrecs)
-        per_grp[lb] = rows
+    for i, (lb, cp2) in enumerate(comp_polygons):
+        if run_id:
+            pct = 70 + int(16 * i / max(len(comp_polygons), 1))
+            _prog(run_id, f"Step 6 — Clipping {lb} ({i+1}/{len(comp_polygons)})…", pct)
+        rows, vrecs = _clip_group(cp2, lb)
+        all_sum.extend(rows); all_vec.extend(vrecs); per_grp[lb] = rows
 
-    # ── STEP 10: Apply field-area calibration if provided ─────────────────
+    if not all_vec:
+        raise ValueError(
+            "Clipping produced no slope polygons. "
+            "Check that the boundary polygon overlaps the DEM and is in the correct CRS."
+        )
+
+    # ── Optional field-area recalibration ────────────────────────────────────
     if field_area_ha and field_area_ha > 0:
         tc  = sum(r["Area_ha"] for r in all_sum)
         fac = field_area_ha / max(tc, 1e-6)
@@ -1308,44 +1396,54 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             r["Recal_ha"]    = None
             r["Cal_Factor"]  = None
 
-    # ── STEP 11: Save outputs ──────────────────────────────────────────────
-    if run_id: _prog(run_id, "Saving outputs…", 88)
+    # ── STEP 7: Save all outputs ──────────────────────────────────────────────
+    if run_id: _prog(run_id, "Step 7 — Saving shapefiles and Excel…", 88)
     vcrs = str(dem_crs)
 
-    # Slope class polygons (clipped to boundary)
+    # Slope polygon shapefile (clipped to boundary)
     if all_vec:
         vgdf = gpd.GeoDataFrame(all_vec, crs=vcrs)
         vgdf = _enforce_poly_gdf(vgdf)
         if not vgdf.empty:
             vgdf.to_file(os.path.join(out, f"{pfx}_slope_polygon.shp"))
     else:
-        vgdf = gpd.GeoDataFrame(columns=["geometry"], crs=vcrs)
+        vgdf = gpd.GeoDataFrame(columns=["Label","Class","Slope_Range",
+                                          "Description","Area_ha","geometry"], crs=vcrs)
 
-    # Boundary polygon
-    bgdf.to_file(os.path.join(out, f"{pfx}_boundary_polygon.shp"))
-
-    # Also save clipped slope raster (for reference)
+    # Boundary shapefile
     try:
-        with rasterio.open(sp_path) as src:
-            fc2, ft2 = rio_mask(
-                src, [bpoly.__geo_interface__], crop=True, filled=True, nodata=SN)
-        fc2 = fc2[0].astype(np.float32)
-        cp2 = rp.copy(); cp2.update(height=fc2.shape[0], width=fc2.shape[1], transform=ft2)
-        with rasterio.open(os.path.join(out, f"{pfx}_slope_clipped.tif"), "w", **cp2) as dst:
-            dst.write(fc2, 1)
-        # Clipped classified raster
-        vm2 = (fc2 != SN) & ~np.isnan(fc2)
-        ca2 = np.zeros_like(fc2, dtype=np.uint8)
-        ca2[vm2 & (fc2 <  19)]              = 1
-        ca2[vm2 & (fc2 >= 19) & (fc2 <= 31)] = 2
-        ca2[vm2 & (fc2 >  31)]              = 3
-        cp3 = cp2.copy(); cp3.update(dtype="uint8", nodata=0)
-        with rasterio.open(os.path.join(out, f"{pfx}_slope_classes.tif"), "w", **cp3) as dst:
-            dst.write(ca2, 1)
-    except:
-        pass
+        bgdf_save = _enforce_poly_gdf(bgdf)
+        if not bgdf_save.empty:
+            bgdf_save.to_file(os.path.join(out, f"{pfx}_boundary_polygon.shp"))
+    except Exception as e:
+        log.warning(f"bgdf save: {e}")
 
-    # Excel summary
+    # Clipped slope raster (for first polygon — visualization)
+    try:
+        main_poly = comp_polygons[0][1]
+        with rasterio.open(sp_path) as _src:
+            fc2, ft2 = rio_mask(
+                _src, [main_poly.__geo_interface__],
+                crop=True, filled=True, nodata=SN, all_touched=True
+            )
+        fc2  = fc2[0].astype(np.float32)
+        cp2_ = rp.copy(); cp2_.update(height=fc2.shape[0], width=fc2.shape[1], transform=ft2)
+        with rasterio.open(os.path.join(out, f"{pfx}_slope_clipped.tif"), "w", **cp2_) as dst:
+            dst.write(fc2, 1)
+        # Reclassified clipped raster
+        vm2  = (fc2 != SN) & ~np.isnan(fc2)
+        ca2  = np.zeros_like(fc2, dtype=np.uint8)
+        ca2[vm2 & (fc2 <  19)]                       = 1
+        ca2[vm2 & (fc2 >= 19) & (fc2 <= 31)]         = 2
+        ca2[vm2 & (fc2 >  31) & (fc2 <= 45)]         = 3
+        ca2[vm2 & (fc2 >  45)]                        = 4
+        cp3_ = cp2_.copy(); cp3_.update(dtype="uint8", nodata=0)
+        with rasterio.open(os.path.join(out, f"{pfx}_slope_classes.tif"), "w", **cp3_) as dst:
+            dst.write(ca2, 1)
+    except Exception as e:
+        log.warning(f"Clipped raster save error: {e}")
+
+    # Excel slope summary
     sdf = pd.DataFrame(all_sum)
     ep  = os.path.join(out, f"{pfx}_slope_summary.xlsx")
     if f_mode == "A":
@@ -1363,16 +1461,18 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                         "Description": "", "Area_ha": round(th, 4),
                         "Pct_Area": 100.0, "Total_ha": round(th, 4),
                     }
-                    if grs[0].get("Recal_ha") is not None:
-                        tr["Recal_ha"]   = round(sum(r["Recal_ha"] for r in grs if r.get("Recal_ha")), 4)
+                    if grs and grs[0].get("Recal_ha") is not None:
+                        tr["Recal_ha"]   = round(sum(r.get("Recal_ha",0) for r in grs), 4)
                         tr["Cal_Factor"] = grs[0].get("Cal_Factor", "")
                     pd.concat([gdf2, pd.DataFrame([tr])], ignore_index=True).to_excel(
                         wr, sheet_name=str(lb)[:31], index=False)
-        except:
+        except Exception as e:
+            log.warning(f"Excel multi-sheet error ({e}), saving flat")
             sdf.to_excel(ep, index=False)
 
     if run_id: _prog(run_id, "Group F complete.", 95)
     return all_sum, vgdf, bgdf, f_mode, per_grp
+    return all_sum,vgdf,bgdf,f_mode,per_grp
 
 # ── PREVIEW FUNCTIONS ────────────────────────────────────────────────────────
 # Rich distinct colors matching reference image 3 (C1S1=blue, C1S2=orange, etc.)
@@ -1397,7 +1497,7 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
         if geom.geom_type == "Polygon":
             ext = list(geom.exterior.coords)
             if ext[0] != ext[-1]: ext.append(ext[0])
-            geom = Polygon(ext)
+            geom = _repair(Polygon(ext)) or Polygon(ext)
         color = _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)]
         cid = row.get(lc_use or "Comp_ID", f"Comp_{i+1:03d}") if lc_use or "Comp_ID" in row.index else f"Comp_{i+1:03d}"
         ah  = row.get("Area_ha", "")
@@ -1489,179 +1589,76 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                   per_group_summaries=None, title="", legend_title="Slope Classes"):
-    cc  = {1: "#2ecc71", 2: "#f39c12", 3: "#e74c3c"}
-    cl  = {1: "< 19°  Gentle", 2: "19–31° Moderate", 3: "> 31°  Steep"}
-    hg  = f_mode in ("B", "E") and per_group_summaries and len(per_group_summaries) > 1
-    nr  = len(summary_rows)
-    tr  = max(0.20, min(0.48, 0.06 + nr * 0.025))
-
-    fig = plt.figure(figsize=(A4W, A4H), dpi=DPI, facecolor="white")
-    gs  = gridspec.GridSpec(2, 1, height_ratios=[1, tr],
-                            hspace=0.20, left=0.10, right=0.96, top=0.94, bottom=0.04)
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-
-    # ── Draw slope class fills ────────────────────────────────────────────
+    # 4-class system matching group_f step 3 and reference image 1
+    cc={1:"#2e8b57",2:"#90ee90",3:"#ffd700",4:"#e74c3c"}
+    cl={1:"0-19 degree",2:"19-31 degree",3:"31-45 degree",4:"45> degree"}
+    hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
+    nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
+    fig=plt.figure(figsize=(A4W,A4H),dpi=DPI,facecolor="white")
+    gs=gridspec.GridSpec(2,1,height_ratios=[1,tr],hspace=0.20,left=0.10,right=0.96,top=0.94,bottom=0.04)
+    ax1=fig.add_subplot(gs[0]); ax2=fig.add_subplot(gs[1])
     if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
-        for cid, color in cc.items():
-            sub = vec_gdf[vec_gdf["Class"] == cid]
-            if not sub.empty:
-                sub.plot(ax=ax1, facecolor=color, edgecolor="none",
-                         linewidth=0, alpha=0.88, zorder=3)
-
-    # ── Draw compartment boundaries (thick individual lines) ──────────────
+        for cid,color in cc.items():
+            sub=vec_gdf[vec_gdf["Class"]==cid]
+            if not sub.empty: sub.plot(ax=ax1,facecolor=color,edgecolor="#2c2c2c",linewidth=0.4,alpha=0.92,zorder=3)
     if bgdf is not None and not bgdf.empty:
-        if hg:
-            # Multi-compartment: draw each compartment boundary individually
-            # so internal dividing lines are visible
-            for _, row in bgdf.iterrows():
-                geom = row.geometry
-                if geom is None or geom.is_empty:
-                    continue
-                gpd.GeoDataFrame([{"geometry": geom}], crs=bgdf.crs).plot(
-                    ax=ax1, facecolor="none", edgecolor="#111111",
-                    linewidth=1.6, zorder=5)
-            # Draw the outer union boundary bold on top
-            try:
-                outer = _repair(bgdf.unary_union)
-                if outer and not outer.is_empty:
-                    gpd.GeoDataFrame(
-                        [{"geometry": outer}], crs=bgdf.crs
-                    ).plot(ax=ax1, facecolor="none", edgecolor="black",
-                           linewidth=2.8, zorder=6)
-            except:
-                pass
-        else:
-            # Single polygon — just draw boundary
-            try:
-                bgdf.boundary.plot(ax=ax1, color="black", linewidth=2.0, zorder=5)
-            except:
-                pass
-
-    # ── Compartment name labels ───────────────────────────────────────────
+        try: bgdf.boundary.plot(ax=ax1,color="black",linewidth=1.8,zorder=5)
+        except: pass
     if hg and bgdf is not None and not bgdf.empty:
-        # Find the best label column
-        label_col = None
-        for cand in ("Comp_ID", "Compartment", "comp_id", "comp_no",
-                      "Comp_No", "Forest", "Name", "name", "NAME"):
-            if cand in bgdf.columns:
-                label_col = cand
-                break
-        if label_col is None:
-            # Fall back to first non-geometry text column
-            for c in bgdf.columns:
-                if c == "geometry":
-                    continue
-                if bgdf[c].dtype == object:
-                    label_col = c
-                    break
-        if label_col:
-            _label_feat(ax1, bgdf, label_col, fs=7.5, color="#111111")
-
-    _style_ax(ax1)
-    _north_arrow(ax1)
-    _scale_bar(ax1)
-
-    # Legend: slope classes + boundary
-    handles = [
-        mpatches.Patch(facecolor=c, edgecolor="#2c2c2c", label=cl[cid])
-        for cid, c in cc.items()
-    ]
-    handles.append(mpatches.Patch(
-        facecolor="none", edgecolor="black", linewidth=1.8,
-        label="Compartment Boundary" if hg else "Boundary"))
-    _add_legend(ax1, handles, legend_title=legend_title or "Slope Classes")
-
-    mt = title.strip() if title.strip() else "Slope Classification Map"
-    if hg:
-        mt += f" — {len(per_group_summaries)} Compartments"
-    ax1.set_title(mt, fontsize=11, fontweight="bold", pad=7)
-
-    # ── Summary table ─────────────────────────────────────────────────────
-    ax2.axis("off")
-    ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
+        gc=next((c for c in bgdf.columns if c.lower()!="geometry"),None)
+        if gc: _label_feat(ax1,bgdf,gc)
+    _style_ax(ax1); _north_arrow(ax1); _scale_bar(ax1)
+    handles=[mpatches.Patch(facecolor=c,edgecolor="#444",linewidth=0.5,label=cl[cid]) for cid,c in cc.items() if cid in cc]
+    from matplotlib.lines import Line2D as _L2Dp
+    handles.append(_L2Dp([0],[0],color="black",linewidth=1.8,label="Forest Boundary"))
+    _add_legend(ax1,handles,legend_title=legend_title or "Slope Classes",loc="lower right")
+    mt=title.strip() if title.strip() else "Slope Classification Map"
+    if hg: mt+=f" — {len(per_group_summaries)} Groups"
+    ax1.set_title(mt,fontsize=11,fontweight="bold",pad=7)
+    ax2.axis("off"); ax2.set_title("Slope Area Summary",fontsize=9,fontweight="bold",pad=4)
     if not summary_rows:
-        fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
-        plt.close(fig)
-        return
-
-    hr = any(r.get("Recal_ha") is not None for r in summary_rows)
-
-    if f_mode == "A":
-        th   = sum(r["Area_ha"] for r in summary_rows)
-        cols = ["Slope Range", "Description", "Area (ha)", "% of Total"]
-        if hr: cols += ["Recal. (ha)", "Factor"]
-        td = []
+        fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig); return
+    hr=any(r.get("Recal_ha") is not None for r in summary_rows)
+    if f_mode=="A":
+        th=sum(r["Area_ha"] for r in summary_rows)
+        cols=["Slope Range","Description","Area (ha)","% of Total"]
+        if hr: cols+=["Recal. (ha)","Factor"]
+        td=[]
         for r in summary_rows:
-            rw = [r["Slope_Range"], r["Description"],
-                  f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-            if hr:
-                rw += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—",
-                       f"{r['Cal_Factor']:.4f}" if r.get("Cal_Factor") else ""]
+            rw=[r["Slope_Range"],r["Description"],f"{r['Area_ha']:.2f}",f"{r['Pct_Area']:.1f}%"]
+            if hr: rw+=[f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—","" if not r.get("Cal_Factor") else f"{r['Cal_Factor']:.4f}"]
             td.append(rw)
-        tr2 = ["TOTAL", "", f"{th:.2f}", "100%"]
-        if hr:
-            tr2 += [f"{sum(r['Recal_ha'] for r in summary_rows if r.get('Recal_ha')):.2f}", ""]
-        td.append(tr2)
-        rcm = {i: summary_rows[i].get("Class", 0) for i in range(len(summary_rows))}
-
+        tr2=["TOTAL","",f"{th:.2f}","100%"]
+        if hr: tr2+=[f"{sum(r['Recal_ha'] for r in summary_rows if r.get('Recal_ha')):.2f}",""]
+        td.append(tr2); rcm={i:summary_rows[i].get("Class",0) for i in range(len(summary_rows))}
     else:
-        # Multi-compartment table: Group | Slope Range | Description | Area | %
-        cols = ["Compartment", "Slope Range", "Description", "Area (ha)", "% of Total"]
-        if hr: cols += ["Recal. (ha)"]
-        td  = []
-        rcm = {}
-        ri  = 0
+        cols=["Group","Slope Range","Description","Area (ha)","% of Total"]
+        if hr: cols+=["Recal. (ha)"]
+        td=[]; rcm={}; ri=0
         if per_group_summaries:
-            for lb, grs in per_group_summaries.items():
+            for lb,grs in per_group_summaries.items():
                 for r in grs:
-                    rw = [str(lb), r["Slope_Range"], r["Description"],
-                          f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
-                    if hr:
-                        rw += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
-                    td.append(rw)
-                    rcm[ri] = r.get("Class", 0)
-                    ri += 1
-                # Subtotal row per compartment
-                gt = sum(r["Area_ha"] for r in grs)
-                sr = [f"  ↳ {lb} Total", "", "", f"{gt:.2f}", "100%"]
-                if hr:
-                    sr += [f"{sum(r['Recal_ha'] for r in grs if r.get('Recal_ha')):.2f}"]
-                td.append(sr)
-                rcm[ri] = -1   # subtotal styling
-                ri += 1
-            # Grand total
-            grand = sum(r["Area_ha"] for r in summary_rows)
-            gr_row = ["GRAND TOTAL", "", "", f"{grand:.2f}", ""]
-            if hr:
-                gr_row += [f"{sum(r['Recal_ha'] for r in summary_rows if r.get('Recal_ha')):.2f}"]
-            td.append(gr_row)
-            rcm[ri] = -2   # grand total styling
-
+                    rw=[str(lb),r["Slope_Range"],r["Description"],f"{r['Area_ha']:.2f}",f"{r['Pct_Area']:.1f}%"]
+                    if hr: rw+=[f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
+                    td.append(rw); rcm[ri]=r.get("Class",0); ri+=1
+                gt=sum(r["Area_ha"] for r in grs)
+                sr=[f"  ↳ {lb} Total","","",f"{gt:.2f}",""]
+                if hr: sr+=[f"{sum(r['Recal_ha'] for r in grs if r.get('Recal_ha')):.2f}"]
+                td.append(sr); rcm[ri]=-1; ri+=1
     if td:
-        # Font size: shrink for many compartments
-        fs = max(5.0, 8.5 - max(0, len(td) - 12) * 0.18)
-        tbl = ax2.table(cellText=td, colLabels=cols,
-                        cellLoc="center", loc="center", bbox=[0, 0, 1, 1])
-        tbl.auto_set_font_size(False)
-        tbl.set_fontsize(fs)
+        tbl=ax2.table(cellText=td,colLabels=cols,cellLoc="center",loc="center",bbox=[0,0,1,1])
+        tbl.auto_set_font_size(False); tbl.set_fontsize(6.5 if hg else 8.5)
         tbl.auto_set_column_width(list(range(len(cols))))
-
-        rc = {1: "#d5f5e3", 2: "#fdebd0", 3: "#fadbd8",
-              0: "#f8f9fa", -1: "#ddeeff", -2: "#c8d8f0"}
-        for (r2, c2), cell in tbl.get_celld().items():
+        rc={1:"#d5f5e3",2:"#c8f7c5",3:"#fef9e7",4:"#fadbd8",0:"#f8f9fa",-1:"#ddeeff"}
+        for (r2,c2),cell in tbl.get_celld().items():
             cell.set_edgecolor("#ccc")
-            if r2 == 0:
-                cell.set_facecolor("#1a5276")
-                cell.set_text_props(color="white", fontweight="bold")
+            if r2==0: cell.set_facecolor("#1a5276"); cell.set_text_props(color="white",fontweight="bold")
             else:
-                cid2 = rcm.get(r2 - 1, 0)
-                cell.set_facecolor(rc.get(cid2, "#f8f9fa"))
-                if cid2 in (-1, -2):
-                    cell.set_text_props(fontweight="bold")
-
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
+                cid2=rcm.get(r2-1,0)
+                cell.set_facecolor(rc.get(cid2,"#f8f9fa"))
+                if cid2==-1 or (cid2==0 and r2-1>=len(summary_rows)): cell.set_text_props(fontweight="bold")
+    plt.tight_layout(pad=0.3, rect=[0, 0, 0.82, 1.0])
+    fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig)
 
 # ── KMZ ─────────────────────────────────────────────────────────────────────
 def _kml_pm(gdf,sid,nc=None):
@@ -2305,9 +2302,13 @@ def upload():
                     return jsonify({"error":f"DEM catalog file not found: {dem_catalog_path}","run_id":run_id}),400
                 class _CatDEM:
                     def __init__(self, p):
-                        self.filename=os.path.basename(p); self._p=p
+                        self.filename = os.path.basename(p)
+                        self._p = p
                     def save(self, dest):
-                        import shutil as _sh; _sh.copy2(self._p, dest)
+                        shutil.copy2(self._p, dest)
+                    def read(self, size=-1):
+                        with open(self._p,"rb") as f:
+                            return f.read(size)
                 dem_f = _CatDEM(cat_full)
             else:
                 dem_f=request.files.get("dem_file")
