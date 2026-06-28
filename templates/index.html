@@ -6,6 +6,9 @@
 <title>Elfak GIS Engine Pro — Forest Studio</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet.PM for drag vertex editing -->
+<link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.16.0/dist/leaflet-geoman.css"/>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.16.0/dist/leaflet-geoman.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <!-- GSAP for premium motion -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
@@ -137,10 +140,10 @@
   --drawer-bg:rgba(8,18,11,.98);
   --login-bg:rgba(0,5,2,.85);
   --login-card:rgba(10,22,14,.98);
-  --login-txt:#c6f6e0;
+  --login-txt:#e8fff5;
 
-  --txt:#c6f6e0; --txt2:#5ecea0; --muted:#2d6b4f;
-  --txt-dim:rgba(198,246,224,.38);
+  --txt:#e8fff5; --txt2:#86efcb; --muted:#4aba84;
+  --txt-dim:rgba(232,255,245,.45);
 
   --mint-glow:rgba(16,185,129,.3);
   --mint-glow-strong:rgba(16,185,129,.55);
@@ -970,12 +973,34 @@ select:focus, input:focus {
 <!-- LOGIN -->
 <div id="login-overlay">
   <div class="login-card">
+    <div style="text-align:center;margin-bottom:6px">
+      <div style="display:inline-flex;align-items:center;gap:8px;padding:4px 14px;border-radius:20px;
+                  background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.22);font-size:10px;font-family:var(--mono);color:var(--muted)">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--mint);box-shadow:0 0 8px rgba(16,185,129,.6);animation:pillPulse 2s infinite"></span>
+        System Online · <span id="lcard-usercount">Secure Login</span>
+      </div>
+    </div>
     <h2>🌲 Elfak GIS Engine Pro</h2>
-    <p>Enter a username to access the Premium Forest Studio</p>
-    <input type="text" id="login-inp" placeholder="Your username (e.g.Forets_1_A)" maxlength="40"
+    <p style="font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.6">
+      Enter a <strong>unique username</strong> to access the Forest Studio.
+      Each username belongs exclusively to one person.
+    </p>
+    <div id="login-mode-info" style="font-size:10px;padding:7px 10px;border-radius:8px;
+         background:rgba(16,185,129,.07);border:1px solid rgba(16,185,129,.18);
+         color:var(--muted);margin-bottom:14px;line-height:1.7">
+      🆕 <strong>New user?</strong> Your account is created instantly.<br>
+      🔄 <strong>Returning?</strong> Enter your exact username to resume.<br>
+      🔒 <strong>Taken name?</strong> You'll be prompted to choose another.
+    </div>
+    <input type="text" id="login-inp" placeholder="Choose a unique username…" maxlength="40"
+           oninput="_checkUsernameHint(this.value)"
            onkeydown="if(event.key==='Enter')doLogin()">
+    <div id="login-hint" style="font-size:10px;color:var(--muted);font-family:var(--mono);
+         min-height:16px;margin-top:5px;padding-left:2px;transition:color .3s"></div>
     <div class="login-err" id="lerr"></div>
-    <div id="sugg">Try: <span onclick="trySugg(0)">…</span> <span onclick="trySugg(1)">…</span> <span onclick="trySugg(2)">…</span></div>
+    <div id="sugg" style="margin-top:8px;font-size:10.5px;color:var(--muted)">
+      Similar names: <span onclick="trySugg(0)">…</span> <span onclick="trySugg(1)">…</span> <span onclick="trySugg(2)">…</span>
+    </div>
     <button id="login-go" onclick="doLogin()">Enter Studio →</button>
   </div>
 </div>
@@ -1235,7 +1260,23 @@ select:focus, input:focus {
           <div class="fg hidden" id="f-csv-comp-fg"><label>Grouping Column</label><select id="f-csv-comp"><option value="">— auto detect —</option></select></div>
         </div>
         <div class="fg"><label>Step 2 — DEM GeoTIFF</label></div>
-        <div class="dz" id="dz-F-dem"><span class="dz-text" id="f-dem-lbl">🏔 Upload DEM (.tif)</span><input type="file" id="fi-F-dem" accept=".tif,.tiff"></div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <!-- Server DEM catalog (searchable) -->
+          <div class="fg">
+            <label>Server DEM Library <span style="color:var(--mint);font-size:8px">(pre-loaded, searchable)</span></label>
+            <input type="text" id="f-dem-search" placeholder="🔍 Type to search DEM by name…"
+                   oninput="_filterDemList(this.value)"
+                   style="border-color:rgba(16,185,129,.3);margin-bottom:3px">
+            <select id="f-dem-catalog" size="4"
+                    style="height:auto;border-color:rgba(16,185,129,.25);font-size:10px;padding:4px;min-height:60px"
+                    onchange="_onDemSelect(this)">
+              <option value="" disabled>Loading DEM catalog…</option>
+            </select>
+            <div id="f-dem-cat-info" style="font-size:9px;color:var(--muted);font-family:var(--mono);min-height:14px"></div>
+          </div>
+          <div style="text-align:center;font-size:9px;color:var(--muted);font-family:var(--mono)">— or upload manually —</div>
+          <div class="dz" id="dz-F-dem"><span class="dz-text" id="f-dem-lbl">🏔 Upload DEM (.tif)</span><input type="file" id="fi-F-dem" accept=".tif,.tiff"></div>
+        </div>
         <div class="fg"><label>Field Area ha (optional recalibration)</label>
           <input type="number" id="f-fa" placeholder="e.g. 464.4" step="any" min="0"></div>
         <div class="badge warn"><strong>⚠️ DEM must cover the boundary extent.</strong> Mismatched extents → empty result.</div>
@@ -1251,6 +1292,13 @@ select:focus, input:focus {
         <div class="dz" id="dz-G">
           <span class="dz-text">📦 Upload Compartment SHP or ZIP-of-SHP</span>
           <input type="file" id="fi-G" accept=".shp,.zip">
+        </div>
+        <!-- SHP selector (shown after ZIP upload) -->
+        <div id="g-shp-sel-wrap" style="display:none">
+          <div class="fg">
+            <label>📂 Select Shapefile from ZIP</label>
+            <select id="g-shp-sel" style="border-color:var(--mint)"></select>
+          </div>
         </div>
         <div class="row2">
           <div class="fg"><label>Compartment ID Column</label>
@@ -1359,6 +1407,13 @@ select:focus, input:focus {
 </div><!-- shell -->
 
 <script>
+/* ── Apply theme IMMEDIATELY (before any render) — prevents flash ── */
+(function() {
+  if (localStorage.getItem('elfak-theme') === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+})();
+
 const BASE = window.location.origin;
 
 /* ═══════════════════════════════════════════════════════
@@ -1388,14 +1443,14 @@ function _applyTheme(dark, animate = false) {
     if (label) label.textContent = 'Dark';
   }
   localStorage.setItem('elfak-theme', dark ? 'dark' : 'light');
-  // Re-style Leaflet tiles for dark mode
-  if (leafMap) {
-    leafMap.eachLayer(l => {
-      if (l._url) {
-        l.setOpacity(dark ? 0.80 : 1.0);
-      }
-    });
-  }
+  // Re-style Leaflet tiles for dark mode (leafMap may not exist yet)
+  try {
+    if (typeof leafMap !== 'undefined' && leafMap) {
+      leafMap.eachLayer(l => {
+        if (l && l._url) l.setOpacity(dark ? 0.80 : 1.0);
+      });
+    }
+  } catch(_e) {}
 }
 
 function toggleTheme() {
@@ -1410,14 +1465,7 @@ function toggleTheme() {
   _applyTheme(!_dark, true);
 }
 
-// Apply saved theme immediately (before render)
-(function() {
-  const saved = localStorage.getItem('elfak-theme');
-  if (saved === 'dark') {
-    document.documentElement.setAttribute('data-theme', 'dark');
-    _dark = true;
-  }
-})();
+// Theme applied at script top
 
 /* ── Nav item ripple on click ── */
 function _addNavRipple(el, e) {
@@ -1558,9 +1606,30 @@ document.getElementById('fi-F-bnd').addEventListener('change', async function() 
 document.getElementById('fi-F-dem').addEventListener('change', function() {
   const f=this.files[0]; if(f) document.getElementById('f-dem-lbl').textContent='🏔 '+f.name;
 });
-document.getElementById('fi-G').addEventListener('change', function() {
+document.getElementById('fi-G').addEventListener('change', async function() {
   const f=this.files[0]; if(!f) return;
   document.querySelector('#dz-G .dz-text').textContent = '📄 '+f.name;
+  // If ZIP: inspect contents and show SHP selector
+  if (f.name.toLowerCase().endsWith('.zip')) {
+    const sel = document.getElementById('g-shp-sel-wrap');
+    const selEl = document.getElementById('g-shp-sel');
+    if (sel) sel.style.display = 'none';
+    const fd2 = new FormData(); fd2.append('file', f);
+    try {
+      const r = await fetch(`${BASE}/zip_inspect`, {method:'POST', body:fd2});
+      const d = await r.json();
+      if (d.shp_files && d.shp_files.length > 0 && sel && selEl) {
+        selEl.innerHTML = d.shp_files.map(s=>`<option value="${s}">${s.split('/').pop()}</option>`).join('');
+        sel.style.display = 'block';
+        sel.style.animation = 'staggerIn .3s var(--ease) both';
+      } else if (sel) {
+        sel.style.display = 'none';
+      }
+    } catch(e) { console.warn('zip_inspect failed:', e); }
+  } else {
+    const sel = document.getElementById('g-shp-sel-wrap');
+    if (sel) sel.style.display = 'none';
+  }
 });
 
 /* Drag-over */
@@ -1620,11 +1689,17 @@ function setProgress(lbl, msg, pct, isErr=false) {
 }
 function startSSE(runId) {
   const es=new EventSource(`${BASE}/progress/${runId}`);
+  let _lastMsg='';
   es.onmessage=e=>{
     try{
       const d=JSON.parse(e.data);
-      setProgress(d.pct>=100?'Complete ✓':d.msg.startsWith('ERROR')?'Error':'Processing…',d.msg,d.pct||0,d.msg.startsWith('ERROR'));
-      if(d.pct>=100) es.close();
+      const isErr=d.msg&&d.msg.startsWith('ERROR');
+      const isDone=d.pct>=100;
+      const lbl=isDone?'Complete ✓':isErr?'Error':'Processing…';
+      if(d.msg!==_lastMsg){_lastMsg=d.msg;setProgress(lbl,d.msg,d.pct||0,isErr);}
+      else{setProgress(lbl,d.msg,d.pct||0,isErr);}
+      if(isDone){es.close();setTimeout(()=>{setProgress('Ready','',0);},8000);}
+      if(isErr) es.close();
     }catch{}
   };
   es.onerror=()=>es.close();
@@ -1694,7 +1769,16 @@ async function runF(title, legendTitle, labelCol, zone) {
   document.getElementById('run-btn').disabled=true;
   setProgress('Processing…','Starting Group F…',5);
   const fd=new FormData();
-  fd.append('file',bFile); fd.append('dem_file',dFile);
+  // Check if server catalog DEM selected
+  const demCatSel = document.getElementById('f-dem-catalog');
+  const demCatPath = demCatSel?.dataset?.selected || '';
+  if (demCatPath) {
+    fd.append('dem_catalog_path', demCatPath);
+    fd.append('file', bFile);
+    // No dem_file from upload — backend will load from catalog
+  } else {
+    fd.append('file',bFile); fd.append('dem_file',dFile);
+  }
   fd.append('module','F'); fd.append('f_mode',fMode);
   fd.append('zone',zone); fd.append('title',title);
   fd.append('legend_title',legendTitle); fd.append('label_col',labelCol);
@@ -1736,6 +1820,12 @@ async function runG() {
   fd.append('spacing', spacing);
   fd.append('title', mapTitle);
   if (compCol) fd.append('comp_col', compCol);
+  // Pass selected SHP from ZIP
+  const selEl = document.getElementById('g-shp-sel');
+  const selWrap = document.getElementById('g-shp-sel-wrap');
+  if (selEl && selWrap && selWrap.style.display !== 'none' && selEl.value) {
+    fd.append('target_shp', selEl.value);
+  }
 
   try {
     const res = await fetch(`${BASE}/run_g`, { method: 'POST', body: fd });
@@ -1809,10 +1899,11 @@ async function sendRequest(fd) {
     document.getElementById('comp-label').value=fd.get('label_col')||'';
     setTimeout(async()=>{try{const hr=await fetch(`${BASE}/history`);if(hr.ok){const hd=await hr.json();if(hd.runs)renderHistory(hd.runs);}}catch{}},800);
   } catch(e) {
-    setProgress('Error','Pipeline failed — '+e.message,0,true);
-    alert('Error: '+(e.message||'Backend error'));
+    const isRL = e.message && e.message.includes('Too many');
+    setProgress('Error', e.message || 'Pipeline failed', 0, true);
+    if (!isRL) alert('Error: ' + (e.message || 'Unexpected error'));
   } finally {
-    document.getElementById('run-btn').disabled=false;
+    document.getElementById('run-btn').disabled = false;
   }
 }
 
@@ -1842,6 +1933,120 @@ function switchPView(v) {
 }
 
 /* ── OSM / LEAFLET ───────────────────────────────────────────────────────── */
+/* ── OSM HELPER FUNCTIONS ─────────────────────────────────────────── */
+let _osmLegendControl = null;
+
+function _buildOsmLegend(features, layerType) {
+  // Remove existing legend
+  if (_osmLegendControl) { try { leafMap.removeControl(_osmLegendControl); } catch{} _osmLegendControl=null; }
+  const items = [];
+  if (layerType === 'point') {
+    const types = new Set(features.map(f=>f.properties?.Point_Type).filter(Boolean));
+    const typeColors = {Divider:'#9C27B0', Vertex:'#2196F3', Boundary:'#FF9800'};
+    types.forEach(t => items.push({color:typeColors[t]||'#ef4444',label:t+' Point',circle:true}));
+    if (!types.size) items.push({color:'#ef4444',label:'Survey Points',circle:true});
+  } else {
+    // Slope classes
+    const hasCls = features.some(f=>f.properties?.Class);
+    if (hasCls) {
+      [{cls:1,c:'#4CAF50',l:'0–19° Gentle'},{cls:2,c:'#FFC107',l:'19–31° Moderate'},
+       {cls:3,c:'#FF9800',l:'31–45° Steep'},{cls:4,c:'#ef4444',l:'45°+ Very Steep'}].forEach(
+        ({cls,c,l})=>{ if(features.some(f=>f.properties?.Class===cls)) items.push({color:c,label:l}); });
+    } else {
+      items.push({color:'#10b981',label:'Forest Boundary',outline:true});
+    }
+  }
+  if (!items.length) return;
+  const L2 = L; // local ref
+  const LegendCtrl = L2.Control.extend({
+    onAdd: function() {
+      const div = L.DomUtil.create('div');
+      div.style.cssText = 'background:rgba(255,255,255,.92);border-radius:8px;padding:8px 12px;'+
+        'font-family:monospace;font-size:11px;box-shadow:0 2px 12px rgba(0,0,0,.18);'+
+        'border:1px solid rgba(0,0,0,.08);max-width:160px;backdrop-filter:blur(8px)';
+      items.forEach(item=>{
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:7px;margin-bottom:4px';
+        const ic = document.createElement('span');
+        if (item.circle) {
+          ic.style.cssText = `width:10px;height:10px;border-radius:50%;background:${item.color};flex-shrink:0;border:2px solid ${item.color}`;
+        } else if (item.outline) {
+          ic.style.cssText = `width:14px;height:10px;border-radius:2px;border:2px solid ${item.color};flex-shrink:0`;
+        } else {
+          ic.style.cssText = `width:14px;height:10px;border-radius:2px;background:${item.color};opacity:.75;flex-shrink:0`;
+        }
+        row.appendChild(ic);
+        const lb = document.createElement('span'); lb.textContent = item.label;
+        lb.style.cssText = 'color:#1a2e22;font-size:10px';
+        row.appendChild(lb);
+        div.appendChild(row);
+      });
+      return div;
+    }
+  });
+  _osmLegendControl = new LegendCtrl({position:'bottomright'});
+  try { _osmLegendControl.addTo(leafMap); } catch{}
+}
+
+function _bindPopupAndHover(feat, lyr) {
+  const p = feat.properties || {};
+  const lbl = p.Point_ID || p.Comp_ID || p.Forest || p.Label || p.Slope_Range || '';
+  const ah  = p.Area_ha   ? ` — ${parseFloat(p.Area_ha).toFixed(3)} ha` : '';
+  const pt  = p.Point_Type? `<br>Type: <b>${p.Point_Type}</b>` : '';
+  const src2= p.Source    ? `<br>Source: ${p.Source}` : '';
+  const cp  = p.Compartments?`<br>Comps: ${p.Compartments}`:'';
+  const cl  = p.Class     ? ` [Class ${p.Class}]` : '';
+  lyr.bindPopup(`<div style="font-family:monospace;font-size:11px"><b>${lbl}</b>${ah}${cl}${pt}${src2}${cp}</div>`);
+  lyr.on('click', () => {
+    if(selectedLayer&&selectedLayer!==lyr) try{selectedLayer.setStyle({weight:2,color:'#1a3a22'});}catch{}
+    selectedLayer=lyr; try{lyr.setStyle({weight:4,color:'#059669'});}catch{}
+  });
+  lyr.on('mouseover',()=>{if(lyr!==selectedLayer)try{lyr.setStyle&&lyr.setStyle({weight:3});}catch{}});
+  lyr.on('mouseout', ()=>{if(lyr!==selectedLayer)try{lyr.setStyle&&lyr.setStyle({weight:2,color:'#1a3a22'});}catch{}});
+}
+
+/* ── DEM CATALOG ── */
+let _demCatalog = [];
+async function _loadDemCatalog() {
+  try {
+    const r = await fetch(`${BASE}/dem_catalog`);
+    const d = await r.json();
+    _demCatalog = d.files || [];
+    _filterDemList('');
+  } catch(e) { console.warn('DEM catalog load failed:', e); }
+}
+function _filterDemList(q) {
+  const sel = document.getElementById('f-dem-catalog');
+  const info = document.getElementById('f-dem-cat-info');
+  if (!sel) return;
+  const lower = q.toLowerCase();
+  const filtered = _demCatalog.filter(f =>
+    !lower || f.name.toLowerCase().includes(lower) || f.path.toLowerCase().includes(lower)
+  );
+  if (_demCatalog.length === 0) {
+    sel.innerHTML = '<option value="" disabled>No DEM files in server catalog yet.</option>';
+    if (info) info.textContent = 'Place .tif files in the dem_catalog/ folder on the server.';
+    return;
+  }
+  sel.innerHTML = filtered.length
+    ? filtered.map(f=>`<option value="${f.path}" title="${f.path}">${f.name} (${f.size_mb}MB)</option>`).join('')
+    : '<option value="" disabled>No matches found</option>';
+  if (info) info.textContent = `${filtered.length} of ${_demCatalog.length} DEM file(s) shown`;
+}
+function _onDemSelect(sel) {
+  const v = sel.value;
+  if (!v) return;
+  const info = document.getElementById('f-dem-cat-info');
+  const f = _demCatalog.find(x=>x.path===v);
+  if (f && info) info.textContent = `✓ Selected: ${f.name} (${f.size_mb} MB) — will load from server`;
+  // Store catalog selection
+  sel.dataset.selected = v;
+  // Clear manual upload
+  const manualInp = document.getElementById('fi-F-dem');
+  if (manualInp) manualInp.value = '';
+  document.getElementById('f-dem-lbl').textContent = '🏔 Upload DEM (.tif)';
+}
+
 function _ensureLeafMap() {
   if (leafMap) return;
   const el = document.getElementById('osm-map');
@@ -1878,28 +2083,68 @@ async function loadOSM(runId, kmzInfo) {
       if (gj.features && gj.features.length > 0) {
         currentGeoJSON = gj;
         let compIdx = 0;
-        const layer = L.geoJSON(gj, {
-          style: feat => {
-            const p = feat.properties || {};
-            const cls = p.Class;
-            let fc = '#10b981';
-            if      (cls===1) fc = '#4CAF50';
-            else if (cls===2) fc = '#FFC107';
-            else if (cls===3) fc = '#FF9800';
-            else if (p.Point_Type)   fc = '#ef4444';  // G points
-            else if (p.Comp_ID||p.Forest) fc = COMP_COLORS_OSM[compIdx++ % COMP_COLORS_OSM.length];
-            // Points use circle markers
-            return { fillColor: fc, fillOpacity: 0.45, color: '#1a3a22', weight: 2 };
-          },
-          pointToLayer: (feat, latlng) => {
-            const p = feat.properties || {};
-            const col = p.Point_Type === 'Divider' ? '#9C27B0'
-                      : p.Point_Type === 'Vertex'   ? '#2196F3'
-                      : p.Point_Type === 'Boundary' ? '#FF9800' : '#ef4444';
-            return L.circleMarker(latlng, {
-              radius: 5, color: col, fillColor: col, fillOpacity: 0.9, weight: 1.5
-            });
-          },
+        // Separate point features from polygon/line features
+        const pointFeats = gj.features.filter(f => f.geometry &&
+          (f.geometry.type==='Point'||f.geometry.type==='MultiPoint'));
+        const polyFeats  = gj.features.filter(f => f.geometry &&
+          !['Point','MultiPoint'].includes(f.geometry.type));
+
+        // Polygon/line layer
+        if (polyFeats.length > 0) {
+          const polyGJ = {type:'FeatureCollection', features: polyFeats};
+          const polyLayer = L.geoJSON(polyGJ, {
+            style: feat => {
+              const p = feat.properties || {};
+              const cls = p.Class;
+              let fc = '#10b981';
+              if      (cls===1) fc = '#4CAF50';
+              else if (cls===2) fc = '#FFC107';
+              else if (cls===3) fc = '#FF9800';
+              else if (p.Comp_ID||p.Forest) fc = COMP_COLORS_OSM[compIdx++ % COMP_COLORS_OSM.length];
+              return { fillColor: fc, fillOpacity: 0.38, color: '#1a3a22', weight: 2 };
+            },
+            onEachFeature: (feat, lyr) => _bindPopupAndHover(feat, lyr)
+          }).addTo(leafMap);
+          leafLayers.push(polyLayer);
+          // Add polygon legend
+          _buildOsmLegend(polyFeats, 'polygon');
+          try { leafMap.fitBounds(polyLayer.getBounds().pad(0.06)); } catch{}
+        }
+
+        // Point layer — always circles, never polygons
+        if (pointFeats.length > 0) {
+          const ptGJ = {type:'FeatureCollection', features: pointFeats};
+          const ptLayer = L.geoJSON(ptGJ, {
+            pointToLayer: (feat, latlng) => {
+              const p = feat.properties || {};
+              const col = p.Point_Type === 'Divider' ? '#9C27B0'
+                        : p.Point_Type === 'Vertex'   ? '#2196F3'
+                        : p.Point_Type === 'Boundary' ? '#FF9800' : '#ef4444';
+              return L.circleMarker(latlng, {
+                radius: 6, color: col, fillColor: col,
+                fillOpacity: 0.92, weight: 1.5
+              });
+            },
+            onEachFeature: (feat, lyr) => _bindPopupAndHover(feat, lyr)
+          }).addTo(leafMap);
+          leafLayers.push(ptLayer);
+          _buildOsmLegend(pointFeats, 'point');
+        }
+
+        // Fit bounds
+        if (polyFeats.length === 0 && pointFeats.length > 0) {
+          try {
+            const b = leafLayers[leafLayers.length-1].getBounds();
+            leafMap.fitBounds(b.pad(0.1));
+          } catch{}
+        }
+
+        // Dummy layer ref for backward compat
+        const layer = {getBounds: ()=>{
+          try { return leafLayers[0].getBounds(); } catch { return null; }
+        }};
+        // (skip old onEachFeature — handled above)
+        if (false) { const layer2 = L.geoJSON(gj, {
           onEachFeature: (feat, lyr) => {
             const p = feat.properties || {};
             const lbl = p.Point_ID || p.Comp_ID || p.Forest || p.Label || p.Slope_Range || '';
@@ -1916,10 +2161,9 @@ async function loadOSM(runId, kmzInfo) {
             lyr.on('mouseover', () => { if(lyr!==selectedLayer) try{lyr.setStyle({weight:3});}catch{} });
             lyr.on('mouseout',  () => { if(lyr!==selectedLayer) try{lyr.setStyle({weight:2,color:'#1a3a22'});}catch{} });
           }
-        }).addTo(leafMap);
-        leafLayers.push(layer);
-        // AUTO-ZOOM to features
-        try { leafMap.fitBounds(layer.getBounds().pad(0.06)); } catch(e) { console.warn('fitBounds error:', e); }
+        }).addTo(leafMap); }
+        // end of false block
+        // (layers already added above)
       } else if (kmzInfo && kmzInfo.lat && kmzInfo.lon) {
         // Fallback centroid
         const zoom = Math.max(10, Math.min(16, Math.round(17 - Math.log2(Math.max(kmzInfo.alt/500, 1)))));
@@ -1936,10 +2180,30 @@ async function loadOSM(runId, kmzInfo) {
 
 /* ── LEAFLET EDIT TOOLS ──────────────────────────────────────────────────── */
 function setTool(t) {
-  activeTool=t; document.querySelectorAll('.etool[id^=tool-]').forEach(el=>el.classList.remove('active-tool'));
+  activeTool=t;
+  document.querySelectorAll('.etool[id^=tool-]').forEach(el=>el.classList.remove('active-tool'));
   const el=document.getElementById('tool-'+t); if(el) el.classList.add('active-tool');
-  if(t==='vertex'&&selectedLayer&&selectedLayer.editing){try{selectedLayer.editing.enable();}catch{}}
-  else{if(selectedLayer&&selectedLayer.editing)try{selectedLayer.editing.disable();}catch{}}
+  if (!leafMap) return;
+  if (t==='vertex') {
+    // Enable PM editing on all polygon/polyline layers
+    leafLayers.forEach(l => {
+      try {
+        if (l.pm) {
+          l.pm.enable({allowSelfIntersection:false});
+        } else if (l.getLayers) {
+          l.getLayers().forEach(sub => { try{sub.pm&&sub.pm.enable({allowSelfIntersection:false});}catch{} });
+        }
+      } catch(e) { console.warn('PM enable error:', e); }
+    });
+  } else {
+    // Disable PM editing
+    leafLayers.forEach(l => {
+      try {
+        if (l.pm) l.pm.disable();
+        else if (l.getLayers) l.getLayers().forEach(sub=>{try{sub.pm&&sub.pm.disable();}catch{}});
+      } catch{}
+    });
+  }
 }
 function deleteSelected(){
   if(!selectedLayer){alert('Select a feature first (click on it).'); return;}
@@ -1988,36 +2252,145 @@ async function doCompose(){
 }
 
 /* ── AUTH ────────────────────────────────────────────────────────────────── */
-let _suggs=[];
-function _genSuggs(base){const clean=base.replace(/[_\-]?\d+$/,'').trim()||base;const rn=Math.floor(Math.random()*89+10);return[clean+'_'+rn,clean+(new Date().getFullYear()%100),clean+'_GIS'];}
-function trySugg(i){const n=_suggs[i];if(!n)return;document.getElementById('login-inp').value=n;document.getElementById('login-inp').classList.remove('taken');document.getElementById('lerr').style.display='none';document.getElementById('sugg').style.display='none';doLogin();}
-async function doLogin(){
-  const inp=document.getElementById('login-inp'); const name=inp.value.trim();
-  const errEl=document.getElementById('lerr'); const sugg=document.getElementById('sugg'); const btn=document.getElementById('login-go');
-  inp.classList.remove('taken'); errEl.className='login-err'; errEl.style.display='none'; sugg.style.display='none';
-  if(!name){errEl.textContent='Please enter a username.';errEl.style.display='block';return;}
-  btn.disabled=true; btn.textContent='Checking…';
-  try{
-    const res=await fetch(`${BASE}/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:name})});
-    const data=await res.json();
-    if(res.status===409||data.taken){
-      inp.classList.add('taken'); errEl.className='login-err taken-msg';
-      errEl.textContent=data.error||`"${name}" is already taken.`; errEl.style.display='block';
-      _suggs=_genSuggs(name); const spans=sugg.querySelectorAll('span');
-      _suggs.forEach((s,i)=>{if(spans[i])spans[i].textContent=s;}); sugg.style.display='block';
-      btn.disabled=false; btn.textContent='Enter Studio →'; return;
-    }
-    if(!res.ok||data.error) throw new Error(data.error||'Login failed');
-    onLoginSuccess(data.username,data.runs||[]);
-  }catch(e){errEl.textContent=e.message||'Login failed.';errEl.style.display='block';btn.disabled=false;btn.textContent='Enter Studio →';}
+/* Username hint debounce */
+let _hintTimer = null;
+function _checkUsernameHint(val) {
+  const hint = document.getElementById('login-hint');
+  if (!hint) return;
+  clearTimeout(_hintTimer);
+  if (!val || val.length < 2) { hint.textContent = ''; return; }
+  if (val.length < 2) { hint.textContent = 'Minimum 2 characters'; hint.style.color='var(--red)'; return; }
+  if (val.length > 40) { hint.textContent = 'Maximum 40 characters'; hint.style.color='var(--red)'; return; }
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(val)) {
+    hint.textContent = 'Letters, numbers, spaces, - or _ only. Must start with letter/digit.';
+    hint.style.color = 'var(--red)'; return;
+  }
+  hint.textContent = '✓ Valid username format'; hint.style.color = 'var(--mint)';
 }
-function onLoginSuccess(username,runs){
-  const ov=document.getElementById('login-overlay'); ov.style.transition='opacity .4s'; ov.style.opacity='0';
-  setTimeout(()=>{ov.style.display='none';},420);
-  document.getElementById('user-bar').style.display='flex';
-  document.getElementById('uname').textContent=username;
-  document.getElementById('uavatar').textContent=username.charAt(0).toUpperCase();
+
+function _genSuggs(base) {
+  const clean = base.replace(/[_-]?\d+$/, '').trim() || base;
+  const yr = new Date().getFullYear() % 100;
+  const rn = Math.floor(Math.random()*89+10);
+  return [
+    clean + '_' + rn,
+    clean + yr,
+    clean + '_GIS'
+  ];
+}
+let _suggs = [];
+function trySugg(i) {
+  const n = _suggs[i]; if (!n) return;
+  const inp = document.getElementById('login-inp');
+  inp.value = n; inp.classList.remove('taken');
+  document.getElementById('lerr').style.display = 'none';
+  document.getElementById('sugg').style.display = 'none';
+  _checkUsernameHint(n);
+  doLogin();
+}
+
+async function doLogin() {
+  const inp   = document.getElementById('login-inp');
+  const name  = inp.value.trim();
+  const errEl = document.getElementById('lerr');
+  const sugg  = document.getElementById('sugg');
+  const btn   = document.getElementById('login-go');
+  const hint  = document.getElementById('login-hint');
+
+  inp.classList.remove('taken');
+  errEl.className = 'login-err';
+  errEl.style.display = 'none';
+  sugg.style.display  = 'none';
+
+  if (!name) {
+    errEl.textContent = 'Please enter a username.';
+    errEl.style.display = 'block'; return;
+  }
+  if (name.length < 2) {
+    errEl.textContent = 'Username must be at least 2 characters.';
+    errEl.style.display = 'block'; return;
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(name)) {
+    errEl.textContent = 'Invalid characters. Use letters, numbers, spaces, - or _.';
+    errEl.style.display = 'block'; return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Checking…';
+  if (hint) { hint.textContent = 'Connecting to server…'; hint.style.color = 'var(--muted)'; }
+
+  try {
+    const res  = await fetch(`${BASE}/login`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: name})
+    });
+    const data = await res.json();
+
+    // Username already taken by someone else
+    if (res.status === 409 || data.taken) {
+      inp.classList.add('taken');
+      errEl.className    = 'login-err taken-msg';
+      errEl.textContent  = data.error || `"${name}" is already taken by another user.`;
+      errEl.style.display = 'block';
+      _suggs = _genSuggs(name);
+      const spans = sugg.querySelectorAll('span');
+      _suggs.forEach((s, i) => { if (spans[i]) spans[i].textContent = s; });
+      sugg.style.display = 'block';
+      if (hint) { hint.textContent = 'Choose a different name below:'; hint.style.color = 'var(--amber)'; }
+      btn.disabled = false; btn.textContent = 'Enter Studio →';
+      return;
+    }
+
+    if (!res.ok || data.error) throw new Error(data.error || 'Login failed');
+
+    // Success
+    if (hint) {
+      hint.textContent = data.is_new ? '✓ Account created!' : `✓ Welcome back, ${data.username}!`;
+      hint.style.color = 'var(--mint)';
+    }
+    setTimeout(() => onLoginSuccess(data.username, data.runs || [], data.is_new), 300);
+
+  } catch(e) {
+    errEl.textContent   = e.message || 'Connection error. Please try again.';
+    errEl.style.display = 'block';
+    if (hint) { hint.textContent = ''; }
+    btn.disabled   = false;
+    btn.textContent = 'Enter Studio →';
+  }
+}
+function onLoginSuccess(username, runs, isNew) {
+  const ov = document.getElementById('login-overlay');
+  ov.style.transition = 'opacity .45s';
+  ov.style.opacity = '0';
+  setTimeout(() => { ov.style.display = 'none'; }, 460);
+
+  document.getElementById('user-bar').style.display = 'flex';
+  const uname = document.getElementById('uname');
+  uname.textContent = username;
+  uname.style.opacity = '0';
+  setTimeout(() => {
+    uname.style.transition = 'opacity .4s';
+    uname.style.opacity = '1';
+  }, 100);
+  document.getElementById('uavatar').textContent = username.charAt(0).toUpperCase();
   renderHistory(runs);
+
+  // Brief toast notification
+  const toast = document.createElement('div');
+  toast.textContent = isNew ? `Welcome, ${username}! Account created.` : `Welcome back, ${username}!`;
+  toast.style.cssText = `position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(10px);
+    background:var(--mint-g);color:white;padding:10px 22px;border-radius:30px;
+    font-size:12px;font-weight:600;font-family:var(--sans);z-index:99000;
+    box-shadow:0 4px 20px rgba(16,185,129,.45);opacity:0;
+    transition:all .35s var(--spring)`;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1'; toast.style.transform = 'translateX(-50%) translateY(0)';
+  });
+  setTimeout(() => {
+    toast.style.opacity = '0'; toast.style.transform = 'translateX(-50%) translateY(8px)';
+    setTimeout(() => toast.remove(), 400);
+  }, 3000);
 }
 async function doLogout(){
   if(!confirm('Sign out?')) return;
@@ -2032,7 +2405,9 @@ async function doLogout(){
 (async function checkSession(){
   // Apply saved theme immediately
   _applyTheme(_dark, false);
-  try{const res=await fetch(`${BASE}/me`);if(res.ok){const d=await res.json();if(d.username){onLoginSuccess(d.username,d.runs||[]);return;}}}catch{}
+  // Load DEM catalog in background
+  _loadDemCatalog();
+  try{const res=await fetch(`${BASE}/me`);if(res.ok){const d=await res.json();if(d.username){onLoginSuccess(d.username,d.runs||[],false);return;}}}catch{}
   document.getElementById('login-overlay').style.display='flex';
   setTimeout(()=>document.getElementById('login-inp').focus(),400);
 })();
