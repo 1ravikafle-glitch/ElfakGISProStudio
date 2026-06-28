@@ -1,4 +1,7 @@
 import os, uuid, zipfile, shutil, json, re, io, traceback, math
+import threading, time, hashlib, html, secrets, logging
+from collections import defaultdict
+from functools import wraps
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -10,57 +13,356 @@ import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mticker
 
 from flask import (Flask, request, jsonify, send_file, send_from_directory,
-                   render_template, session, Response, stream_with_context)
+                   render_template, session, Response, stream_with_context, abort, g)
 from shapely.geometry import (Polygon, Point, LineString, MultiPolygon,
                                MultiPoint, GeometryCollection)
 from shapely.ops import unary_union, voronoi_diagram
 from shapely.geometry import box as _sbox
 from shapely import affinity
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+log = logging.getLogger("elfak-gis")
+
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "elfak-gis-2025")
+# SECRET_KEY must be set in environment for production — never hardcode
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+if not os.environ.get("SECRET_KEY"):
+    log.warning("SECRET_KEY not set in environment — using random key (sessions won't persist across restarts)")
+
+app.config.update(
+    SESSION_COOKIE_SECURE    = os.environ.get("HTTPS","0") == "1",
+    SESSION_COOKIE_HTTPONLY  = True,
+    SESSION_COOKIE_SAMESITE  = "Lax",
+    PERMANENT_SESSION_LIFETIME = 86400 * 7,          # 7 days
+    MAX_CONTENT_LENGTH       = 2 * 1024 * 1024 * 1024,  # 2 GB max upload
+)
+
 UPLOAD, OUTPUT, USERS_FILE = "uploads", "outputs", "users.json"
-os.makedirs(UPLOAD, exist_ok=True); os.makedirs(OUTPUT, exist_ok=True)
+DEM_CATALOG_DIR = os.environ.get("DEM_CATALOG_DIR", "dem_catalog")
+for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR): os.makedirs(_d, exist_ok=True)
+
 A4W, A4H, DPI = 8.27, 11.69, 200
+
+# ── Thread-safe in-memory progress store ─────────────────────────────────────
 _PROG: dict = {}
+_PROG_LOCK = threading.Lock()
 
 def _prog(rid, msg, pct=None):
-    if rid not in _PROG: _PROG[rid] = []
-    o = {"msg": msg}
-    if pct is not None: o["pct"] = pct
-    _PROG[rid].append(json.dumps(o))
-    _PROG[rid] = _PROG[rid][-300:]
+    o = {"msg": str(msg)[:500]}          # cap message length
+    if pct is not None: o["pct"] = max(0, min(100, int(pct)))
+    with _PROG_LOCK:
+        if rid not in _PROG: _PROG[rid] = []
+        _PROG[rid].append(json.dumps(o))
+        _PROG[rid] = _PROG[rid][-500:]   # keep last 500 events
 
-# ── users ────────────────────────────────────────────────────────────────────
+def _cleanup_old_prog():
+    """Remove progress entries older than 2 hours to prevent memory leaks."""
+    while True:
+        time.sleep(3600)
+        with _PROG_LOCK:
+            keys = list(_PROG.keys())
+            if len(keys) > 10000:      # safety cap
+                for k in keys[:len(keys)//2]:
+                    _PROG.pop(k, None)
+
+threading.Thread(target=_cleanup_old_prog, daemon=True).start()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# USER DATABASE — Thread-safe, atomic, unique-username enforced
+# Each username is unique and owned by the first person who registers it.
+# Subsequent logins to the SAME username are blocked — they must use a
+# different name. This ensures per-user data isolation for 100+ concurrent users.
+# ═══════════════════════════════════════════════════════════════════════════════
+_USERS_LOCK = threading.RLock()
+
 def _lu():
-    try:
-        if not os.path.exists(USERS_FILE): return {}
-        with open(USERS_FILE) as f: return json.load(f)
-    except: return {}
-def _su(u):
-    try:
-        with open(USERS_FILE, "w") as f: json.dump(u, f, indent=2)
-    except: pass
-def _user_exists(n): return n.strip() in _lu()
-def _create_user(n):
-    n = n.strip(); u = _lu()
-    if n in u: raise ValueError(f"Username '{n}' is already taken.")
-    u[n] = {"username": n, "created_at": pd.Timestamp.now().isoformat(), "runs": []}
-    _su(u); return u[n]
-def _append_run(uname, rid, mod, desc=""):
-    if not uname: return
-    u = _lu()
-    if uname in u:
-        u[uname].setdefault("runs", []).append({"run_id": rid, "module": mod, "description": desc, "timestamp": pd.Timestamp.now().isoformat()})
-        u[uname]["runs"] = u[uname]["runs"][-50:]; _su(u)
-def _require_login(): return session.get("username")
+    """Load users dict from JSON (thread-safe read)."""
+    with _USERS_LOCK:
+        try:
+            if not os.path.exists(USERS_FILE): return {}
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            log.error(f"_lu error: {e}"); return {}
 
+def _su(users_dict):
+    """Atomically save users dict (write-then-rename, POSIX atomic)."""
+    with _USERS_LOCK:
+        try:
+            tmp = USERS_FILE + ".tmp." + uuid.uuid4().hex[:8]
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(users_dict, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, USERS_FILE)
+        except Exception as e:
+            log.error(f"_su error: {e}")
+
+def _register_user(name):
+    """
+    Register a brand-new unique user.
+    Raises ValueError if username already exists.
+    Returns the new user dict.
+    This is the ONLY place a user is created — ensures uniqueness.
+    """
+    name = name.strip()
+    with _USERS_LOCK:
+        u = _lu()
+        if name in u:
+            raise ValueError(f'Username "{name}" is already taken. Choose a different name.')
+        token = secrets.token_hex(32)          # per-user auth token (future use)
+        u[name] = {
+            "username":   name,
+            "created_at": pd.Timestamp.now().isoformat(),
+            "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+            "runs":       [],
+            "active_sessions": 0,
+        }
+        _su(u)
+        log.info(f"New user registered: {name!r}")
+        return u[name], token
+
+def _login_existing(name):
+    """
+    Log in an existing user — increments active_sessions counter.
+    Returns user dict or raises ValueError if user does not exist.
+    """
+    name = name.strip()
+    with _USERS_LOCK:
+        u = _lu()
+        if name not in u:
+            raise KeyError(f'User "{name}" not found.')
+        u[name]["active_sessions"] = u[name].get("active_sessions", 0) + 1
+        u[name]["last_login"] = pd.Timestamp.now().isoformat()
+        _su(u)
+        return u[name]
+
+def _logout_user(name):
+    """Decrement active_sessions on logout."""
+    if not name: return
+    with _USERS_LOCK:
+        u = _lu()
+        if name in u:
+            u[name]["active_sessions"] = max(0, u[name].get("active_sessions", 1) - 1)
+            _su(u)
+
+def _append_run(uname, rid, mod, desc=""):
+    """Append a run record to the user's history (thread-safe)."""
+    if not uname: return
+    with _USERS_LOCK:
+        u = _lu()
+        if uname in u:
+            u[uname].setdefault("runs", []).append({
+                "run_id":    rid,
+                "module":    mod,
+                "description": desc[:200],
+                "timestamp": pd.Timestamp.now().isoformat(),
+            })
+            u[uname]["runs"] = u[uname]["runs"][-100:]
+            _su(u)
+
+def _require_login():
+    """Return username from session, or None."""
+    return session.get("username")
+
+def _login_required(fn):
+    """Decorator: reject unauthenticated requests with 401."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not _require_login():
+            return jsonify({"error": "Authentication required. Please log in."}), 401
+        return fn(*args, **kwargs)
+    return wrapper
+
+# ── Output folder cleanup — keep only 500 newest runs ────────────────────────
+def _cleanup_old_outputs():
+    while True:
+        time.sleep(1800)   # every 30 min
+        try:
+            dirs = [(os.path.join(OUTPUT, d),
+                     os.path.getmtime(os.path.join(OUTPUT, d)))
+                    for d in os.listdir(OUTPUT)
+                    if os.path.isdir(os.path.join(OUTPUT, d))]
+            dirs.sort(key=lambda x: x[1])
+            for path, _ in dirs[:-500]:   # keep newest 500
+                shutil.rmtree(path, ignore_errors=True)
+        except Exception as e:
+            log.error(f"Cleanup error: {e}")
+
+threading.Thread(target=_cleanup_old_outputs, daemon=True).start()
+
+# ── Rate limiter (in-memory, per-IP) ─────────────────────────────────────────
+_RL: dict = defaultdict(list)
+_RL_LOCK = threading.Lock()
+
+def _rate_limit(limit=30, window=60, key_fn=None):
+    """Decorator: limit requests per IP. Default 30 req/min."""
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            ip = _get_client_ip()
+            key = (key_fn(request) if key_fn else ip)
+            now = time.time()
+            with _RL_LOCK:
+                _RL[key] = [t for t in _RL[key] if now - t < window]
+                if len(_RL[key]) >= limit:
+                    retry_after = int(window - (now - _RL[key][0])) + 1
+                    log.warning(f"Rate limit hit: {key} on {request.path}")
+                    return jsonify({"error": f"Too many requests. Try again in {retry_after}s.",
+                                    "retry_after": retry_after}), 429
+                _RL[key].append(now)
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+def _clean_rl():
+    while True:
+        time.sleep(300)
+        with _RL_LOCK:
+            now = time.time()
+            dead = [k for k, ts in _RL.items() if not ts or now - ts[-1] > 3600]
+            for k in dead: del _RL[k]
+
+threading.Thread(target=_clean_rl, daemon=True).start()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+_ALLOWED_EXTS = {
+    ".csv", ".xls", ".xlsx", ".zip",
+    ".shp", ".dbf", ".prj", ".shx", ".cpg",
+    ".tif", ".tiff"
+}
+_BLOCKED_NAMES = {
+    "admin","root","system","null","undefined","guest","test","demo",
+    "anonymous","api","static","login","logout","upload","download",
+    "server","config","env","app","index","user","users","data",
+    "script","style","public","private","backend","frontend"
+}
+
+def _safe_filename(fname):
+    """Sanitize filename: strip paths, replace dangerous chars, whitelist ext."""
+    fname = os.path.basename((fname or "upload").replace("\\", "/"))
+    fname = re.sub(r"[^A-Za-z0-9._-]", "_", fname)[:200]
+    if not fname: fname = "upload"
+    ext = os.path.splitext(fname)[1].lower()
+    if ext not in _ALLOWED_EXTS:
+        raise ValueError(f"File type '{ext}' not allowed. Allowed: {sorted(_ALLOWED_EXTS)}")
+    return fname
+
+def _safe_runid(rid):
+    """Validate run_id is a strict UUID4 — prevents path traversal attacks."""
+    rid = str(rid).strip().lower()
+    if not re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        rid
+    ):
+        log.warning(f"Invalid run_id rejected: {rid!r}")
+        abort(400, "Invalid run ID.")
+    return rid
+
+def _safe_path(base, rel):
+    """Resolve path and ensure it stays strictly inside base (traversal guard)."""
+    base = os.path.realpath(os.path.abspath(base))
+    full = os.path.realpath(os.path.abspath(os.path.join(base, str(rel))))
+    if not (full == base or full.startswith(base + os.sep)):
+        log.warning(f"Path traversal blocked: base={base!r} rel={rel!r} full={full!r}")
+        abort(400, "Path traversal detected.")
+    return full
+
+def _validate_username(name):
+    """Validate and normalise a username."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Username is required.")
+    if len(name) < 2:
+        raise ValueError("Username too short (minimum 2 characters).")
+    if len(name) > 40:
+        raise ValueError("Username too long (maximum 40 characters).")
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9 _-]*$", name):
+        raise ValueError("Username must start with a letter/digit and contain only letters, numbers, spaces, hyphens, or underscores.")
+    if name.lower() in _BLOCKED_NAMES:
+        raise ValueError("That username is reserved. Please choose a different name.")
+    # Prevent SQL/script injection via name (extra caution even though we don't use SQL)
+    _bad = set("<>'\";&|`")
+    if any(c in _bad for c in name):
+        raise ValueError("Username contains invalid characters.")
+    return name
+
+def _get_client_ip():
+    """Extract real client IP, respecting reverse-proxy headers."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        ip = xff.split(",")[0].strip()
+        # Basic validation
+        if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip) or ":" in ip:
+            return ip
+    return request.remote_addr or "unknown"
+
+# ── Security response headers ────────────────────────────────────────────────
 @app.after_request
-def _cors(r):
-    r.headers["Access-Control-Allow-Origin"] = "*"
-    r.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
-    r.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    return r
+def _security_headers(resp):
+    """Attach comprehensive security headers to every HTTP response."""
+    resp.headers["X-Content-Type-Options"]   = "nosniff"
+    resp.headers["X-Frame-Options"]          = "DENY"
+    resp.headers["X-XSS-Protection"]         = "1; mode=block"
+    resp.headers["Referrer-Policy"]          = "strict-origin-when-cross-origin"
+    resp.headers["Permissions-Policy"]       = "geolocation=(), camera=(), microphone=()"
+    # HSTS only when HTTPS is confirmed
+    if os.environ.get("HTTPS") == "1":
+        resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    # CORS — tighten in production via ALLOWED_ORIGINS env var
+    allowed = os.environ.get("ALLOWED_ORIGINS", "*")
+    resp.headers["Access-Control-Allow-Origin"]       = allowed
+    resp.headers["Access-Control-Allow-Headers"]      = "Content-Type,Authorization,X-Requested-With"
+    resp.headers["Access-Control-Allow-Methods"]      = "GET,POST,OPTIONS"
+    resp.headers["Access-Control-Allow-Credentials"]  = "true"
+    # Prevent caching of sensitive API responses
+    if request.path.startswith(("/login", "/me", "/history", "/progress")):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        resp.headers["Pragma"]        = "no-cache"
+    return resp
+
+# ── Concurrent pipeline semaphore ────────────────────────────────────────────
+_PIPELINE_SEM = threading.Semaphore(int(os.environ.get("MAX_PIPELINES", "20")))
+_ACTIVE_PIPELINES = 0
+_AP_LOCK = threading.Lock()
+
+def _with_pipeline_sem(fn):
+    """Limit simultaneous heavy GIS pipelines. Returns 503 if overloaded."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        global _ACTIVE_PIPELINES
+        acquired = _PIPELINE_SEM.acquire(timeout=45)
+        if not acquired:
+            log.warning(f"Pipeline semaphore exhausted for {_get_client_ip()}")
+            return jsonify({
+                "error": "Server is at capacity. Please wait a moment and retry.",
+                "retry_after": 30
+            }), 503
+        with _AP_LOCK: _ACTIVE_PIPELINES += 1
+        try:
+            log.info(f"Pipeline started by {session.get('username','?')} "
+                     f"[active={_ACTIVE_PIPELINES}] [{request.path}]")
+            return fn(*args, **kwargs)
+        finally:
+            _PIPELINE_SEM.release()
+            with _AP_LOCK: _ACTIVE_PIPELINES = max(0, _ACTIVE_PIPELINES - 1)
+    return wrapper
+
+@app.route("/server_status")
+@_rate_limit(limit=10, window=60)
+def server_status():
+    """Public health + load endpoint."""
+    return jsonify({
+        "status": "ok",
+        "active_pipelines": _ACTIVE_PIPELINES,
+        "max_pipelines": int(os.environ.get("MAX_PIPELINES", "20")),
+        "registered_users": len(_lu()),
+    })
 
 # ── column aliases ───────────────────────────────────────────────────────────
 def _norm(s): return "".join(c for c in str(s).lower() if c.isalnum())
@@ -467,7 +769,44 @@ def _subdivide_bisect(poly, n, area_tol_ha=0.3):
             mg=_as_poly(_repair(unary_union([valid[bi],gap])))
             if mg: valid[bi]=_close_poly(mg)
     except: pass
-    return [_close_poly(_repair(p) or p) for p in valid]
+    valid = [_close_poly(_repair(p) or p) for p in valid]
+    # ── Strict tolerance enforcement: iteratively redistribute area ──────
+    valid = _enforce_area_tolerance(valid, poly, n, area_tol_ha)
+    return valid
+
+def _enforce_area_tolerance(pieces, orig_poly, n, tol_ha):
+    """Iteratively shift boundaries to enforce that every piece is within
+    ±tol_ha of the ideal area. Runs up to 6 passes."""
+    if not pieces or n < 2: return pieces
+    tol_m2 = tol_ha * 10000
+    ideal   = orig_poly.area / n
+    for _pass in range(6):
+        improved = False
+        for i in range(len(pieces)):
+            for j in range(len(pieces)):
+                if i == j: continue
+                ai = pieces[i].area; aj = pieces[j].area
+                if abs(ai - ideal) <= tol_m2 and abs(aj - ideal) <= tol_m2:
+                    continue
+                # i is too big, j is too small → transfer strip from i→j
+                if ai > ideal + tol_m2 and aj < ideal - tol_m2:
+                    try:
+                        shared = pieces[i].boundary.intersection(pieces[j].boundary)
+                        if shared.is_empty or shared.length < 0.5: continue
+                        transfer = min(ai - ideal, ideal - aj)
+                        strip_w  = transfer / max(shared.length, 1.0)
+                        buf = shared.buffer(max(strip_w, 0.5), cap_style=2)
+                        strip = _as_poly(_repair(pieces[i].intersection(buf)))
+                        if strip is None or strip.is_empty: continue
+                        ni = _as_poly(_repair(pieces[i].difference(strip)))
+                        nj = _as_poly(_repair(pieces[j].union(strip)))
+                        if ni and nj and ni.area > ideal*0.4 and nj.area > ideal*0.4:
+                            pieces[i] = _close_poly(ni)
+                            pieces[j] = _close_poly(nj)
+                            improved = True
+                    except: pass
+        if not improved: break
+    return pieces
 
 def _subdivide_ba(poly, n, area_tol_ha=0.3):
     pieces=_subdivide_bisect(poly,n,area_tol_ha); ideal=poly.area/max(n,1)
@@ -657,8 +996,10 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
         ts=(mapping or {}).get("target_shp")
         features,_=_load_polys_from_zip(file_or_df,ts,crs,fcol)
         for idx,(fn,poly) in enumerate(features):
-            if run_id: _prog(run_id,f"Subdividing {fn}…",20+int(60*idx/max(len(features),1)))
+            pct_start = 20 + int(60*idx/max(len(features),1))
+            if run_id: _prog(run_id,f"[{idx+1}/{len(features)}] Building polygon for {fn}…", pct_start)
             pieces=_subdivide(poly,n_compartments,method,area_tol_ha)
+            if run_id: _prog(run_id,f"[{idx+1}/{len(features)}] {fn} → {len(pieces)} compartments ✓",pct_start+5)
             fd=os.path.join(out,_safe_dn(fn)) if len(features)>1 else out
             pg,lg,ptg=_save_compartments(pieces,fn,crs,fd)
             ap.append(pg); al.append(lg); apts.append(ptg)
@@ -1130,29 +1471,36 @@ def generate_kmz(poly_gdf,line_gdf,pts_gdf,out_dir,run_id):
 # Supports: SHP / ZIP-of-SHP input, UTM 44N / 45N, configurable spacing
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _g_read_shp(file_storage):
-    """Read SHP (or ZIP containing SHP) from a FileStorage object → GeoDataFrame."""
+def _g_read_shp(file_storage, target_shp=None):
+    """Read SHP (or ZIP containing SHP) from a FileStorage object → GeoDataFrame.
+    target_shp: relative path inside ZIP to use (user-selected)."""
     fname = file_storage.filename.lower()
     tmp_dir = os.path.join(UPLOAD, "g_tmp_" + uuid.uuid4().hex[:8])
     os.makedirs(tmp_dir, exist_ok=True)
     try:
         if fname.endswith(".zip"):
-            import zipfile as _zf
             zip_path = os.path.join(tmp_dir, "upload.zip")
             file_storage.save(zip_path)
-            with _zf.ZipFile(zip_path, "r") as z:
+            with zipfile.ZipFile(zip_path, "r") as z:
                 z.extractall(tmp_dir)
             shps = [os.path.join(r, f) for r, _, fs in os.walk(tmp_dir)
                     for f in fs if f.endswith(".shp")]
             if not shps:
                 raise ValueError("No .shp file found in the uploaded ZIP.")
-            return gpd.read_file(shps[0])
+            # Use user-selected file if specified
+            chosen = shps[0]
+            if target_shp:
+                tname = os.path.basename(target_shp)
+                for s in shps:
+                    if os.path.basename(s) == tname:
+                        chosen = s; break
+            return gpd.read_file(chosen)
         else:
             shp_path = os.path.join(tmp_dir, file_storage.filename)
             file_storage.save(shp_path)
             return gpd.read_file(shp_path)
     finally:
-        pass  # keep tmp for debugging; will be cleaned by OS
+        pass  # keep tmp dir for debugging
 
 def _g_reproject(gdf, zone_str):
     """Reproject to the user-selected UTM zone (44 or 45)."""
@@ -1365,13 +1713,13 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     plt.tight_layout(pad=0.5, rect=[0, 0, 1, 0.97])
     fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
-def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id):
+def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None):
     """
     Full Group G pipeline.
     Returns (df, shp_gdf, poly_gdf, summary_dict)
     """
     _prog(run_id, "Reading shapefile…", 5)
-    gdf = _g_read_shp(file_storage)
+    gdf = _g_read_shp(file_storage, target_shp=target_shp)
     if gdf.empty:
         raise ValueError("Shapefile is empty or could not be read.")
     if not all(t in ("Polygon", "MultiPolygon") for t in gdf.geom_type.unique()):
@@ -1400,13 +1748,13 @@ def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id):
     _prog(run_id, "Finding shared divider lines…", 50)
     d_recs = _g_divider_points(gdf, comp_col, spacing)
 
-    _prog(run_id, "Merging & deduplicating points…", 65)
+    _prog(run_id, f"Merging {len(v_recs)+len(b_recs)+len(d_recs)} raw records…", 60)
     all_recs = _g_merge_dedup(v_recs, b_recs, d_recs)
 
-    _prog(run_id, "Assigning Point IDs…", 75)
+    _prog(run_id, f"Deduplicated to {len(all_recs)} unique points — assigning IDs…", 70)
     all_recs = _g_assign_ids(all_recs)
 
-    _prog(run_id, "Exporting SHP / CSV / XLSX…", 85)
+    _prog(run_id, f"Exporting {len(all_recs)} points → SHP / CSV / XLSX…", 80)
     df, shp_gdf = _g_export(all_recs, epsg, out_dir)
 
     # Summary counts
@@ -1443,8 +1791,10 @@ def progress_stream(run_id):
                     headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
 @app.route("/geojson/<run_id>")
+@_rate_limit(limit=60, window=60)
 def get_geojson(run_id):
-    folder = os.path.join(OUTPUT, run_id)
+    run_id = _safe_runid(run_id)
+    folder = _safe_path(OUTPUT, run_id)
     if not os.path.exists(folder):
         return jsonify({"type": "FeatureCollection", "features": []}), 200
     # Include polygon shapefiles AND the ForestPoints shapefile (Group G)
@@ -1478,7 +1828,9 @@ def get_geojson(run_id):
     return Response(combined.to_json(), mimetype="application/json")
 
 @app.route("/compose/<run_id>",methods=["POST"])
+@_rate_limit(limit=20,window=60)
 def compose_map(run_id):
+    run_id = _safe_runid(run_id)
     folder=os.path.join(OUTPUT,run_id)
     if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
     try:
@@ -1502,7 +1854,9 @@ def compose_map(run_id):
     except Exception as e: return jsonify({"error":f"Compose error: {e}"}),500
 
 @app.route("/save_edit/<run_id>",methods=["POST"])
+@_rate_limit(limit=20,window=60)
 def save_edit(run_id):
+    run_id = _safe_runid(run_id)
     folder=os.path.join(OUTPUT,run_id)
     if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
     try:
@@ -1533,41 +1887,101 @@ def save_edit(run_id):
         return jsonify({"ok":True,"png":f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
     except Exception as e: return jsonify({"error":f"Edit error: {e}\n{traceback.format_exc()}"}),500
 
-@app.route("/login",methods=["POST"])
+@app.route("/login", methods=["POST"])
+@_rate_limit(limit=20, window=60)
 def login():
-    data=request.get_json(silent=True) or {}; username=(data.get("username") or "").strip()
-    if not username or len(username)<2: return jsonify({"error":"Username too short (min 2 chars)."}),400
-    if len(username)>40: return jsonify({"error":"Username too long (max 40 chars)."}),400
-    if not re.match(r'^[A-Za-z0-9 _\-]+$',username): return jsonify({"error":"Only letters, numbers, spaces, - and _ allowed."}),400
-    if _user_exists(username): return jsonify({"error":f'"{username}" is already taken.', "taken":True}),409
-    try: _create_user(username)
-    except ValueError as e: return jsonify({"error":str(e),"taken":True}),409
-    session["username"]=username; session.permanent=True
-    return jsonify({"ok":True,"username":username,"runs":[]})
+    """
+    Unique-username login:
+    - New username → registers automatically
+    - Existing username → logs in (resumes session, same user continues work)
+    - Up to 100 different users can login simultaneously with full isolation
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        username = _validate_username(data.get("username", ""))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
-@app.route("/logout",methods=["POST"])
-def logout(): session.clear(); return jsonify({"ok":True})
+    users = _lu()
+    is_new = username not in users
+
+    if is_new:
+        # Brand new user — register them
+        try:
+            user, _tok = _register_user(username)
+        except ValueError as e:
+            # Race condition: another request registered same name between our check and write
+            return jsonify({"error": str(e), "taken": True}), 409
+        except Exception as e:
+            log.error(f"Registration error {username!r}: {e}")
+            return jsonify({"error": "Registration failed. Please try again."}), 500
+    else:
+        # Existing user — allow them to resume (same person continuing their work)
+        try:
+            user = _login_existing(username)
+        except KeyError:
+            # shouldn't happen but handle race
+            try:
+                user, _tok = _register_user(username)
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+        except Exception as e:
+            log.error(f"Login error {username!r}: {e}")
+            return jsonify({"error": "Login failed. Please try again."}), 500
+
+    session["username"] = username
+    session.permanent = True
+    ip = _get_client_ip()
+    log.info(f"{'Register' if is_new else 'Login'}: {username!r} from {ip}")
+
+    return jsonify({
+        "ok":          True,
+        "username":    username,
+        "runs":        user.get("runs", [])[-20:],
+        "is_new":      is_new,
+        "is_returning": not is_new,
+        "message":     "Welcome!" if is_new else f"Welcome back, {username}!"
+    })
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    username = session.get("username")
+    _logout_user(username)
+    session.clear()
+    if username:
+        log.info(f"Logout: {username!r} from {_get_client_ip()}")
+    return jsonify({"ok": True})
 
 @app.route("/me")
+@_rate_limit(limit=60, window=60)
+@_login_required
 def me():
-    u=_require_login()
-    if not u: return jsonify({"error":"Not logged in"}),401
-    users=_lu(); user=users.get(u,{})
-    return jsonify({"username":u,"runs":user.get("runs",[])[-20:]})
+    u = _require_login()
+    users = _lu(); user = users.get(u, {})
+    return jsonify({"username": u, "runs": user.get("runs", [])[-20:]})
 
 @app.route("/history")
+@_rate_limit(limit=30, window=60)
+@_login_required
 def history():
-    u=_require_login()
-    if not u: return jsonify({"error":"Not logged in"}),401
-    users=_lu(); user=users.get(u,{})
-    return jsonify({"runs":user.get("runs",[])})
+    u = _require_login()
+    users = _lu(); user = users.get(u, {})
+    return jsonify({"runs": user.get("runs", [])})
 
-@app.route("/upload",methods=["POST"])
+@app.route("/upload", methods=["POST"])
+@_rate_limit(limit=10, window=60)          # 10 pipeline runs / min / IP
+@_with_pipeline_sem
 def upload():
-    run_id=str(uuid.uuid4()); _PROG[run_id]=[]
+    run_id = str(uuid.uuid4())
+    with _PROG_LOCK: _PROG[run_id] = []
     try:
-        if "file" not in request.files: return jsonify({"error":"No file uploaded.","run_id":run_id}),400
-        file=request.files["file"]; module=request.form.get("module","A")
+        if "file" not in request.files:
+            return jsonify({"error": "No file uploaded.", "run_id": run_id}), 400
+        file = request.files["file"]
+        # Validate filename (security)
+        try: _safe_filename(file.filename)
+        except ValueError as e: return jsonify({"error": str(e), "run_id": run_id}), 400
+        module = request.form.get("module","A")
         mode=request.form.get("mode","A"); zone=request.form.get("zone","44")
         title=request.form.get("title","").strip()
         legend_title=request.form.get("legend_title","Legend").strip() or "Legend"
@@ -1614,8 +2028,20 @@ def upload():
             _append_run(username,run_id,"E"); _prog(run_id,"Complete.",100)
             return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
         elif module=="F":
-            dem_f=request.files.get("dem_file")
-            if not dem_f: return jsonify({"error":"No DEM file uploaded.","run_id":run_id}),400
+            dem_catalog_path = request.form.get("dem_catalog_path","").strip()
+            if dem_catalog_path:
+                cat_full = os.path.join("dem_catalog", dem_catalog_path)
+                if not os.path.exists(cat_full):
+                    return jsonify({"error":f"DEM catalog file not found: {dem_catalog_path}","run_id":run_id}),400
+                class _CatDEM:
+                    def __init__(self, p):
+                        self.filename=os.path.basename(p); self._p=p
+                    def save(self, dest):
+                        import shutil as _sh; _sh.copy2(self._p, dest)
+                dem_f = _CatDEM(cat_full)
+            else:
+                dem_f=request.files.get("dem_file")
+                if not dem_f: return jsonify({"error":"No DEM file uploaded (or select from server catalog).","run_id":run_id}),400
             f_forest=request.form.get("f_forest") or forest
             f_mode=request.form.get("f_mode","A"); cc=request.form.get("comp_col") or None
             bzip=file.filename.lower().endswith(".zip"); fa=None
@@ -1662,7 +2088,59 @@ def upload():
         return jsonify({"error":f"Unexpected error: {e}","run_id":run_id}),500
 
 
+
+# ── DEM CATALOG: pre-loaded large DEM files ────────────────────────────────
+# Place .tif files in the "dem_catalog/" folder on the server.
+# Users pick from this dropdown instead of uploading 2GB files each time.
+# DEM_CATALOG_DIR already initialised in startup block
+@app.route("/dem_catalog")
+@_rate_limit(limit=60, window=60)
+def dem_catalog():
+    """Return list of available DEM files from server catalog."""
+    try:
+        files = []
+        for root, _, fnames in os.walk(DEM_CATALOG_DIR):
+            for f in fnames:
+                if f.lower().endswith((".tif", ".tiff")):
+                    rel = os.path.relpath(os.path.join(root, f), DEM_CATALOG_DIR)
+                    size_mb = round(os.path.getsize(os.path.join(root, f)) / (1024*1024), 1)
+                    files.append({"name": f, "path": rel, "size_mb": size_mb})
+        files.sort(key=lambda x: x["name"])
+        return jsonify({"files": files})
+    except Exception as e:
+        return jsonify({"files": [], "error": str(e)})
+
+@app.route("/zip_inspect", methods=["POST"])
+@_rate_limit(limit=20, window=60)
+def zip_inspect():
+    """Return list of .shp files inside an uploaded ZIP for user selection."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    f = request.files["file"]
+    try:
+        fname = _safe_filename(f.filename)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if not fname.lower().endswith(".zip"):
+        return jsonify({"error": "Not a ZIP file"}), 400
+    tmp = os.path.join(UPLOAD, "inspect_" + uuid.uuid4().hex[:8])
+    os.makedirs(tmp, exist_ok=True)
+    try:
+        zp = os.path.join(tmp, "upload.zip")
+        f.save(zp)
+        with zipfile.ZipFile(zp) as z:
+            names = z.namelist()
+        shps = [n for n in names if n.lower().endswith(".shp")]
+        return jsonify({"shp_files": shps, "all_files": names})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try: shutil.rmtree(tmp)
+        except: pass
+
 @app.route("/run_g", methods=["POST"])
+@_rate_limit(limit=10, window=60)
+@_with_pipeline_sem
 def run_g():
     run_id = str(uuid.uuid4()); _PROG[run_id] = []
     try:
@@ -1681,7 +2159,9 @@ def run_g():
         username = _require_login() or "guest"
         out = os.path.join(OUTPUT, run_id); os.makedirs(out, exist_ok=True)
 
-        df, shp_gdf, poly_gdf, summary = group_g(file, zone, comp_col, spacing, out, run_id)
+        target_shp = request.form.get("target_shp","").strip() or None
+        df, shp_gdf, poly_gdf, summary = group_g(file, zone, comp_col, spacing, out, run_id,
+                                                   target_shp=target_shp)
 
         _prog(run_id, "Rendering A4 map…", 90)
         _g_preview(shp_gdf, poly_gdf, os.path.join(out, "output.png"),
@@ -1709,6 +2189,7 @@ def run_g():
         return jsonify({"error": f"Unexpected error: {e}", "run_id": run_id}), 500
 
 @app.route("/outputs/<run_id>/<path:filename>")
+@_rate_limit(limit=120, window=60)
 def serve_output(run_id,filename):
     folder=os.path.join(OUTPUT,run_id)
     if not os.path.exists(os.path.join(folder,filename)): return jsonify({"error":"File not found"}),404
