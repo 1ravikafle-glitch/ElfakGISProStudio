@@ -1399,7 +1399,37 @@ select:focus, input:focus {
 
   <div class="preview-foot">
     <div class="run-meta" id="run-meta">Metrics: Ready</div>
-    <a id="dl-btn" class="dl-btn" href="#">⬇ Download ZIP</a>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="view-full-btn" onclick="viewFullMap()"
+        style="display:none;padding:6px 13px;border-radius:6px;
+               background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.3);
+               color:#1d4ed8;font-size:11px;font-weight:600;cursor:pointer;
+               font-family:var(--sans);transition:all .2s">
+        🔍 Full View
+      </button>
+      <a id="dl-btn" class="dl-btn" href="#">⬇ Download ZIP</a>
+    </div>
+  </div>
+  <!-- Full-map modal -->
+  <div id="map-modal" style="display:none;position:fixed;inset:0;z-index:9500;
+       background:rgba(0,0,0,.85);backdrop-filter:blur(8px);
+       align-items:center;justify-content:center;flex-direction:column;gap:12px"
+       onclick="this.style.display='none'">
+    <div style="position:relative;max-width:95vw;max-height:92vh;overflow:auto"
+         onclick="event.stopPropagation()">
+      <img id="modal-img" style="max-width:100%;border-radius:8px;
+           box-shadow:0 20px 60px rgba(0,0,0,.6);display:block">
+    </div>
+    <div style="display:flex;gap:10px">
+      <button onclick="document.getElementById('map-modal').style.display='none'"
+        style="padding:8px 20px;border-radius:20px;border:1px solid rgba(255,255,255,.3);
+               background:rgba(255,255,255,.1);color:white;font-size:12px;cursor:pointer;
+               font-family:var(--sans);font-weight:600">✕ Close</button>
+      <a id="modal-dl-btn" href="#" download
+        style="padding:8px 20px;border-radius:20px;border:1px solid rgba(16,185,129,.4);
+               background:rgba(16,185,129,.15);color:#34d399;font-size:12px;cursor:pointer;
+               font-family:var(--sans);font-weight:600;text-decoration:none">⬇ Download PNG</a>
+    </div>
   </div>
 </div><!-- right panel -->
 
@@ -1769,15 +1799,22 @@ async function runF(title, legendTitle, labelCol, zone) {
   document.getElementById('run-btn').disabled=true;
   setProgress('Processing…','Starting Group F…',5);
   const fd=new FormData();
-  // Check if server catalog DEM selected
-  const demCatSel = document.getElementById('f-dem-catalog');
-  const demCatPath = demCatSel?.dataset?.selected || '';
+  // Check if server catalog DEM selected (read .value directly from <select>)
+  const demCatSel  = document.getElementById('f-dem-catalog');
+  const demCatPath = (demCatSel && demCatSel.value && demCatSel.value.trim() !== '')
+                      ? demCatSel.value.trim() : '';
+  const manualDem  = document.getElementById('fi-F-dem')?.files?.[0];
+
+  fd.append('file', bFile);
   if (demCatPath) {
+    // Use server-side catalog DEM — no upload needed
     fd.append('dem_catalog_path', demCatPath);
-    fd.append('file', bFile);
-    // No dem_file from upload — backend will load from catalog
+    // Don't append dem_file — backend loads from catalog
+  } else if (manualDem) {
+    fd.append('dem_file', manualDem);
   } else {
-    fd.append('file',bFile); fd.append('dem_file',dFile);
+    // Neither selected — let backend give the clear error
+    fd.append('dem_catalog_path', '');
   }
   fd.append('module','F'); fd.append('f_mode',fMode);
   fd.append('zone',zone); fd.append('title',title);
@@ -2234,6 +2271,25 @@ async function saveEdits(){
   }catch(e){setProgress('Error','Save failed: '+e.message,0,true);alert('Save error: '+e.message);}
 }
 
+/* ── FULL MAP VIEWER ─────────────────────────────────────────────────────── */
+function viewFullMap() {
+  const src = document.getElementById('out-img')?.src;
+  if (!src || src.endsWith('undefined')) return;
+  const modal = document.getElementById('map-modal');
+  const mimg  = document.getElementById('modal-img');
+  const mdl   = document.getElementById('modal-dl-btn');
+  mimg.src = src;
+  if (mdl) mdl.href = src;
+  modal.style.display = 'flex';
+  // Animate in
+  modal.style.opacity = '0';
+  requestAnimationFrame(() => {
+    modal.style.transition = 'opacity .3s';
+    modal.style.opacity    = '1';
+    setTimeout(() => modal.style.transition = '', 320);
+  });
+}
+
 /* ── MAP COMPOSER ────────────────────────────────────────────────────────── */
 async function doCompose(){
   if(!currentRunId){alert('Run a pipeline first.'); return;}
@@ -2449,6 +2505,7 @@ function loadRunPrev(rid){
     img.style.transition='opacity .4s var(--ease),transform .4s var(--ease)';
     requestAnimationFrame(()=>{ img.style.opacity='1'; img.style.transform='scale(1)'; });
     setTimeout(()=>img.style.transition='',450);
+    const vfb=document.getElementById('view-full-btn'); if(vfb) vfb.style.display='block';
   };
   img.src=`${BASE}/outputs/${rid}/output.png?t=${Date.now()}`;
   document.getElementById('dl-btn').href=`${BASE}/download/${rid}`;
