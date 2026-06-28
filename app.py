@@ -29,7 +29,6 @@ logging.basicConfig(
 log = logging.getLogger("elfak-gis")
 
 app = Flask(__name__)
-# SECRET_KEY must be set in environment for production — never hardcode
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 if not os.environ.get("SECRET_KEY"):
     log.warning("SECRET_KEY not set in environment — using random key (sessions won't persist across restarts)")
@@ -38,8 +37,8 @@ app.config.update(
     SESSION_COOKIE_SECURE    = os.environ.get("HTTPS","0") == "1",
     SESSION_COOKIE_HTTPONLY  = True,
     SESSION_COOKIE_SAMESITE  = "Lax",
-    PERMANENT_SESSION_LIFETIME = 86400 * 7,          # 7 days
-    MAX_CONTENT_LENGTH       = 2 * 1024 * 1024 * 1024,  # 2 GB max upload
+    PERMANENT_SESSION_LIFETIME = 86400 * 7,
+    MAX_CONTENT_LENGTH       = 2 * 1024 * 1024 * 1024,
 )
 
 UPLOAD, OUTPUT, USERS_FILE = "uploads", "outputs", "users.json"
@@ -53,35 +52,30 @@ _PROG: dict = {}
 _PROG_LOCK = threading.Lock()
 
 def _prog(rid, msg, pct=None):
-    o = {"msg": str(msg)[:500]}          # cap message length
+    o = {"msg": str(msg)[:500]}
     if pct is not None: o["pct"] = max(0, min(100, int(pct)))
     with _PROG_LOCK:
         if rid not in _PROG: _PROG[rid] = []
         _PROG[rid].append(json.dumps(o))
-        _PROG[rid] = _PROG[rid][-500:]   # keep last 500 events
+        _PROG[rid] = _PROG[rid][-500:]
 
 def _cleanup_old_prog():
-    """Remove progress entries older than 2 hours to prevent memory leaks."""
     while True:
         time.sleep(3600)
         with _PROG_LOCK:
             keys = list(_PROG.keys())
-            if len(keys) > 10000:      # safety cap
+            if len(keys) > 10000:
                 for k in keys[:len(keys)//2]:
                     _PROG.pop(k, None)
 
 threading.Thread(target=_cleanup_old_prog, daemon=True).start()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# USER DATABASE — Thread-safe, atomic, unique-username enforced
-# Each username is unique and owned by the first person who registers it.
-# Subsequent logins to the SAME username are blocked — they must use a
-# different name. This ensures per-user data isolation for 100+ concurrent users.
+# USER DATABASE
 # ═══════════════════════════════════════════════════════════════════════════════
 _USERS_LOCK = threading.RLock()
 
 def _lu():
-    """Load users dict from JSON (thread-safe read)."""
     with _USERS_LOCK:
         try:
             if not os.path.exists(USERS_FILE): return {}
@@ -91,7 +85,6 @@ def _lu():
             log.error(f"_lu error: {e}"); return {}
 
 def _su(users_dict):
-    """Atomically save users dict (write-then-rename, POSIX atomic)."""
     with _USERS_LOCK:
         try:
             tmp = USERS_FILE + ".tmp." + uuid.uuid4().hex[:8]
@@ -102,18 +95,12 @@ def _su(users_dict):
             log.error(f"_su error: {e}")
 
 def _register_user(name):
-    """
-    Register a brand-new unique user.
-    Raises ValueError if username already exists.
-    Returns the new user dict.
-    This is the ONLY place a user is created — ensures uniqueness.
-    """
     name = name.strip()
     with _USERS_LOCK:
         u = _lu()
         if name in u:
             raise ValueError(f'Username "{name}" is already taken. Choose a different name.')
-        token = secrets.token_hex(32)          # per-user auth token (future use)
+        token = secrets.token_hex(32)
         u[name] = {
             "username":   name,
             "created_at": pd.Timestamp.now().isoformat(),
@@ -126,10 +113,6 @@ def _register_user(name):
         return u[name], token
 
 def _login_existing(name):
-    """
-    Log in an existing user — increments active_sessions counter.
-    Returns user dict or raises ValueError if user does not exist.
-    """
     name = name.strip()
     with _USERS_LOCK:
         u = _lu()
@@ -141,7 +124,6 @@ def _login_existing(name):
         return u[name]
 
 def _logout_user(name):
-    """Decrement active_sessions on logout."""
     if not name: return
     with _USERS_LOCK:
         u = _lu()
@@ -150,7 +132,6 @@ def _logout_user(name):
             _su(u)
 
 def _append_run(uname, rid, mod, desc=""):
-    """Append a run record to the user's history (thread-safe)."""
     if not uname: return
     with _USERS_LOCK:
         u = _lu()
@@ -165,11 +146,9 @@ def _append_run(uname, rid, mod, desc=""):
             _su(u)
 
 def _require_login():
-    """Return username from session, or None."""
     return session.get("username")
 
 def _login_required(fn):
-    """Decorator: reject unauthenticated requests with 401."""
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not _require_login():
@@ -177,29 +156,28 @@ def _login_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-# ── Output folder cleanup — keep only 500 newest runs ────────────────────────
+# ── Output folder cleanup ─────────────────────────────────────────────────────
 def _cleanup_old_outputs():
     while True:
-        time.sleep(1800)   # every 30 min
+        time.sleep(1800)
         try:
             dirs = [(os.path.join(OUTPUT, d),
                      os.path.getmtime(os.path.join(OUTPUT, d)))
                     for d in os.listdir(OUTPUT)
                     if os.path.isdir(os.path.join(OUTPUT, d))]
             dirs.sort(key=lambda x: x[1])
-            for path, _ in dirs[:-500]:   # keep newest 500
+            for path, _ in dirs[:-500]:
                 shutil.rmtree(path, ignore_errors=True)
         except Exception as e:
             log.error(f"Cleanup error: {e}")
 
 threading.Thread(target=_cleanup_old_outputs, daemon=True).start()
 
-# ── Rate limiter (in-memory, per-IP) ─────────────────────────────────────────
+# ── Rate limiter ──────────────────────────────────────────────────────────────
 _RL: dict = defaultdict(list)
 _RL_LOCK = threading.Lock()
 
 def _rate_limit(limit=30, window=60, key_fn=None):
-    """Decorator: limit requests per IP. Default 30 req/min."""
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -244,7 +222,6 @@ _BLOCKED_NAMES = {
 }
 
 def _safe_filename(fname):
-    """Sanitize filename: strip paths, replace dangerous chars, whitelist ext."""
     fname = os.path.basename((fname or "upload").replace("\\", "/"))
     fname = re.sub(r"[^A-Za-z0-9._-]", "_", fname)[:200]
     if not fname: fname = "upload"
@@ -254,7 +231,6 @@ def _safe_filename(fname):
     return fname
 
 def _safe_runid(rid):
-    """Validate run_id is a strict UUID4 — prevents path traversal attacks."""
     rid = str(rid).strip().lower()
     if not re.fullmatch(
         r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
@@ -265,7 +241,6 @@ def _safe_runid(rid):
     return rid
 
 def _safe_path(base, rel):
-    """Resolve path and ensure it stays strictly inside base (traversal guard)."""
     base = os.path.realpath(os.path.abspath(base))
     full = os.path.realpath(os.path.abspath(os.path.join(base, str(rel))))
     if not (full == base or full.startswith(base + os.sep)):
@@ -274,7 +249,6 @@ def _safe_path(base, rel):
     return full
 
 def _validate_username(name):
-    """Validate and normalise a username."""
     name = (name or "").strip()
     if not name:
         raise ValueError("Username is required.")
@@ -286,53 +260,44 @@ def _validate_username(name):
         raise ValueError("Username must start with a letter/digit and contain only letters, numbers, spaces, hyphens, or underscores.")
     if name.lower() in _BLOCKED_NAMES:
         raise ValueError("That username is reserved. Please choose a different name.")
-    # Prevent SQL/script injection via name (extra caution even though we don't use SQL)
     _bad = set("<>'\";&|`")
     if any(c in _bad for c in name):
         raise ValueError("Username contains invalid characters.")
     return name
 
 def _get_client_ip():
-    """Extract real client IP, respecting reverse-proxy headers."""
     xff = request.headers.get("X-Forwarded-For", "")
     if xff:
         ip = xff.split(",")[0].strip()
-        # Basic validation
         if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip) or ":" in ip:
             return ip
     return request.remote_addr or "unknown"
 
-# ── Security response headers ────────────────────────────────────────────────
 @app.after_request
 def _security_headers(resp):
-    """Attach comprehensive security headers to every HTTP response."""
     resp.headers["X-Content-Type-Options"]   = "nosniff"
     resp.headers["X-Frame-Options"]          = "DENY"
     resp.headers["X-XSS-Protection"]         = "1; mode=block"
     resp.headers["Referrer-Policy"]          = "strict-origin-when-cross-origin"
     resp.headers["Permissions-Policy"]       = "geolocation=(), camera=(), microphone=()"
-    # HSTS only when HTTPS is confirmed
     if os.environ.get("HTTPS") == "1":
         resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
-    # CORS — tighten in production via ALLOWED_ORIGINS env var
     allowed = os.environ.get("ALLOWED_ORIGINS", "*")
     resp.headers["Access-Control-Allow-Origin"]       = allowed
     resp.headers["Access-Control-Allow-Headers"]      = "Content-Type,Authorization,X-Requested-With"
     resp.headers["Access-Control-Allow-Methods"]      = "GET,POST,OPTIONS"
     resp.headers["Access-Control-Allow-Credentials"]  = "true"
-    # Prevent caching of sensitive API responses
     if request.path.startswith(("/login", "/me", "/history", "/progress")):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         resp.headers["Pragma"]        = "no-cache"
     return resp
 
-# ── Concurrent pipeline semaphore ────────────────────────────────────────────
+# ── Concurrent pipeline semaphore ─────────────────────────────────────────────
 _PIPELINE_SEM = threading.Semaphore(int(os.environ.get("MAX_PIPELINES", "20")))
 _ACTIVE_PIPELINES = 0
 _AP_LOCK = threading.Lock()
 
 def _with_pipeline_sem(fn):
-    """Limit simultaneous heavy GIS pipelines. Returns 503 if overloaded."""
     @wraps(fn)
     def wrapper(*args, **kwargs):
         global _ACTIVE_PIPELINES
@@ -356,7 +321,6 @@ def _with_pipeline_sem(fn):
 @app.route("/server_status")
 @_rate_limit(limit=10, window=60)
 def server_status():
-    """Public health + load endpoint."""
     return jsonify({
         "status": "ok",
         "active_pipelines": _ACTIVE_PIPELINES,
@@ -364,7 +328,7 @@ def server_status():
         "registered_users": len(_lu()),
     })
 
-# ── column aliases ───────────────────────────────────────────────────────────
+# ── Column aliases ─────────────────────────────────────────────────────────────
 def _norm(s): return "".join(c for c in str(s).lower() if c.isalnum())
 _XA={"x","xcoord","xcoordinate","xcord","east","easting","eastings","lon","long","longitude","lng","pointx","coordx","utme","utmx"}
 _YA={"y","ycoord","ycoordinate","ycord","north","northing","northings","lat","latitude","pointy","coordy","utmn","utmy"}
@@ -397,7 +361,7 @@ def read_input(file):
 def get_crs(zone): return f"EPSG:326{zone}"
 def _safe_dn(s): return str(s).strip().replace("/","_").replace("\\","_").replace(":","_")
 
-# ── geometry helpers ─────────────────────────────────────────────────────────
+# ── Geometry helpers ───────────────────────────────────────────────────────────
 def safe_polygon(coords):
     p = Polygon(coords); return p if p.is_valid else p.buffer(0)
 def _repair(g):
@@ -430,9 +394,8 @@ def _enforce_poly_gdf(gdf):
     if not keep: return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
     return gpd.GeoDataFrame(keep, crs=gdf.crs)
 
-# ── map decorations (reference-image accurate) ───────────────────────────────
+# ── Map decorations ────────────────────────────────────────────────────────────
 def _north_arrow(ax):
-    """N-arrow top-right, matching reference images."""
     x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
     aw = x1-x0; ah = y1-y0
     nx = x1 - aw*0.045
@@ -445,7 +408,6 @@ def _north_arrow(ax):
             fontsize=9, fontweight="bold", color="black", zorder=22)
 
 def _scale_bar(ax):
-    """Black-white-black 3-segment scale bar like reference images."""
     x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
     aw = x1-x0; ah = y1-y0
     raw = aw * 0.22
@@ -468,9 +430,7 @@ def _scale_bar(ax):
     ax.text(bx+bar_m,     by - bh*0.6, _fmt(bar_m),      ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
 
 def _add_legend(ax, handles, legend_title="Legend", loc="lower right"):
-    """Place legend OUTSIDE the map axes area — never overlaps the drawing."""
     if not handles: return
-    # Anchor outside the axes so it never overlaps the map
     anchor_lut = {
         "lower right": (1.02, 0.00, "upper left"),
         "lower left":  (-0.02, 0.00, "upper right"),
@@ -494,12 +454,10 @@ def _add_legend(ax, handles, legend_title="Legend", loc="lower right"):
         leg.get_frame().set_linewidth(1.0)
         leg.get_title().set_fontweight("bold")
     except Exception:
-        # Fallback: inside axes
         ax.legend(handles=handles, title=legend_title, loc=loc,
                   fontsize=8, framealpha=0.9, facecolor="#f8f8f8")
 
 def _graticule(ax):
-    """Coord labels on all 4 edges, NO interior gridlines. Matches reference."""
     ax.tick_params(axis="both", which="major",
                    left=True, right=True, top=True, bottom=True,
                    labelleft=True, labelright=True,
@@ -519,7 +477,6 @@ def _style_ax(ax):
     _graticule(ax)
 
 def _label_feat(ax, gdf, col, fs=8, color="black"):
-    """Bold centroid labels with white stroke outline, like reference maps."""
     if gdf is None or gdf.empty or col not in gdf.columns: return
     for _, row in gdf.iterrows():
         try:
@@ -532,12 +489,11 @@ def _label_feat(ax, gdf, col, fs=8, color="black"):
                         zorder=12)
         except: continue
 
-
 _CCOLORS = ["#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7","#DCEDC8",
             "#B2EBF2","#FFF9C4","#D7CCC8","#CFD8DC","#C5CAE9","#F0F4C3",
             "#FFCCBC","#B2DFDB","#E8EAF6"]
 
-# ── GROUP A ──────────────────────────────────────────────────────────────────
+# ── GROUP A ───────────────────────────────────────────────────────────────────
 def group_a(df, forest, crs, out, mapping=None):
     df = normalize_order(df)
     xc = safe_col(df,mapping,"X","X"); yc = safe_col(df,mapping,"Y","Y")
@@ -558,7 +514,7 @@ def group_a(df, forest, crs, out, mapping=None):
     ptg.to_file(os.path.join(out,f"{pfx}_point.shp"))
     return pg, lg, ptg
 
-# ── GROUP B ──────────────────────────────────────────────────────────────────
+# ── GROUP B ───────────────────────────────────────────────────────────────────
 def group_b(df, crs, out, mapping=None):
     df = normalize_order(df)
     xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
@@ -585,7 +541,7 @@ def group_b(df, crs, out, mapping=None):
     if not pt.empty: pt.to_file(os.path.join(out,"forest_point.shp"))
     return p,l,pt
 
-# ── GROUP C ──────────────────────────────────────────────────────────────────
+# ── GROUP C ───────────────────────────────────────────────────────────────────
 def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
     polygons=[]
     if file.filename.lower().endswith(".zip"):
@@ -643,12 +599,13 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
         pd.DataFrame(pts)[["SN","X","Y"]].to_excel(os.path.join(out,"sampleplot.xlsx"),index=False)
     return p_gdf,l_gdf,pt_gdf
 
-# ── GROUP D ──────────────────────────────────────────────────────────────────
+# ── GROUP D ───────────────────────────────────────────────────────────────────
 def _save_fl(pr,lr,pts,d,crs):
     os.makedirs(d,exist_ok=True); pfx=os.path.basename(d)
     gpd.GeoDataFrame([pr],crs=crs).to_file(os.path.join(d,f"{pfx}_polygon.shp"))
     gpd.GeoDataFrame([lr],crs=crs).to_file(os.path.join(d,f"{pfx}_line.shp"))
     gpd.GeoDataFrame(pts,crs=crs).to_file(os.path.join(d,f"{pfx}_point.shp"))
+
 def group_d(df, crs, out, mapping=None, mode="A"):
     df=normalize_order(df)
     xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
@@ -684,7 +641,7 @@ def group_d(df, crs, out, mapping=None, mode="A"):
     if not ap: raise ValueError("No valid polygons built.")
     return gpd.GeoDataFrame(ap,crs=crs),gpd.GeoDataFrame(al,crs=crs),gpd.GeoDataFrame(apt,crs=crs)
 
-# ── GROUP E — SUBDIVISION ────────────────────────────────────────────────────
+# ── GROUP E — SUBDIVISION ─────────────────────────────────────────────────────
 def _elong(p):
     minx,miny,maxx,maxy=p.bounds; dx,dy=maxx-minx,maxy-miny
     return max(dx,dy)/max(min(dx,dy),1e-9)
@@ -791,13 +748,10 @@ def _subdivide_bisect(poly, n, area_tol_ha=0.3):
             if mg: valid[bi]=_close_poly(mg)
     except: pass
     valid = [_close_poly(_repair(p) or p) for p in valid]
-    # ── Strict tolerance enforcement: iteratively redistribute area ──────
     valid = _enforce_area_tolerance(valid, poly, n, area_tol_ha)
     return valid
 
 def _enforce_area_tolerance(pieces, orig_poly, n, tol_ha):
-    """Iteratively shift boundaries to enforce that every piece is within
-    ±tol_ha of the ideal area. Runs up to 6 passes."""
     if not pieces or n < 2: return pieces
     tol_m2 = tol_ha * 10000
     ideal   = orig_poly.area / n
@@ -809,7 +763,6 @@ def _enforce_area_tolerance(pieces, orig_poly, n, tol_ha):
                 ai = pieces[i].area; aj = pieces[j].area
                 if abs(ai - ideal) <= tol_m2 and abs(aj - ideal) <= tol_m2:
                     continue
-                # i is too big, j is too small → transfer strip from i→j
                 if ai > ideal + tol_m2 and aj < ideal - tol_m2:
                     try:
                         shared = pieces[i].boundary.intersection(pieces[j].boundary)
@@ -1060,8 +1013,48 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
     pt=gpd.GeoDataFrame(pd.concat(apts,ignore_index=True),crs=crs)
     return p,l,pt
 
-# ── GROUP F ──────────────────────────────────────────────────────────────────
-def _bnd_from_df(df,mapping):
+# ── GROUP F — SLOPE ANALYSIS ──────────────────────────────────────────────────
+#
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  IMPORTANT: GROUP F SLOPE WORKFLOW — DO NOT CHANGE THE ORDER OF STEPS      ║
+# ║                                                                              ║
+# ║  The slope analysis follows a strict raster-first, then vector-clip         ║
+# ║  workflow. Future maintainers must preserve this exact sequence:            ║
+# ║                                                                              ║
+# ║  STEP 1  Load full DEM uploaded by user                                     ║
+# ║  STEP 2  Load boundary polygon (from Excel coords or ZIP shapefile)         ║
+# ║  STEP 3  Extract RECTANGULAR DEM with 20% buffer around polygon             ║
+# ║          → This rectangle is LARGER than the polygon on all sides           ║
+# ║          → Ensures slope calculation is not affected by boundary edge       ║
+# ║  STEP 4  Compute slope on the FULL RECTANGLE (Horn method)                  ║
+# ║          → NEVER compute slope only on the clipped polygon area             ║
+# ║          → Edge pixels near the boundary need neighbours to be accurate     ║
+# ║  STEP 5  Reclassify the FULL RECTANGLE into 3 slope classes:                ║
+# ║            Class 1 = < 19°   (Gentle)                                       ║
+# ║            Class 2 = 19–31°  (Moderate)                                     ║
+# ║            Class 3 = > 31°   (Steep)                                        ║
+# ║  STEP 6  Raster → Polygon on the FULL RECTANGLE classified raster           ║
+# ║          → Convert pixel classes to vector polygons (gridcode = class id)   ║
+# ║  STEP 7  Dissolve the raster-to-polygon result by gridcode                  ║
+# ║          → Merge adjacent same-class pixels into single polygons            ║
+# ║  STEP 8  Clip the dissolved polygons to the ORIGINAL BOUNDARY polygon       ║
+# ║          → This is the final masking step — clips to exact survey area      ║
+# ║          → For multi-compartment: clip each compartment polygon separately  ║
+# ║          → IMPORTANT: keep ALL fragments (MultiPolygon → union, not max)    ║
+# ║          → Old bug: _as_poly() only kept largest fragment, dropped edges    ║
+# ║  STEP 9  Calibration (optional): if user provides known field area,         ║
+# ║          scale all class areas proportionally to match field measurement    ║
+# ║  STEP 10 Save outputs: slope polygon SHP, boundary SHP, Excel summary,      ║
+# ║          clipped slope raster TIF, classified raster TIF                    ║
+# ║                                                                              ║
+# ║  FINAL MAP (preview_slope):                                                 ║
+# ║  → Draws slope class fills from the CLIPPED dissolved polygons (Step 8)    ║
+# ║  → Overlays each compartment boundary line individually (not just outer)    ║
+# ║  → Labels each compartment at its centroid                                  ║
+# ║  → Shows slope table per compartment below the map                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+def _bnd_from_df(df, mapping):
     df=normalize_order(df)
     xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
     oc=safe_col(df,mapping,"Order","Order")
@@ -1072,7 +1065,7 @@ def _bnd_from_df(df,mapping):
     if len(coords)<3: raise ValueError("Need ≥3 boundary points.")
     coords.append(coords[0]); return safe_polygon(coords)
 
-def _bnd_from_zip(zip_file,target_shp,src_crs,dem_crs):
+def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
     folder=os.path.join(UPLOAD,str(uuid.uuid4())); os.makedirs(folder,exist_ok=True)
     zp=os.path.join(folder,"b.zip"); zip_file.save(zp)
     with zipfile.ZipFile(zp) as z: z.extractall(folder)
@@ -1085,7 +1078,8 @@ def _bnd_from_zip(zip_file,target_shp,src_crs,dem_crs):
     gdf=gpd.read_file(sp)
     if gdf.empty: raise ValueError("Boundary shapefile empty.")
     gdf=gdf.set_crs(src_crs) if gdf.crs is None else gdf
-    gdf=gdf.to_crs(dem_crs); return _repair(gdf.unary_union),gdf
+    gdf=gdf.to_crs(dem_crs)
+    return _repair(gdf.unary_union), gdf
 
 def group_f(boundary_file, dem_file, crs, out, mapping=None,
             boundary_is_zip=False, forest_name="FOREST",
@@ -1097,354 +1091,573 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         import scipy.ndimage as ndi
     except ImportError:
         raise ValueError("rasterio and scipy required for Group F.")
-    os.makedirs(out,exist_ok=True); pfx=_safe_dn(forest_name)
-    SN=-9999.0
-    if run_id: _prog(run_id,"Loading DEM…",5)
-    dem_path=os.path.join(UPLOAD,f"{uuid.uuid4()}_dem.tif"); dem_file.save(dem_path)
+
+    os.makedirs(out, exist_ok=True)
+    pfx = _safe_dn(forest_name)
+    SN  = -9999.0
+
+    # ── STEP 1: Load full DEM ─────────────────────────────────────────────
+    if run_id: _prog(run_id, "Step 1/10 — Loading DEM…", 5)
+    dem_path = os.path.join(UPLOAD, f"{uuid.uuid4()}_dem.tif")
+    dem_file.save(dem_path)
     with rasterio.open(dem_path) as src:
-        dem_crs=src.crs; nodata=src.nodata; transform=src.transform; profile=src.profile.copy()
+        dem_crs   = src.crs
+        nodata    = src.nodata
+        transform = src.transform
+        profile   = src.profile.copy()
 
-    if run_id: _prog(run_id,"Loading boundary…",10)
+    # ── STEP 2: Load boundary polygon ─────────────────────────────────────
+    # bpoly  = the union of all boundary polygons (Shapely geometry, DEM CRS)
+    # bgdf   = GeoDataFrame with individual compartment rows (for multi-mode)
+    if run_id: _prog(run_id, "Step 2/10 — Loading boundary polygon…", 10)
     if boundary_is_zip:
-        ts=(mapping or {}).get("target_shp")
-        bpoly,bgdf=_bnd_from_zip(boundary_file,ts,crs,str(dem_crs))
+        ts = (mapping or {}).get("target_shp")
+        bpoly, bgdf = _bnd_from_zip(boundary_file, ts, crs, str(dem_crs))
     else:
-        df=read_input(boundary_file); bpoly=_bnd_from_df(df,mapping)
-        bgdf=gpd.GeoDataFrame([{"Forest":forest_name,"geometry":bpoly}],crs=crs).to_crs(str(dem_crs))
-        bpoly=bgdf.unary_union
+        df    = read_input(boundary_file)
+        bpoly = _bnd_from_df(df, mapping)
+        bgdf  = gpd.GeoDataFrame(
+            [{"Forest": forest_name, "geometry": bpoly}], crs=crs
+        ).to_crs(str(dem_crs))
+        bpoly = bgdf.unary_union
 
-    if run_id: _prog(run_id,"Extracting rect DEM (20% buffer)…",18)
-    b=bpoly.bounds; bx=(b[2]-b[0])*0.20; by=(b[3]-b[1])*0.20
-    rect=_sbox(b[0]-bx,b[1]-by,b[2]+bx,b[3]+by)
-    nd=nodata if nodata is not None else SN
+    # ── STEP 3: Extract RECTANGULAR DEM with 20% buffer ───────────────────
+    # WHY RECTANGLE: slope (Sobel kernel) needs neighbours outside the polygon
+    # boundary. A 20% buffer ensures edge pixels have valid neighbours.
+    # DO NOT clip to polygon shape here — that breaks slope at boundaries.
+    if run_id: _prog(run_id, "Step 3/10 — Extracting rectangular DEM (20% buffer)…", 18)
+    b  = bpoly.bounds
+    bx = (b[2] - b[0]) * 0.20
+    by = (b[3] - b[1]) * 0.20
+    rect = _sbox(b[0] - bx, b[1] - by, b[2] + bx, b[3] + by)
+    nd   = nodata if nodata is not None else SN
+
     try:
         with rasterio.open(dem_path) as src:
-            ra,rt=rio_mask(src,[rect.__geo_interface__],crop=True,filled=True,nodata=nd)
-        rdm=ra[0].astype(np.float32); rdm[rdm==nd]=np.nan
+            ra, rt = rio_mask(src, [rect.__geo_interface__], crop=True, filled=True, nodata=nd)
+        rdm = ra[0].astype(np.float32)
+        rdm[rdm == nd] = np.nan
     except Exception:
-        with rasterio.open(dem_path) as src: ra=src.read(1).astype(np.float32); rt=src.transform
-        rdm=ra; rdm[rdm==nd]=np.nan
-    rx=abs(rt.a); ry=abs(rt.e)
+        # Fallback: use full DEM if rect clip fails (e.g. polygon outside DEM extent)
+        with rasterio.open(dem_path) as src:
+            ra = src.read(1).astype(np.float32)
+            rt = src.transform
+        rdm = ra
+        rdm[rdm == nd] = np.nan
+    rx = abs(rt.a)   # pixel width  in metres
+    ry = abs(rt.e)   # pixel height in metres
 
-    if run_id: _prog(run_id,"Computing slope (Horn method)…",30)
-    valid=~np.isnan(rdm); filled=np.nan_to_num(rdm,nan=0.0)
-    dzdx=ndi.sobel(filled,axis=1)/(8*max(rx,1e-9))
-    dzdy=ndi.sobel(filled,axis=0)/(8*max(ry,1e-9))
-    slope=np.degrees(np.arctan(np.sqrt(dzdx**2+dzdy**2))).astype(np.float32)
-    fnv=ndi.binary_erosion(valid,structure=np.ones((3,3),dtype=bool),border_value=0)
-    slope[~fnv]=SN
-    rp=profile.copy(); rp.update(dtype="float32",nodata=SN,count=1,height=slope.shape[0],width=slope.shape[1],transform=rt)
-    sp_path=os.path.join(out,f"{pfx}_slope_rect.tif")
-    with rasterio.open(sp_path,"w",**rp) as dst: dst.write(slope,1)
+    # ── STEP 4: Compute slope on FULL RECTANGLE ───────────────────────────
+    # Horn method: dz/dx and dz/dy via Sobel kernels, then arctan of magnitude.
+    # CRITICAL: slope is computed on the RECTANGLE, not the polygon shape.
+    # This ensures boundary pixels have valid 3×3 Sobel neighbourhoods.
+    if run_id: _prog(run_id, "Step 4/10 — Computing slope on full rectangle (Horn method)…", 30)
+    valid  = ~np.isnan(rdm)
+    filled = np.nan_to_num(rdm, nan=0.0)
+    dzdx   = ndi.sobel(filled, axis=1) / (8 * max(rx, 1e-9))
+    dzdy   = ndi.sobel(filled, axis=0) / (8 * max(ry, 1e-9))
+    slope  = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2))).astype(np.float32)
+    # Erode valid mask 1 pixel to remove Sobel edge artefacts
+    fnv = ndi.binary_erosion(valid, structure=np.ones((3, 3), dtype=bool), border_value=0)
+    slope[~fnv] = SN
 
-    if run_id: _prog(run_id,"Reclassifying slope…",42)
-    vm=(slope!=SN)&~np.isnan(slope)
-    cls=np.zeros_like(slope,dtype=np.uint8)
-    cls[vm&(slope<19)]=1; cls[vm&(slope>=19)&(slope<=31)]=2; cls[vm&(slope>31)]=3
-    cp=rp.copy(); cp.update(dtype="uint8",nodata=0)
-    cls_path=os.path.join(out,f"{pfx}_class_rect.tif")
-    with rasterio.open(cls_path,"w",**cp) as dst: dst.write(cls,1)
+    # Save rectangular slope raster (full rectangle, before clipping)
+    rp = profile.copy()
+    rp.update(dtype="float32", nodata=SN, count=1,
+              height=slope.shape[0], width=slope.shape[1], transform=rt)
+    sp_path = os.path.join(out, f"{pfx}_slope_rect.tif")
+    with rasterio.open(sp_path, "w", **rp) as dst:
+        dst.write(slope, 1)
 
-    if run_id: _prog(run_id,"Raster → polygon…",54)
-    rtp=[]
+    # ── STEP 5: Reclassify FULL RECTANGLE into 3 slope classes ────────────
+    # Classes follow standard Nepalese community forest slope classification:
+    #   Class 1 = < 19°   Gentle   (suitable for most activities)
+    #   Class 2 = 19–31°  Moderate (limited access)
+    #   Class 3 = > 31°   Steep    (erosion risk, restricted use)
+    # DO NOT change class thresholds without updating class_defs dict below.
+    if run_id: _prog(run_id, "Step 5/10 — Reclassifying slope into 3 classes…", 42)
+    vm  = (slope != SN) & ~np.isnan(slope)
+    cls = np.zeros_like(slope, dtype=np.uint8)
+    cls[vm & (slope <  19)]                  = 1   # Gentle
+    cls[vm & (slope >= 19) & (slope <= 31)]  = 2   # Moderate
+    cls[vm & (slope >  31)]                  = 3   # Steep
+
+    cp = rp.copy(); cp.update(dtype="uint8", nodata=0)
+    cls_path = os.path.join(out, f"{pfx}_class_rect.tif")
+    with rasterio.open(cls_path, "w", **cp) as dst:
+        dst.write(cls, 1)
+
+    # ── STEP 6: Raster → Polygon on FULL RECTANGLE ────────────────────────
+    # Convert the classified raster to vector polygons.
+    # Each pixel group of the same class becomes a polygon.
+    # gridcode field = class id (1, 2, or 3).
+    # This is done on the FULL RECTANGLE — clipping to boundary happens in Step 8.
+    if run_id: _prog(run_id, "Step 6/10 — Raster → polygon (full rectangle)…", 54)
+    rtp = []
     with rasterio.open(cls_path) as src:
-        ca,ct=src.read(1),src.transform
-        for shp,val in rio_shapes(ca,mask=(ca>0).astype(np.uint8),transform=ct):
-            cid=int(val)
-            if cid==0: continue
+        ca, ct = src.read(1), src.transform
+        for shp, val in rio_shapes(ca, mask=(ca > 0).astype(np.uint8), transform=ct):
+            cid = int(val)
+            if cid == 0: continue
             try:
-                rings=shp["coordinates"]; ext=rings[0]; holes=rings[1:] if len(rings)>1 else None
-                geom=_repair(Polygon(ext,holes=holes))
-                if geom and not geom.is_empty and geom.area>1e-10: rtp.append({"gridcode":cid,"geometry":geom})
-            except: continue
-    if not rtp: raise ValueError("No slope polygons extracted from DEM.")
-    rtp_gdf=gpd.GeoDataFrame(rtp,crs=str(dem_crs))
-    rtp_gdf.to_file(os.path.join(out,f"{pfx}_rtp_raw.shp"))
+                rings = shp["coordinates"]
+                ext   = rings[0]
+                holes = rings[1:] if len(rings) > 1 else None
+                geom  = _repair(Polygon(ext, holes=holes))
+                if geom and not geom.is_empty and geom.area > 1e-10:
+                    rtp.append({"gridcode": cid, "geometry": geom})
+            except:
+                continue
+    if not rtp:
+        raise ValueError("No slope polygons extracted from DEM.")
+    rtp_gdf = gpd.GeoDataFrame(rtp, crs=str(dem_crs))
+    rtp_gdf.to_file(os.path.join(out, f"{pfx}_rtp_raw.shp"))
 
-    if run_id: _prog(run_id,"Dissolving by gridcode…",64)
+    # ── STEP 7: Dissolve by gridcode ──────────────────────────────────────
+    # Merge all adjacent polygons of the same class into single features.
+    # After dissolve: one row per class (up to 3 rows), covering full rectangle.
+    if run_id: _prog(run_id, "Step 7/10 — Dissolving by gridcode…", 64)
     try:
-        dissolved=rtp_gdf.dissolve(by="gridcode",as_index=False)
-        dissolved["gridcode"]=dissolved["gridcode"].astype(int)
-    except: dissolved=rtp_gdf.copy()
-    dissolved.to_file(os.path.join(out,f"{pfx}_rtp_dissolved.shp"))
+        dissolved = rtp_gdf.dissolve(by="gridcode", as_index=False)
+        dissolved["gridcode"] = dissolved["gridcode"].astype(int)
+    except:
+        dissolved = rtp_gdf.copy()
+    dissolved.to_file(os.path.join(out, f"{pfx}_rtp_dissolved.shp"))
 
-    if run_id: _prog(run_id,"Building analysis groups…",70)
-    class_defs={1:("< 19°","Gentle","#2ecc71"),2:("19–31°","Moderate","#f39c12"),3:("> 31°","Steep","#e74c3c")}
-    comp_polygons=[]
-    if f_mode=="A":
-        comp_polygons=[(forest_name,bpoly)]
+    # ── STEP 8: Clip dissolved polygons to original boundary ──────────────
+    # THIS IS THE KEY STEP. The dissolved polygons cover the full rectangle.
+    # We now clip them to the exact boundary polygon (or each compartment).
+    #
+    # IMPORTANT RULES for future maintainers:
+    #   1. Clip is done AFTER dissolve, not before. Clipping before dissolve
+    #      would fragment small edge polygons and corrupt the class areas.
+    #   2. The result of intersection may be MultiPolygon (boundary cuts a
+    #      class into multiple fragments). DO NOT use _as_poly() here —
+    #      that would keep only the largest fragment and silently drop small
+    #      edge pieces. Instead, union all fragments before saving.
+    #   3. For multi-compartment (f_mode B/E): clip each compartment's polygon
+    #      individually so the table shows per-compartment breakdown.
+    #
+    # comp_polygons = list of (label, shapely_polygon) to clip against.
+    if run_id: _prog(run_id, "Step 8/10 — Clipping dissolved slope polygons to boundary…", 72)
+
+    # class_defs: gridcode → (display label, description, map colour)
+    # Update colours here if you change the map style, but keep gridcodes 1/2/3.
+    class_defs = {
+        1: ("< 19°",  "Gentle",   "#2ecc71"),
+        2: ("19–31°", "Moderate", "#f39c12"),
+        3: ("> 31°",  "Steep",    "#e74c3c"),
+    }
+
+    # Build the list of polygons to clip against
+    if f_mode == "A":
+        # Single polygon mode: clip entire boundary at once
+        comp_polygons = [(forest_name, bpoly)]
     else:
-        grp_col=None
+        # Multi-compartment mode: clip each compartment separately
+        grp_col = None
         if comp_col_name:
             for c in bgdf.columns:
-                if c.lower()==comp_col_name.lower(): grp_col=c; break
-        if grp_col is None: grp_col=_find_col(bgdf,_FA if f_mode=="B" else _CA)
-        if grp_col is None and f_mode=="E": grp_col=_find_col(bgdf,_FA)
-        if grp_col is None: comp_polygons=[(forest_name,bpoly)]
+                if c.lower() == comp_col_name.lower():
+                    grp_col = c; break
+        if grp_col is None:
+            grp_col = _find_col(bgdf, _FA if f_mode == "B" else _CA)
+        if grp_col is None and f_mode == "E":
+            grp_col = _find_col(bgdf, _FA)
+        if grp_col is None:
+            comp_polygons = [(forest_name, bpoly)]
         else:
-            for val,grp in bgdf.groupby(grp_col):
-                up=_repair(grp.unary_union)
-                if up and not up.is_empty: comp_polygons.append((str(val),up))
-        if not comp_polygons: comp_polygons=[(forest_name,bpoly)]
+            comp_polygons = []
+            for val, grp in bgdf.groupby(grp_col):
+                up = _repair(grp.unary_union)
+                if up and not up.is_empty:
+                    comp_polygons.append((str(val), up))
+        if not comp_polygons:
+            comp_polygons = [(forest_name, bpoly)]
 
-    if run_id: _prog(run_id,"Clipping slope polygons to boundary…",78)
-    def _clip_grp(clip_poly,label):
-        vrecs=[]; total=0.0
-        for _,drow in dissolved.iterrows():
-            cid=int(drow["gridcode"]); dgeom=_repair(drow.geometry)
-            if dgeom is None or dgeom.is_empty: continue
-            try: clipped=_repair(dgeom.intersection(clip_poly))
-            except: continue
-            if clipped is None or clipped.is_empty: continue
-            pg=_as_poly(clipped)
-            if pg is None or pg.is_empty or pg.area<1e-10:
-                if hasattr(clipped,"geoms"):
-                    pts2=[_as_poly(_repair(g)) for g in clipped.geoms if g.geom_type in ("Polygon","MultiPolygon")]
-                    pts2=[p for p in pts2 if p and p.area>1e-10]
-                    if pts2: pg=_close_poly(max(pts2,key=lambda x:x.area))
-                    else: continue
-                else: continue
-            pg=_close_poly(pg); ah=round(pg.area/10000,4); total+=ah
-            vrecs.append({"Label":label,"Class":cid,"Slope_Range":class_defs[cid][0],
-                          "Descr":class_defs[cid][1],"Area_ha":ah,"geometry":pg})
-        total=max(total,1e-6)
-        rows=[{"Label":vr["Label"],"Class":vr["Class"],"Slope_Range":vr["Slope_Range"],
-               "Description":vr["Descr"],"Area_ha":vr["Area_ha"],
-               "Pct_Area":round(vr["Area_ha"]/total*100,2),"Total_ha":round(total,4)} for vr in vrecs]
-        return rows,vrecs
+    def _clip_to_boundary(clip_poly, label):
+        """
+        Clip each dissolved slope class to clip_poly.
 
-    all_sum,all_vec,per_grp=[],[],{}
-    for lb,cp in comp_polygons:
-        rows,vrecs=_clip_grp(cp,lb)
-        all_sum.extend(rows); all_vec.extend(vrecs); per_grp[lb]=rows
+        Returns:
+          rows  — list of dicts for the Excel summary table
+          vrecs — list of dicts with geometry for the output shapefile
 
-    if field_area_ha and field_area_ha>0:
-        tc=sum(r["Area_ha"] for r in all_sum); fac=field_area_ha/max(tc,1e-6)
-        for r in all_sum: r["Recal_ha"]=round(r["Area_ha"]*fac,4); r["Cal_Factor"]=round(fac,6)
+        MAINTAINER NOTE:
+          The intersection of a dissolved class polygon with the boundary can
+          produce MultiPolygon results (e.g. a compartment that touches two
+          disconnected patches of steep slope). We union all those fragments
+          before recording the area. Never use _as_poly() here — it drops all
+          but the largest fragment.
+        """
+        vrecs = []
+        total = 0.0
+        for _, drow in dissolved.iterrows():
+            cid   = int(drow["gridcode"])
+            dgeom = _repair(drow.geometry)
+            if dgeom is None or dgeom.is_empty:
+                continue
+            try:
+                clipped = _repair(dgeom.intersection(clip_poly))
+            except:
+                continue
+            if clipped is None or clipped.is_empty:
+                continue
+
+            # Collect ALL polygon parts — do NOT discard small fragments
+            parts = []
+            if clipped.geom_type == "Polygon":
+                if clipped.area > 1e-10:
+                    parts = [_close_poly(clipped)]
+            elif clipped.geom_type == "MultiPolygon":
+                parts = [_close_poly(_repair(g)) for g in clipped.geoms
+                         if g.geom_type == "Polygon" and g.area > 1e-10]
+            elif clipped.geom_type == "GeometryCollection":
+                for g in clipped.geoms:
+                    if g.geom_type == "Polygon" and g.area > 1e-10:
+                        parts.append(_close_poly(_repair(g)))
+                    elif g.geom_type == "MultiPolygon":
+                        parts.extend([_close_poly(_repair(p)) for p in g.geoms
+                                      if p.geom_type == "Polygon" and p.area > 1e-10])
+
+            if not parts:
+                continue
+
+            # Union all fragments into one geometry for area calculation and saving
+            if len(parts) == 1:
+                final_geom = parts[0]
+            else:
+                merged = _repair(unary_union(parts))
+                # After union, result might still be MultiPolygon — that is fine
+                # We keep MultiPolygon as-is; GeoDataFrame handles it correctly
+                final_geom = _close_poly(merged) if merged and not merged.is_empty else parts[0]
+
+            if final_geom is None or final_geom.is_empty:
+                continue
+
+            ah = round(final_geom.area / 10000, 4)
+            total += ah
+            vrecs.append({
+                "Label":       label,
+                "Class":       cid,
+                "Slope_Range": class_defs[cid][0],
+                "Descr":       class_defs[cid][1],
+                "Area_ha":     ah,
+                "geometry":    final_geom,
+            })
+
+        total = max(total, 1e-6)
+        rows = [{
+            "Label":       vr["Label"],
+            "Class":       vr["Class"],
+            "Slope_Range": vr["Slope_Range"],
+            "Description": vr["Descr"],
+            "Area_ha":     vr["Area_ha"],
+            "Pct_Area":    round(vr["Area_ha"] / total * 100, 2),
+            "Total_ha":    round(total, 4),
+        } for vr in vrecs]
+        return rows, vrecs
+
+    # Run clip for every compartment / group
+    all_sum, all_vec, per_grp = [], [], {}
+    for lb, cp in comp_polygons:
+        rows, vrecs = _clip_to_boundary(cp, lb)
+        all_sum.extend(rows)
+        all_vec.extend(vrecs)
+        per_grp[lb] = rows
+
+    # ── STEP 9: Field-area recalibration (optional) ───────────────────────
+    # Raster pixel areas differ slightly from GPS-surveyed field areas due to
+    # DEM resolution and projection distortion. If the user supplies the known
+    # field area, we compute a single scale factor and apply it to all classes.
+    # The percentages remain unchanged; only the absolute hectare values shift.
+    # Formula: recal_ha = raster_ha × (field_area_ha / total_raster_ha)
+    if run_id: _prog(run_id, "Step 9/10 — Applying field-area recalibration…", 85)
+    if field_area_ha and field_area_ha > 0:
+        tc  = sum(r["Area_ha"] for r in all_sum)
+        fac = field_area_ha / max(tc, 1e-6)
+        for r in all_sum:
+            r["Recal_ha"]   = round(r["Area_ha"] * fac, 4)
+            r["Cal_Factor"] = round(fac, 6)
     else:
-        for r in all_sum: r["Recal_ha"]=None; r["Cal_Factor"]=None
+        # No calibration requested — columns will be hidden in the output table
+        for r in all_sum:
+            r["Recal_ha"]   = None
+            r["Cal_Factor"] = None
 
-    if run_id: _prog(run_id,"Saving outputs…",88)
-    vcrs=str(dem_crs)
+    # ── STEP 10: Save all outputs ──────────────────────────────────────────
+    if run_id: _prog(run_id, "Step 10/10 — Saving outputs…", 88)
+    vcrs = str(dem_crs)
+
+    # Slope class polygons (clipped to boundary) — used for the final map
     if all_vec:
-        vgdf=gpd.GeoDataFrame(all_vec,crs=vcrs); vgdf=_enforce_poly_gdf(vgdf)
-        if not vgdf.empty: vgdf.to_file(os.path.join(out,f"{pfx}_slope_polygon.shp"))
-    else: vgdf=gpd.GeoDataFrame(columns=["geometry"],crs=vcrs)
-    bgdf.to_file(os.path.join(out,f"{pfx}_boundary_polygon.shp"))
+        vgdf = gpd.GeoDataFrame(all_vec, crs=vcrs)
+        vgdf = _enforce_poly_gdf(vgdf)
+        if not vgdf.empty:
+            vgdf.to_file(os.path.join(out, f"{pfx}_slope_polygon.shp"))
+    else:
+        vgdf = gpd.GeoDataFrame(columns=["geometry"], crs=vcrs)
+
+    # Boundary polygon shapefile
+    bgdf.to_file(os.path.join(out, f"{pfx}_boundary_polygon.shp"))
+
+    # Clipped raster outputs (for GIS users who need TIF files)
     try:
         with rasterio.open(sp_path) as src:
-            fc2,ft2=rio_mask(src,[comp_polygons[0][1].__geo_interface__],crop=True,filled=True,nodata=SN)
-        fc2=fc2[0].astype(np.float32); cp2=rp.copy(); cp2.update(height=fc2.shape[0],width=fc2.shape[1],transform=ft2)
-        with rasterio.open(os.path.join(out,f"{pfx}_slope_clipped.tif"),"w",**cp2) as dst: dst.write(fc2,1)
-        vm2=(fc2!=SN)&~np.isnan(fc2); ca2=np.zeros_like(fc2,dtype=np.uint8)
-        ca2[vm2&(fc2<19)]=1; ca2[vm2&(fc2>=19)&(fc2<=31)]=2; ca2[vm2&(fc2>31)]=3
-        cp3=cp2.copy(); cp3.update(dtype="uint8",nodata=0)
-        with rasterio.open(os.path.join(out,f"{pfx}_slope_classes.tif"),"w",**cp3) as dst: dst.write(ca2,1)
-    except: pass
-    sdf=pd.DataFrame(all_sum); ep=os.path.join(out,f"{pfx}_slope_summary.xlsx")
-    if f_mode=="A":
-        sdf.drop(columns=["Label"],errors="ignore").to_excel(ep,index=False)
+            fc2, ft2 = rio_mask(
+                src, [bpoly.__geo_interface__], crop=True, filled=True, nodata=SN)
+        fc2 = fc2[0].astype(np.float32)
+        cp2 = rp.copy(); cp2.update(height=fc2.shape[0], width=fc2.shape[1], transform=ft2)
+        with rasterio.open(os.path.join(out, f"{pfx}_slope_clipped.tif"), "w", **cp2) as dst:
+            dst.write(fc2, 1)
+        vm2 = (fc2 != SN) & ~np.isnan(fc2)
+        ca2 = np.zeros_like(fc2, dtype=np.uint8)
+        ca2[vm2 & (fc2 <  19)]                  = 1
+        ca2[vm2 & (fc2 >= 19) & (fc2 <= 31)]    = 2
+        ca2[vm2 & (fc2 >  31)]                  = 3
+        cp3 = cp2.copy(); cp3.update(dtype="uint8", nodata=0)
+        with rasterio.open(os.path.join(out, f"{pfx}_slope_classes.tif"), "w", **cp3) as dst:
+            dst.write(ca2, 1)
+    except:
+        pass  # Raster clip failure is non-fatal; vector outputs are already saved
+
+    # Excel summary
+    sdf = pd.DataFrame(all_sum)
+    ep  = os.path.join(out, f"{pfx}_slope_summary.xlsx")
+    if f_mode == "A":
+        sdf.drop(columns=["Label"], errors="ignore").to_excel(ep, index=False)
     else:
         try:
-            with pd.ExcelWriter(ep,engine="openpyxl") as wr:
-                sdf.to_excel(wr,sheet_name="All_Groups",index=False)
-                for lb,grs in per_grp.items():
+            with pd.ExcelWriter(ep, engine="openpyxl") as wr:
+                sdf.to_excel(wr, sheet_name="All_Groups", index=False)
+                for lb, grs in per_grp.items():
                     if not grs: continue
-                    gdf2=pd.DataFrame(grs); th=sum(r["Area_ha"] for r in grs)
-                    tr={"Label":lb,"Class":"","Slope_Range":"TOTAL","Description":"","Area_ha":round(th,4),"Pct_Area":100.0,"Total_ha":round(th,4)}
+                    gdf2 = pd.DataFrame(grs)
+                    th   = sum(r["Area_ha"] for r in grs)
+                    tr   = {
+                        "Label": lb, "Class": "", "Slope_Range": "TOTAL",
+                        "Description": "", "Area_ha": round(th, 4),
+                        "Pct_Area": 100.0, "Total_ha": round(th, 4),
+                    }
                     if grs[0].get("Recal_ha") is not None:
-                        tr["Recal_ha"]=round(sum(r["Recal_ha"] for r in grs if r.get("Recal_ha")),4)
-                        tr["Cal_Factor"]=grs[0].get("Cal_Factor","")
-                    pd.concat([gdf2,pd.DataFrame([tr])],ignore_index=True).to_excel(wr,sheet_name=str(lb)[:31],index=False)
-        except: sdf.to_excel(ep,index=False)
-    if run_id: _prog(run_id,"Group F complete.",95)
-    return all_sum,vgdf,bgdf,f_mode,per_grp
+                        tr["Recal_ha"]   = round(sum(r["Recal_ha"] for r in grs
+                                                     if r.get("Recal_ha")), 4)
+                        tr["Cal_Factor"] = grs[0].get("Cal_Factor", "")
+                    pd.concat([gdf2, pd.DataFrame([tr])],
+                              ignore_index=True).to_excel(
+                        wr, sheet_name=str(lb)[:31], index=False)
+        except:
+            sdf.to_excel(ep, index=False)
 
-# ── PREVIEW FUNCTIONS ────────────────────────────────────────────────────────
-# Rich distinct colors matching reference image 3 (C1S1=blue, C1S2=orange, etc.)
-_COMP_COLORS_RICH = [
-    "#2196F3","#FF9800","#4CAF50","#9C27B0","#F48FB1",
-    "#607D8B","#CDDC39","#00BCD4","#FF5722","#795548",
-    "#E91E63","#009688","#FFC107","#3F51B5","#8BC34A"
-]
+    if run_id: _prog(run_id, "Group F complete.", 95)
+    return all_sum, vgdf, bgdf, f_mode, per_grp
 
-def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID"):
-    """Render compartment map like reference image 3: solid colored fills, dark border, legend with ha."""
-    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
-    fig.patch.set_facecolor("white"); ax.set_facecolor("white")
-    handles = []
 
-    lc_use = label_col if (label_col and label_col in poly_gdf.columns) else (
-             "Comp_ID" if "Comp_ID" in poly_gdf.columns else None)
-
-    for i, (_, row) in enumerate(poly_gdf.iterrows()):
-        geom = row.geometry
-        if geom is None or geom.is_empty: continue
-        if geom.geom_type == "Polygon":
-            ext = list(geom.exterior.coords)
-            if ext[0] != ext[-1]: ext.append(ext[0])
-            geom = Polygon(ext)
-        color = _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)]
-        cid = row.get(lc_use or "Comp_ID", f"Comp_{i+1:03d}") if lc_use or "Comp_ID" in row.index else f"Comp_{i+1:03d}"
-        ah  = row.get("Area_ha", "")
-        lbl = f"{cid} ({ah:.2f} ha)" if isinstance(ah, float) else str(cid)
-        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
-            ax=ax, facecolor=color, edgecolor="#111111", linewidth=1.6)
-        handles.append(mpatches.Patch(facecolor=color, edgecolor="#111111", linewidth=1.0, label=lbl))
-
-    # Dark bold compartment labels centred on each polygon
-    if lc_use:
-        _label_feat(ax, poly_gdf, lc_use, fs=9, color="#111111")
-
-    _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
-    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
-    ax.set_title(title.strip() or "Compartment Division Map",
-                 fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
-
-def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
-            label_col=None, label_pts_gdf=None, area_ha=None, title="",
-            legend_title="Legend", user_label_col=None):
-    """A4 map matching reference images: white bg, blue boundary, red pts, numbered labels."""
-    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
-    fig.patch.set_facecolor("white"); ax.set_facecolor("white"); handles = []
-
-    if poly_gdf is not None and not poly_gdf.empty:
-        if "Comp_ID" in poly_gdf.columns:
-            for i, (_, row) in enumerate(poly_gdf.iterrows()):
-                g = row.geometry
-                if g is None or g.is_empty: continue
-                col = _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)]
-                cid = row.get("Comp_ID", f"Comp_{i+1:03d}")
-                ah  = row.get("Area_ha", "")
-                lbl = f"{cid} ({ah:.2f} ha)" if isinstance(ah, float) else str(cid)
-                gpd.GeoDataFrame([{"geometry": g}], crs=poly_gdf.crs).plot(
-                    ax=ax, facecolor=col, edgecolor="#111111", linewidth=1.6)
-                handles.append(mpatches.Patch(facecolor=col, edgecolor="#111111",
-                                              linewidth=1.0, label=lbl))
-        else:
-            poly_gdf.plot(ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=2.0)
-            ha_lbl = f"Area = {area_ha:.3f}.ha" if area_ha else "Forest Boundary"
-            from matplotlib.lines import Line2D as _L2D
-            handles.append(_L2D([0],[0], color="#1565C0", linewidth=2.5, label="Forest Boundary"))
-            if area_ha:
-                handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=f"Area = {area_ha:.3f} ha"))
-
-    if line_gdf is not None and not line_gdf.empty:
-        line_gdf.plot(ax=ax, color=lc, linewidth=1.0)
-
-    if pts_gdf is not None and not pts_gdf.empty:
-        pts_gdf.plot(ax=ax, color=ptc, markersize=16, zorder=8, marker="o")
-        has_comp = (poly_gdf is not None and not poly_gdf.empty
-                    and "Comp_ID" in poly_gdf.columns)
-        pt_lbl = "Sub-compartment Survey Points" if has_comp else "Survey Points"
-        from matplotlib.lines import Line2D as _L2D
-        handles.append(_L2D([0],[0], marker="o", color="w",
-                            markerfacecolor=ptc, markeredgecolor=ptc,
-                            markersize=7, label=pt_lbl, linewidth=0))
-
-    lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
-    lc_use  = user_label_col or label_col
-    if lc_use and lbl_src is not None and not lbl_src.empty and lc_use in lbl_src.columns:
-        for _, row in lbl_src.iterrows():
-            try:
-                ax.annotate(str(row[lc_use]),
-                            xy=(row.geometry.x, row.geometry.y),
-                            xytext=(4, 5), textcoords="offset points",
-                            ha="left", va="bottom", fontsize=5.5, fontweight="bold",
-                            color="black",
-                            path_effects=[pe.Stroke(linewidth=1.8, foreground="white"),
-                                          pe.Normal()], zorder=9)
-            except: pass
-
-    if poly_gdf is not None and not poly_gdf.empty:
-        if "Comp_ID" in poly_gdf.columns:
-            _label_feat(ax, poly_gdf, "Comp_ID", fs=9, color="#1565C0")
-        elif "Forest" in poly_gdf.columns:
-            _label_feat(ax, poly_gdf, "Forest", fs=9, color="#1565C0")
-
-    _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
-    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
-    head = title.strip() if title.strip() else (
-        f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
-    ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
-
+# ── GROUP F PREVIEW ───────────────────────────────────────────────────────────
+#
+# preview_slope renders the final A4 output map for Group F.
+#
+# MAP LAYOUT:
+#   Top panel  — slope class fill colours overlaid with compartment boundary lines
+#   Bottom panel — slope area summary table (per compartment if multi-mode)
+#
+# WHAT IS DRAWN ON THE MAP (top panel):
+#   1. Slope class fills (green/orange/red) from vgdf — the CLIPPED dissolved
+#      polygons produced by group_f Step 8. These are the final vector polygons
+#      after raster→polygon→dissolve→clip. The map shows exactly what is in the
+#      survey area, not the full rectangle.
+#   2. Individual compartment boundary lines — each row in bgdf is drawn
+#      separately so internal dividing lines between compartments are visible.
+#      The outer union boundary is drawn bold on top.
+#   3. Compartment name labels at centroids (multi-mode only).
+#
+# DO NOT replace vgdf with the rectangular rtp_dissolved — that would show slope
+# outside the boundary. The map must use the boundary-clipped vector polygons.
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                   per_group_summaries=None, title="", legend_title="Slope Classes"):
-    cc={1:"#2ecc71",2:"#f39c12",3:"#e74c3c"}
-    cl={1:"< 19°  Gentle",2:"19–31° Moderate",3:"> 31°  Steep"}
-    hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
-    nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
-    fig=plt.figure(figsize=(A4W,A4H),dpi=DPI,facecolor="white")
-    gs=gridspec.GridSpec(2,1,height_ratios=[1,tr],hspace=0.20,left=0.10,right=0.96,top=0.94,bottom=0.04)
-    ax1=fig.add_subplot(gs[0]); ax2=fig.add_subplot(gs[1])
-    if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
-        for cid,color in cc.items():
-            sub=vec_gdf[vec_gdf["Class"]==cid]
-            if not sub.empty: sub.plot(ax=ax1,facecolor=color,edgecolor="#2c2c2c",linewidth=0.4,alpha=0.92,zorder=3)
-    if bgdf is not None and not bgdf.empty:
-        try: bgdf.boundary.plot(ax=ax1,color="black",linewidth=1.8,zorder=5)
-        except: pass
-    if hg and bgdf is not None and not bgdf.empty:
-        gc=next((c for c in bgdf.columns if c.lower()!="geometry"),None)
-        if gc: _label_feat(ax1,bgdf,gc)
-    _style_ax(ax1); _north_arrow(ax1); _scale_bar(ax1)
-    handles=[mpatches.Patch(facecolor=c,edgecolor="#2c2c2c",label=cl[cid]) for cid,c in cc.items()]
-    handles.append(mpatches.Patch(facecolor="none",edgecolor="black",linewidth=1.8,label="Boundary"))
-    _add_legend(ax1,handles,legend_title=legend_title or "Slope Classes")
-    mt=title.strip() if title.strip() else "Slope Classification Map"
-    if hg: mt+=f" — {len(per_group_summaries)} Groups"
-    ax1.set_title(mt,fontsize=11,fontweight="bold",pad=7)
-    ax2.axis("off"); ax2.set_title("Slope Area Summary",fontsize=9,fontweight="bold",pad=4)
-    if not summary_rows:
-        fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig); return
-    hr=any(r.get("Recal_ha") is not None for r in summary_rows)
-    if f_mode=="A":
-        th=sum(r["Area_ha"] for r in summary_rows)
-        cols=["Slope Range","Description","Area (ha)","% of Total"]
-        if hr: cols+=["Recal. (ha)","Factor"]
-        td=[]
-        for r in summary_rows:
-            rw=[r["Slope_Range"],r["Description"],f"{r['Area_ha']:.2f}",f"{r['Pct_Area']:.1f}%"]
-            if hr: rw+=[f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—","" if not r.get("Cal_Factor") else f"{r['Cal_Factor']:.4f}"]
-            td.append(rw)
-        tr2=["TOTAL","",f"{th:.2f}","100%"]
-        if hr: tr2+=[f"{sum(r['Recal_ha'] for r in summary_rows if r.get('Recal_ha')):.2f}",""]
-        td.append(tr2); rcm={i:summary_rows[i].get("Class",0) for i in range(len(summary_rows))}
-    else:
-        cols=["Group","Slope Range","Description","Area (ha)","% of Total"]
-        if hr: cols+=["Recal. (ha)"]
-        td=[]; rcm={}; ri=0
-        if per_group_summaries:
-            for lb,grs in per_group_summaries.items():
-                for r in grs:
-                    rw=[str(lb),r["Slope_Range"],r["Description"],f"{r['Area_ha']:.2f}",f"{r['Pct_Area']:.1f}%"]
-                    if hr: rw+=[f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
-                    td.append(rw); rcm[ri]=r.get("Class",0); ri+=1
-                gt=sum(r["Area_ha"] for r in grs)
-                sr=[f"  ↳ {lb} Total","","",f"{gt:.2f}",""]
-                if hr: sr+=[f"{sum(r['Recal_ha'] for r in grs if r.get('Recal_ha')):.2f}"]
-                td.append(sr); rcm[ri]=-1; ri+=1
-    if td:
-        tbl=ax2.table(cellText=td,colLabels=cols,cellLoc="center",loc="center",bbox=[0,0,1,1])
-        tbl.auto_set_font_size(False); tbl.set_fontsize(6.5 if hg else 8.5)
-        tbl.auto_set_column_width(list(range(len(cols))))
-        rc={1:"#d5f5e3",2:"#fdebd0",3:"#fadbd8",0:"#f8f9fa",-1:"#ddeeff"}
-        for (r2,c2),cell in tbl.get_celld().items():
-            cell.set_edgecolor("#ccc")
-            if r2==0: cell.set_facecolor("#1a5276"); cell.set_text_props(color="white",fontweight="bold")
-            else:
-                cid2=rcm.get(r2-1,0)
-                cell.set_facecolor(rc.get(cid2,"#f8f9fa"))
-                if cid2==-1 or (cid2==0 and r2-1>=len(summary_rows)): cell.set_text_props(fontweight="bold")
-    fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig)
+    cc  = {1: "#2ecc71", 2: "#f39c12", 3: "#e74c3c"}
+    cl  = {1: "< 19°  Gentle", 2: "19–31° Moderate", 3: "> 31°  Steep"}
+    hg  = f_mode in ("B", "E") and per_group_summaries and len(per_group_summaries) > 1
+    nr  = len(summary_rows)
+    tr  = max(0.20, min(0.48, 0.06 + nr * 0.025))
 
-# ── KMZ ─────────────────────────────────────────────────────────────────────
-def _kml_pm(gdf,sid,nc=None):
+    fig = plt.figure(figsize=(A4W, A4H), dpi=DPI, facecolor="white")
+    gs  = gridspec.GridSpec(2, 1, height_ratios=[1, tr],
+                            hspace=0.20, left=0.10, right=0.96, top=0.94, bottom=0.04)
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+
+    # ── Draw slope class fills (from boundary-clipped dissolved polygons) ─
+    # Source: vgdf = output of group_f Step 8 (clip dissolved to boundary)
+    # These polygons already respect the boundary shape — no further clipping needed.
+    if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
+        for cid, color in cc.items():
+            sub = vec_gdf[vec_gdf["Class"] == cid]
+            if not sub.empty:
+                sub.plot(ax=ax1, facecolor=color, edgecolor="none",
+                         linewidth=0, alpha=0.88, zorder=3)
+
+    # ── Draw compartment boundary lines ───────────────────────────────────
+    # For multi-compartment: draw each row of bgdf individually so internal
+    # compartment dividing lines are visible on the slope colour background.
+    # Then draw the outer union bold on top.
+    # For single polygon: just draw the boundary line.
+    if bgdf is not None and not bgdf.empty:
+        if hg:
+            # Draw each compartment polygon outline individually
+            for _, row in bgdf.iterrows():
+                geom = row.geometry
+                if geom is None or geom.is_empty:
+                    continue
+                gpd.GeoDataFrame([{"geometry": geom}], crs=bgdf.crs).plot(
+                    ax=ax1, facecolor="none", edgecolor="#111111",
+                    linewidth=1.6, zorder=5)
+            # Bold outer boundary on top
+            try:
+                outer = _repair(bgdf.unary_union)
+                if outer and not outer.is_empty:
+                    gpd.GeoDataFrame(
+                        [{"geometry": outer}], crs=bgdf.crs
+                    ).plot(ax=ax1, facecolor="none", edgecolor="black",
+                           linewidth=2.8, zorder=6)
+            except:
+                pass
+        else:
+            try:
+                bgdf.boundary.plot(ax=ax1, color="black", linewidth=2.0, zorder=5)
+            except:
+                pass
+
+    # ── Compartment name labels (multi-mode only) ─────────────────────────
+    if hg and bgdf is not None and not bgdf.empty:
+        label_col = None
+        for cand in ("Comp_ID", "Compartment", "comp_id", "comp_no",
+                      "Comp_No", "Forest", "Name", "name", "NAME"):
+            if cand in bgdf.columns:
+                label_col = cand; break
+        if label_col is None:
+            for c in bgdf.columns:
+                if c == "geometry": continue
+                if bgdf[c].dtype == object:
+                    label_col = c; break
+        if label_col:
+            _label_feat(ax1, bgdf, label_col, fs=7.5, color="#111111")
+
+    _style_ax(ax1)
+    _north_arrow(ax1)
+    _scale_bar(ax1)
+
+    handles = [
+        mpatches.Patch(facecolor=c, edgecolor="#2c2c2c", label=cl[cid])
+        for cid, c in cc.items()
+    ]
+    handles.append(mpatches.Patch(
+        facecolor="none", edgecolor="black", linewidth=1.8,
+        label="Compartment Boundary" if hg else "Boundary"))
+    _add_legend(ax1, handles, legend_title=legend_title or "Slope Classes")
+
+    mt = title.strip() if title.strip() else "Slope Classification Map"
+    if hg:
+        mt += f" — {len(per_group_summaries)} Compartments"
+    ax1.set_title(mt, fontsize=11, fontweight="bold", pad=7)
+
+    # ── Summary table ─────────────────────────────────────────────────────
+    ax2.axis("off")
+    ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
+    if not summary_rows:
+        fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+        return
+
+    hr = any(r.get("Recal_ha") is not None for r in summary_rows)
+
+    if f_mode == "A":
+        # Single polygon: 3 rows (one per class) + total
+        th   = sum(r["Area_ha"] for r in summary_rows)
+        cols = ["Slope Range", "Description", "Area (ha)", "% of Total"]
+        if hr: cols += ["Recal. (ha)", "Factor"]
+        td = []
+        for r in summary_rows:
+            rw = [r["Slope_Range"], r["Description"],
+                  f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
+            if hr:
+                rw += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—",
+                       f"{r['Cal_Factor']:.4f}" if r.get("Cal_Factor") else ""]
+            td.append(rw)
+        tr2 = ["TOTAL", "", f"{th:.2f}", "100%"]
+        if hr:
+            tr2 += [f"{sum(r['Recal_ha'] for r in summary_rows if r.get('Recal_ha')):.2f}", ""]
+        td.append(tr2)
+        rcm = {i: summary_rows[i].get("Class", 0) for i in range(len(summary_rows))}
+
+    else:
+        # Multi-compartment: 3 class rows per compartment + subtotal + grand total
+        # For 7 compartments: 7×3 = 21 class rows + 7 subtotals + 1 grand total = 29 rows
+        cols = ["Compartment", "Slope Range", "Description", "Area (ha)", "% of Total"]
+        if hr: cols += ["Recal. (ha)"]
+        td  = []
+        rcm = {}
+        ri  = 0
+        if per_group_summaries:
+            for lb, grs in per_group_summaries.items():
+                for r in grs:
+                    rw = [str(lb), r["Slope_Range"], r["Description"],
+                          f"{r['Area_ha']:.2f}", f"{r['Pct_Area']:.1f}%"]
+                    if hr:
+                        rw += [f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
+                    td.append(rw)
+                    rcm[ri] = r.get("Class", 0)
+                    ri += 1
+                # Subtotal row per compartment
+                gt = sum(r["Area_ha"] for r in grs)
+                sr = [f"  ↳ {lb} Total", "", "", f"{gt:.2f}", "100%"]
+                if hr:
+                    sr += [f"{sum(r['Recal_ha'] for r in grs if r.get('Recal_ha')):.2f}"]
+                td.append(sr)
+                rcm[ri] = -1   # subtotal row colour
+                ri += 1
+            # Grand total across all compartments
+            grand = sum(r["Area_ha"] for r in summary_rows)
+            gr_row = ["GRAND TOTAL", "", "", f"{grand:.2f}", ""]
+            if hr:
+                gr_row += [f"{sum(r['Recal_ha'] for r in summary_rows if r.get('Recal_ha')):.2f}"]
+            td.append(gr_row)
+            rcm[ri] = -2   # grand total row colour
+
+    if td:
+        # Auto-shrink font for large tables (e.g. 7 compartments × 3 classes = 29 rows)
+        fs = max(5.0, 8.5 - max(0, len(td) - 12) * 0.18)
+        tbl = ax2.table(cellText=td, colLabels=cols,
+                        cellLoc="center", loc="center", bbox=[0, 0, 1, 1])
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(fs)
+        tbl.auto_set_column_width(list(range(len(cols))))
+
+        # Row colours: green/orange/red per class, blue subtotals, dark blue grand total
+        rc = {1: "#d5f5e3", 2: "#fdebd0", 3: "#fadbd8",
+              0: "#f8f9fa", -1: "#ddeeff", -2: "#c8d8f0"}
+        for (r2, c2), cell in tbl.get_celld().items():
+            cell.set_edgecolor("#ccc")
+            if r2 == 0:
+                cell.set_facecolor("#1a5276")
+                cell.set_text_props(color="white", fontweight="bold")
+            else:
+                cid2 = rcm.get(r2 - 1, 0)
+                cell.set_facecolor(rc.get(cid2, "#f8f9fa"))
+                if cid2 in (-1, -2):
+                    cell.set_text_props(fontweight="bold")
+
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+# ── GROUP F BOUNDARY HELPERS ──────────────────────────────────────────────────
+# (defined after group_f block for logical grouping)
+
+
+# ── KMZ ───────────────────────────────────────────────────────────────────────
+def _kml_pm(gdf, sid, nc=None):
     lines=[]
     for i,row in gdf.iterrows():
         g=row.geometry
@@ -1468,7 +1681,7 @@ def _kml_pm(gdf,sid,nc=None):
         lines.append(f"<Placemark><name>{label}</name><styleUrl>#{sid}</styleUrl>{gk}</Placemark>")
     return "\n".join(lines)
 
-def generate_kmz(poly_gdf,line_gdf,pts_gdf,out_dir,run_id):
+def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
     import zipfile as zf
     def w84(gdf):
         if gdf is None or gdf.empty: return None
@@ -1498,13 +1711,9 @@ def generate_kmz(poly_gdf,line_gdf,pts_gdf,out_dir,run_id):
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GROUP G – FOREST POINT GENERATOR
-# Generates vertex, boundary, and divider survey points from compartment shapefiles
-# Supports: SHP / ZIP-of-SHP input, UTM 44N / 45N, configurable spacing
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _g_read_shp(file_storage, target_shp=None):
-    """Read SHP (or ZIP containing SHP) from a FileStorage object → GeoDataFrame.
-    target_shp: relative path inside ZIP to use (user-selected)."""
     fname = file_storage.filename.lower()
     tmp_dir = os.path.join(UPLOAD, "g_tmp_" + uuid.uuid4().hex[:8])
     os.makedirs(tmp_dir, exist_ok=True)
@@ -1518,7 +1727,6 @@ def _g_read_shp(file_storage, target_shp=None):
                     for f in fs if f.endswith(".shp")]
             if not shps:
                 raise ValueError("No .shp file found in the uploaded ZIP.")
-            # Use user-selected file if specified
             chosen = shps[0]
             if target_shp:
                 tname = os.path.basename(target_shp)
@@ -1531,17 +1739,15 @@ def _g_read_shp(file_storage, target_shp=None):
             file_storage.save(shp_path)
             return gpd.read_file(shp_path)
     finally:
-        pass  # keep tmp dir for debugging
+        pass
 
 def _g_reproject(gdf, zone_str):
-    """Reproject to the user-selected UTM zone (44 or 45)."""
     epsg = 32644 if str(zone_str).strip() in ("44", "44N", "EPSG:32644") else 32645
     if gdf.crs is None:
         gdf = gdf.set_crs(f"EPSG:{epsg}")
     return gdf.to_crs(f"EPSG:{epsg}"), epsg
 
 def _g_get_poly(geom):
-    """Yield individual Polygon objects from any geometry type."""
     if geom is None or geom.is_empty:
         return
     if geom.geom_type == "Polygon":
@@ -1551,7 +1757,6 @@ def _g_get_poly(geom):
             yield p
 
 def _g_vertex_points(gdf, comp_col):
-    """STEP 3 – Extract all exterior ring vertices as Point records."""
     records = []
     for _, row in gdf.iterrows():
         cid = str(row[comp_col]) if comp_col and comp_col in row.index else ""
@@ -1564,7 +1769,6 @@ def _g_vertex_points(gdf, comp_col):
     return records
 
 def _g_boundary_points(gdf, comp_col, spacing):
-    """STEP 4 – Interpolate points along each exterior boundary at given spacing."""
     records = []
     for _, row in gdf.iterrows():
         cid = str(row[comp_col]) if comp_col and comp_col in row.index else ""
@@ -1582,7 +1786,6 @@ def _g_boundary_points(gdf, comp_col, spacing):
     return records
 
 def _g_divider_points(gdf, comp_col, spacing):
-    """STEPS 5-6 – Find shared compartment boundaries, generate divider points."""
     records = []
     rows = list(gdf.iterrows())
     n = len(rows)
@@ -1598,7 +1801,6 @@ def _g_divider_points(gdf, comp_col, spacing):
                 common = ri.geometry.boundary.intersection(rj.geometry.boundary)
             except Exception:
                 continue
-            # Only accept LineString / MultiLineString – ignore Point touches
             lines = []
             if common.geom_type == "LineString":
                 lines = [common]
@@ -1622,11 +1824,9 @@ def _g_divider_points(gdf, comp_col, spacing):
     return records
 
 def _g_merge_dedup(vertex_recs, boundary_recs, divider_recs):
-    """STEPS 7-8 – Merge all records, deduplicate by (X,Y), priority: Divider > Vertex > Boundary."""
-    # Build dict keyed by (round_x, round_y) → record with highest priority
     PRIO = {"Divider": 3, "Vertex": 2, "Boundary": 1}
     merged: dict = {}
-    for recs in (boundary_recs, vertex_recs, divider_recs):  # low→high priority order
+    for recs in (boundary_recs, vertex_recs, divider_recs):
         for r in recs:
             key = (round(r["Easting"], 3), round(r["Northing"], 3))
             if key not in merged:
@@ -1642,7 +1842,6 @@ def _g_merge_dedup(vertex_recs, boundary_recs, divider_recs):
                 if new_prio > existing["_prio"]:
                     existing["Point_Type"] = r["Point_Type"]
                     existing["_prio"] = new_prio
-    # Build final list with merged Source and Compartments
     result = []
     for rec in merged.values():
         rec["Source"]       = "+".join(sorted(rec["_all_sources"]))
@@ -1655,8 +1854,6 @@ def _g_merge_dedup(vertex_recs, boundary_recs, divider_recs):
     return result
 
 def _g_assign_ids(records):
-    """STEP 9 – Sequential Point_ID after dedup."""
-    # STEP 10 – Sort: Point_Type (Divider→Vertex→Boundary), then Compartments, Easting, Northing
     ORDER = {"Divider": 0, "Vertex": 1, "Boundary": 2}
     records.sort(key=lambda r: (
         ORDER.get(r["Point_Type"], 9),
@@ -1669,7 +1866,6 @@ def _g_assign_ids(records):
     return records
 
 def _g_export(records, epsg, out_dir, prefix="ForestPoints"):
-    """Export SHP, CSV, XLSX to out_dir."""
     if not records:
         raise ValueError("No points generated. Check shapefile and spacing.")
     df = pd.DataFrame([{
@@ -1677,13 +1873,10 @@ def _g_export(records, epsg, out_dir, prefix="ForestPoints"):
         "Source": r["Source"], "Compartments": r["Compartments"],
         "Easting": r["Easting"], "Northing": r["Northing"]
     } for r in records])
-    # CSV
     csv_path = os.path.join(out_dir, f"{prefix}.csv")
     df.to_csv(csv_path, index=False)
-    # Excel
     xlsx_path = os.path.join(out_dir, f"{prefix}.xlsx")
     df.to_excel(xlsx_path, index=False)
-    # Shapefile
     shp_gdf = gpd.GeoDataFrame(df, geometry=[r["geometry"] for r in records],
                                  crs=f"EPSG:{epsg}")
     shp_path = os.path.join(out_dir, f"{prefix}.shp")
@@ -1691,29 +1884,21 @@ def _g_export(records, epsg, out_dir, prefix="ForestPoints"):
     return df, shp_gdf
 
 def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=None):
-    """A4 PNG matching reference image 4: blue boundary, red dots, sequential numbers."""
     fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white")
     handles = []
-
-    # Forest boundary + compartment dividers (blue)
     if poly_gdf is not None and not poly_gdf.empty:
-        # Outer boundary thick
         try:
             outer = poly_gdf.unary_union
             gpd.GeoDataFrame([{"geometry": outer}], crs=poly_gdf.crs).plot(
                 ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=2.2, zorder=4)
         except: pass
-        # Interior compartment lines
         poly_gdf.plot(ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=1.5, zorder=3)
         handles.append(mpatches.Patch(facecolor="none", edgecolor="#1565C0",
                                       linewidth=2.0, label="Forest Boundary"))
-
-    # Survey points – red filled circles
     if shp_gdf is not None and not shp_gdf.empty:
         shp_gdf.plot(ax=ax, color="red", markersize=14, zorder=8, marker="o")
         handles.append(mpatches.Patch(facecolor="red", edgecolor="red", label="Sample Plots"))
-        # Sequential number labels (small, black, slight offset)
         if "Point_ID" in shp_gdf.columns:
             for _, row in shp_gdf.iterrows():
                 try:
@@ -1726,17 +1911,13 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
                                 path_effects=[pe.Stroke(linewidth=1.6, foreground="white"),
                                               pe.Normal()], zorder=9)
                 except: pass
-
-    # Compartment name labels in blue (bold centred)
     if poly_gdf is not None and not poly_gdf.empty:
         id_col = next((c for c in ("Comp_ID","Comp_No","Compartment","comp") if c in poly_gdf.columns), None)
         if id_col:
             _label_feat(ax, poly_gdf, id_col, fs=8.5, color="#1565C0")
-
     ha_txt = f"Area = {area_ha:.3f}.ha" if area_ha else ""
     if ha_txt:
         handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=ha_txt))
-
     _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
     _add_legend(ax, handles, legend_title="Legend", loc="lower right")
     ax.set_title(title.strip() or "Forest Survey Points",
@@ -1745,21 +1926,14 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
 def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None):
-    """
-    Full Group G pipeline.
-    Returns (df, shp_gdf, poly_gdf, summary_dict)
-    """
     _prog(run_id, "Reading shapefile…", 5)
     gdf = _g_read_shp(file_storage, target_shp=target_shp)
     if gdf.empty:
         raise ValueError("Shapefile is empty or could not be read.")
     if not all(t in ("Polygon", "MultiPolygon") for t in gdf.geom_type.unique()):
         raise ValueError("Shapefile must contain only Polygon / MultiPolygon features.")
-
     _prog(run_id, f"Reprojecting to UTM {dem_zone}N…", 10)
     gdf, epsg = _g_reproject(gdf, dem_zone)
-
-    # Resolve compartment column
     comp_col = None
     if comp_col_name and comp_col_name in gdf.columns:
         comp_col = comp_col_name
@@ -1767,28 +1941,19 @@ def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, tar
         for alias in ("Comp_ID","Comp_No","comp_id","comp_no","Compartment","COMP"):
             if alias in gdf.columns:
                 comp_col = alias; break
-
     area_ha = round(gdf.geometry.area.sum() / 10000, 3)
-
     _prog(run_id, "Generating vertex points…", 20)
     v_recs = _g_vertex_points(gdf, comp_col)
-
     _prog(run_id, f"Generating boundary points (spacing={spacing}m)…", 35)
     b_recs = _g_boundary_points(gdf, comp_col, spacing)
-
     _prog(run_id, "Finding shared divider lines…", 50)
     d_recs = _g_divider_points(gdf, comp_col, spacing)
-
     _prog(run_id, f"Merging {len(v_recs)+len(b_recs)+len(d_recs)} raw records…", 60)
     all_recs = _g_merge_dedup(v_recs, b_recs, d_recs)
-
     _prog(run_id, f"Deduplicated to {len(all_recs)} unique points — assigning IDs…", 70)
     all_recs = _g_assign_ids(all_recs)
-
     _prog(run_id, f"Exporting {len(all_recs)} points → SHP / CSV / XLSX…", 80)
     df, shp_gdf = _g_export(all_recs, epsg, out_dir)
-
-    # Summary counts
     summary = {
         "total": len(all_recs),
         "vertex": sum(1 for r in all_recs if r["Point_Type"] == "Vertex"),
@@ -1802,17 +1967,114 @@ def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, tar
     }
     return df, shp_gdf, gdf, summary
 
-# ── ROUTES ───────────────────────────────────────────────────────────────────
+
+# ── PREVIEW FUNCTIONS (Groups A–E) ────────────────────────────────────────────
+_COMP_COLORS_RICH = [
+    "#2196F3","#FF9800","#4CAF50","#9C27B0","#F48FB1",
+    "#607D8B","#CDDC39","#00BCD4","#FF5722","#795548",
+    "#E91E63","#009688","#FFC107","#3F51B5","#8BC34A"
+]
+
+def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID"):
+    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
+    fig.patch.set_facecolor("white"); ax.set_facecolor("white")
+    handles = []
+    lc_use = label_col if (label_col and label_col in poly_gdf.columns) else (
+             "Comp_ID" if "Comp_ID" in poly_gdf.columns else None)
+    for i, (_, row) in enumerate(poly_gdf.iterrows()):
+        geom = row.geometry
+        if geom is None or geom.is_empty: continue
+        if geom.geom_type == "Polygon":
+            ext = list(geom.exterior.coords)
+            if ext[0] != ext[-1]: ext.append(ext[0])
+            geom = Polygon(ext)
+        color = _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)]
+        cid = row.get(lc_use or "Comp_ID", f"Comp_{i+1:03d}") if lc_use or "Comp_ID" in row.index else f"Comp_{i+1:03d}"
+        ah  = row.get("Area_ha", "")
+        lbl = f"{cid} ({ah:.2f} ha)" if isinstance(ah, float) else str(cid)
+        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
+            ax=ax, facecolor=color, edgecolor="#111111", linewidth=1.6)
+        handles.append(mpatches.Patch(facecolor=color, edgecolor="#111111", linewidth=1.0, label=lbl))
+    if lc_use:
+        _label_feat(ax, poly_gdf, lc_use, fs=9, color="#111111")
+    _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
+    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
+    ax.set_title(title.strip() or "Compartment Division Map",
+                 fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
+    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
+
+def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
+            label_col=None, label_pts_gdf=None, area_ha=None, title="",
+            legend_title="Legend", user_label_col=None):
+    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
+    fig.patch.set_facecolor("white"); ax.set_facecolor("white"); handles = []
+    if poly_gdf is not None and not poly_gdf.empty:
+        if "Comp_ID" in poly_gdf.columns:
+            for i, (_, row) in enumerate(poly_gdf.iterrows()):
+                g = row.geometry
+                if g is None or g.is_empty: continue
+                col = _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)]
+                cid = row.get("Comp_ID", f"Comp_{i+1:03d}")
+                ah  = row.get("Area_ha", "")
+                lbl = f"{cid} ({ah:.2f} ha)" if isinstance(ah, float) else str(cid)
+                gpd.GeoDataFrame([{"geometry": g}], crs=poly_gdf.crs).plot(
+                    ax=ax, facecolor=col, edgecolor="#111111", linewidth=1.6)
+                handles.append(mpatches.Patch(facecolor=col, edgecolor="#111111",
+                                              linewidth=1.0, label=lbl))
+        else:
+            poly_gdf.plot(ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=2.0)
+            from matplotlib.lines import Line2D as _L2D
+            handles.append(_L2D([0],[0], color="#1565C0", linewidth=2.5, label="Forest Boundary"))
+            if area_ha:
+                handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=f"Area = {area_ha:.3f} ha"))
+    if line_gdf is not None and not line_gdf.empty:
+        line_gdf.plot(ax=ax, color=lc, linewidth=1.0)
+    if pts_gdf is not None and not pts_gdf.empty:
+        pts_gdf.plot(ax=ax, color=ptc, markersize=16, zorder=8, marker="o")
+        has_comp = (poly_gdf is not None and not poly_gdf.empty
+                    and "Comp_ID" in poly_gdf.columns)
+        pt_lbl = "Sub-compartment Survey Points" if has_comp else "Survey Points"
+        from matplotlib.lines import Line2D as _L2D
+        handles.append(_L2D([0],[0], marker="o", color="w",
+                            markerfacecolor=ptc, markeredgecolor=ptc,
+                            markersize=7, label=pt_lbl, linewidth=0))
+    lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
+    lc_use  = user_label_col or label_col
+    if lc_use and lbl_src is not None and not lbl_src.empty and lc_use in lbl_src.columns:
+        for _, row in lbl_src.iterrows():
+            try:
+                ax.annotate(str(row[lc_use]),
+                            xy=(row.geometry.x, row.geometry.y),
+                            xytext=(4, 5), textcoords="offset points",
+                            ha="left", va="bottom", fontsize=5.5, fontweight="bold",
+                            color="black",
+                            path_effects=[pe.Stroke(linewidth=1.8, foreground="white"),
+                                          pe.Normal()], zorder=9)
+            except: pass
+    if poly_gdf is not None and not poly_gdf.empty:
+        if "Comp_ID" in poly_gdf.columns:
+            _label_feat(ax, poly_gdf, "Comp_ID", fs=9, color="#1565C0")
+        elif "Forest" in poly_gdf.columns:
+            _label_feat(ax, poly_gdf, "Forest", fs=9, color="#1565C0")
+    _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
+    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
+    head = title.strip() if title.strip() else (
+        f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
+    ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
+    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
+
+
+# ── ROUTES ────────────────────────────────────────────────────────────────────
 @app.route("/progress/<run_id>")
 @_rate_limit(limit=120, window=60)
 def progress_stream(run_id):
-    """Real-time SSE progress stream — polls at 250ms for smooth UI updates."""
     try: run_id = _safe_runid(run_id)
-    except: pass  # allow non-UUID for backward compat
-
+    except: pass
     def gen():
         sent     = 0
-        deadline = time.time() + 600   # 10 min max
+        deadline = time.time() + 600
         while time.time() < deadline:
             with _PROG_LOCK:
                 msgs = list(_PROG.get(run_id, []))
@@ -1826,9 +2088,8 @@ def progress_stream(run_id):
                         return
                 except: pass
             else:
-                yield f": heartbeat\n\n"   # keep connection alive
+                yield f": heartbeat\n\n"
             time.sleep(0.25)
-
     return Response(
         stream_with_context(gen()),
         mimetype="text/event-stream",
@@ -1847,7 +2108,6 @@ def get_geojson(run_id):
     folder = _safe_path(OUTPUT, run_id)
     if not os.path.exists(folder):
         return jsonify({"type": "FeatureCollection", "features": []}), 200
-    # Include polygon shapefiles AND the ForestPoints shapefile (Group G)
     shps = []
     for r, _, fs in os.walk(folder):
         for f in fs:
@@ -1855,7 +2115,6 @@ def get_geojson(run_id):
             fl = f.lower()
             if "polygon" in fl or "forestpoints" in fl or "rtp" in fl:
                 shps.append(os.path.join(r, f))
-    # Fallback: any shp in folder
     if not shps:
         shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
                 for f in fs if f.endswith(".shp")]
@@ -1864,7 +2123,6 @@ def get_geojson(run_id):
         try:
             g = gpd.read_file(shp)
             if g.crs is not None: g = g.to_crs("EPSG:4326")
-            # Keep only relevant columns
             keep = [c for c in g.columns if c in
                     ("Comp_ID","Forest","Class","Slope_Range","Area_ha",
                      "Point_ID","Point_Type","Source","Compartments",
@@ -1877,100 +2135,90 @@ def get_geojson(run_id):
     combined = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs="EPSG:4326")
     return Response(combined.to_json(), mimetype="application/json")
 
-@app.route("/compose/<run_id>",methods=["POST"])
-@_rate_limit(limit=20,window=60)
+@app.route("/compose/<run_id>", methods=["POST"])
+@_rate_limit(limit=20, window=60)
 def compose_map(run_id):
     run_id = _safe_runid(run_id)
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(folder): return jsonify({"error":"Run not found"}), 404
     try:
-        data=request.get_json(silent=True) or {}
-        title=data.get("title",""); lt=data.get("legend_title","Legend"); lc=data.get("label_col","")
-        shps=[os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith("_polygon.shp")]
-        if not shps: return jsonify({"error":"No shapefiles found."}),400
-        gdfs=[]; crs0=None
+        data = request.get_json(silent=True) or {}
+        title = data.get("title",""); lt = data.get("legend_title","Legend"); lc = data.get("label_col","")
+        shps = [os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith("_polygon.shp")]
+        if not shps: return jsonify({"error":"No shapefiles found."}), 400
+        gdfs = []; crs0 = None
         for shp in shps:
-            try: g=gpd.read_file(shp); crs0=crs0 or g.crs; gdfs.append(g)
+            try: g = gpd.read_file(shp); crs0 = crs0 or g.crs; gdfs.append(g)
             except: pass
-        if not gdfs: return jsonify({"error":"Could not read shapefiles."}),400
-        pg=gpd.GeoDataFrame(pd.concat(gdfs,ignore_index=True),crs=crs0)
-        pp=os.path.join(folder,"output.png")
+        if not gdfs: return jsonify({"error":"Could not read shapefiles."}), 400
+        pg = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=crs0)
+        pp = os.path.join(folder, "output.png")
         if "Comp_ID" in pg.columns:
-            preview_compartments(pg,pp,title=title,legend_title=lt,label_col=lc or "Comp_ID")
+            preview_compartments(pg, pp, title=title, legend_title=lt, label_col=lc or "Comp_ID")
         else:
-            ah=float(pg["Area_ha"].sum()) if "Area_ha" in pg.columns else None
-            preview(pg,None,None,pp,title=title,legend_title=lt,area_ha=ah,user_label_col=lc or None)
+            ah = float(pg["Area_ha"].sum()) if "Area_ha" in pg.columns else None
+            preview(pg, None, None, pp, title=title, legend_title=lt, area_ha=ah, user_label_col=lc or None)
         return jsonify({"ok":True,"png":f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
-    except Exception as e: return jsonify({"error":f"Compose error: {e}"}),500
+    except Exception as e:
+        return jsonify({"error":f"Compose error: {e}"}), 500
 
-@app.route("/save_edit/<run_id>",methods=["POST"])
-@_rate_limit(limit=20,window=60)
+@app.route("/save_edit/<run_id>", methods=["POST"])
+@_rate_limit(limit=20, window=60)
 def save_edit(run_id):
     run_id = _safe_runid(run_id)
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(folder): return jsonify({"error":"Run not found"}), 404
     try:
-        data=request.get_json(silent=True) or {}
-        geojson=data.get("geojson")
-        if not geojson: return jsonify({"error":"No GeoJSON provided."}),400
-        gdf_new=gpd.GeoDataFrame.from_features(geojson.get("features",[]),crs="EPSG:4326")
-        shps=[os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith("_polygon.shp")]
-        orig_crs="EPSG:32644"
+        data = request.get_json(silent=True) or {}
+        geojson = data.get("geojson")
+        if not geojson: return jsonify({"error":"No GeoJSON provided."}), 400
+        gdf_new = gpd.GeoDataFrame.from_features(geojson.get("features",[]), crs="EPSG:4326")
+        shps = [os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith("_polygon.shp")]
+        orig_crs = "EPSG:32644"
         if shps:
             try:
-                g0=gpd.read_file(shps[0])
-                if g0.crs: orig_crs=str(g0.crs)
+                g0 = gpd.read_file(shps[0])
+                if g0.crs: orig_crs = str(g0.crs)
             except: pass
-        gdf_new=gdf_new.to_crs(orig_crs)
-        gdf_new["geometry"]=[_close_poly(_repair(g)) if g else None for g in gdf_new.geometry]
-        gdf_new=gdf_new[gdf_new.geometry.notna()]
+        gdf_new = gdf_new.to_crs(orig_crs)
+        gdf_new["geometry"] = [_close_poly(_repair(g)) if g else None for g in gdf_new.geometry]
+        gdf_new = gdf_new[gdf_new.geometry.notna()]
         if "Area_ha" not in gdf_new.columns:
-            gdf_new["Area_ha"]=[round(g.area/10000,4) if g else 0 for g in gdf_new.geometry]
-        gdf_new.to_file(os.path.join(folder,"edited_polygon.shp"))
-        pp=os.path.join(folder,"output.png"); title=data.get("title","Edited Map"); lt=data.get("legend_title","Legend")
+            gdf_new["Area_ha"] = [round(g.area/10000, 4) if g else 0 for g in gdf_new.geometry]
+        gdf_new.to_file(os.path.join(folder, "edited_polygon.shp"))
+        pp = os.path.join(folder, "output.png"); title = data.get("title","Edited Map"); lt = data.get("legend_title","Legend")
         if "Comp_ID" in gdf_new.columns:
-            preview_compartments(gdf_new,pp,title=title,legend_title=lt)
+            preview_compartments(gdf_new, pp, title=title, legend_title=lt)
         else:
-            ah=float(gdf_new["Area_ha"].sum()) if "Area_ha" in gdf_new.columns else None
-            preview(gdf_new,None,None,pp,title=title,legend_title=lt,area_ha=ah)
+            ah = float(gdf_new["Area_ha"].sum()) if "Area_ha" in gdf_new.columns else None
+            preview(gdf_new, None, None, pp, title=title, legend_title=lt, area_ha=ah)
         zip_folder(folder)
         return jsonify({"ok":True,"png":f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
-    except Exception as e: return jsonify({"error":f"Edit error: {e}\n{traceback.format_exc()}"}),500
+    except Exception as e:
+        return jsonify({"error":f"Edit error: {e}\n{traceback.format_exc()}"}), 500
 
 @app.route("/login", methods=["POST"])
 @_rate_limit(limit=20, window=60)
 def login():
-    """
-    Unique-username login:
-    - New username → registers automatically
-    - Existing username → logs in (resumes session, same user continues work)
-    - Up to 100 different users can login simultaneously with full isolation
-    """
     data = request.get_json(silent=True) or {}
     try:
         username = _validate_username(data.get("username", ""))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-
     users = _lu()
     is_new = username not in users
-
     if is_new:
-        # Brand new user — register them
         try:
             user, _tok = _register_user(username)
         except ValueError as e:
-            # Race condition: another request registered same name between our check and write
             return jsonify({"error": str(e), "taken": True}), 409
         except Exception as e:
             log.error(f"Registration error {username!r}: {e}")
             return jsonify({"error": "Registration failed. Please try again."}), 500
     else:
-        # Existing user — allow them to resume (same person continuing their work)
         try:
             user = _login_existing(username)
         except KeyError:
-            # shouldn't happen but handle race
             try:
                 user, _tok = _register_user(username)
             except Exception as e:
@@ -1978,19 +2226,17 @@ def login():
         except Exception as e:
             log.error(f"Login error {username!r}: {e}")
             return jsonify({"error": "Login failed. Please try again."}), 500
-
     session["username"] = username
     session.permanent = True
     ip = _get_client_ip()
     log.info(f"{'Register' if is_new else 'Login'}: {username!r} from {ip}")
-
     return jsonify({
-        "ok":          True,
-        "username":    username,
-        "runs":        user.get("runs", [])[-20:],
-        "is_new":      is_new,
+        "ok":           True,
+        "username":     username,
+        "runs":         user.get("runs", [])[-20:],
+        "is_new":       is_new,
         "is_returning": not is_new,
-        "message":     "Welcome!" if is_new else f"Welcome back, {username}!"
+        "message":      "Welcome!" if is_new else f"Welcome back, {username}!"
     })
 
 @app.route("/logout", methods=["POST"])
@@ -2019,7 +2265,7 @@ def history():
     return jsonify({"runs": user.get("runs", [])})
 
 @app.route("/upload", methods=["POST"])
-@_rate_limit(limit=10, window=60)          # 10 pipeline runs / min / IP
+@_rate_limit(limit=10, window=60)
 @_with_pipeline_sem
 def upload():
     run_id = str(uuid.uuid4())
@@ -2028,125 +2274,123 @@ def upload():
         if "file" not in request.files:
             return jsonify({"error": "No file uploaded.", "run_id": run_id}), 400
         file = request.files["file"]
-        # Validate filename (security)
         try: _safe_filename(file.filename)
         except ValueError as e: return jsonify({"error": str(e), "run_id": run_id}), 400
         module = request.form.get("module","A")
-        mode=request.form.get("mode","A"); zone=request.form.get("zone","44")
-        title=request.form.get("title","").strip()
-        legend_title=request.form.get("legend_title","Legend").strip() or "Legend"
-        label_col=request.form.get("label_col","").strip()
-        try: mapping=json.loads(request.form.get("mapping","{}"))
-        except: mapping={}
-        w=float(request.form.get("w",50)); h=float(request.form.get("h",50))
-        rows=int(request.form.get("rows",10)); cols=int(request.form.get("cols",10))
-        forest=request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
-        username=_require_login() or "guest"
-        out=os.path.join(OUTPUT,run_id); os.makedirs(out,exist_ok=True)
-        crs=get_crs(zone); _prog(run_id,f"Starting module {module}…",2)
-        lc_out=None; lp_gdf=None; area_ha_disp=None
+        mode   = request.form.get("mode","A"); zone = request.form.get("zone","44")
+        title  = request.form.get("title","").strip()
+        legend_title = request.form.get("legend_title","Legend").strip() or "Legend"
+        label_col    = request.form.get("label_col","").strip()
+        try: mapping = json.loads(request.form.get("mapping","{}"))
+        except: mapping = {}
+        w    = float(request.form.get("w",50)); h = float(request.form.get("h",50))
+        rows = int(request.form.get("rows",10)); cols = int(request.form.get("cols",10))
+        forest   = request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
+        username = _require_login() or "guest"
+        out  = os.path.join(OUTPUT, run_id); os.makedirs(out, exist_ok=True)
+        crs  = get_crs(zone); _prog(run_id, f"Starting module {module}…", 2)
+        lc_out = None; lp_gdf = None; area_ha_disp = None
 
-        if module=="B":
-            _prog(run_id,"Reading…",8); df=read_input(file)
-            poly,line,pts=group_b(df,crs,out,mapping); lc_out=label_col or "Forest"
-        elif module=="C":
+        if module == "B":
+            _prog(run_id,"Reading…",8); df = read_input(file)
+            poly, line, pts = group_b(df, crs, out, mapping); lc_out = label_col or "Forest"
+        elif module == "C":
             _prog(run_id,"Processing…",10)
-            poly,line,pts=group_c(file,crs,w,h,rows,cols,out,mode,mapping)
-            lc_out="SN"; lp_gdf=pts
-        elif module=="D":
-            _prog(run_id,"Reading…",8); df=read_input(file)
-            d_mode=request.form.get("d_mode","A")
-            poly,line,pts=group_d(df,crs,out,mapping,mode=d_mode); lc_out=label_col or "Forest"
-        elif module=="E":
-            e_mode=request.form.get("e_mode","A")
-            nc=max(2,min(15,int(request.form.get("n_compartments",4))))
-            at=float(request.form.get("area_tol_ha","0.3") or "0.3")
-            method=request.form.get("e_method","bisect")
-            is_zip=file.filename.lower().endswith(".zip")
-            fcn=request.form.get("forest_col_name") or None
-            if mapping and "forest" not in mapping: mapping["forest"]=forest
+            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
+            lc_out = "SN"; lp_gdf = pts
+        elif module == "D":
+            _prog(run_id,"Reading…",8); df = read_input(file)
+            d_mode = request.form.get("d_mode","A")
+            poly, line, pts = group_d(df, crs, out, mapping, mode=d_mode); lc_out = label_col or "Forest"
+        elif module == "E":
+            e_mode = request.form.get("e_mode","A")
+            nc     = max(2, min(15, int(request.form.get("n_compartments",4))))
+            at     = float(request.form.get("area_tol_ha","0.3") or "0.3")
+            method = request.form.get("e_method","bisect")
+            is_zip = file.filename.lower().endswith(".zip")
+            fcn    = request.form.get("forest_col_name") or None
+            if mapping and "forest" not in mapping: mapping["forest"] = forest
             _prog(run_id,"Loading input…",8)
-            src_data=file if is_zip else read_input(file)
-            poly,line,pts=group_e(src_data,crs,out,mapping,e_mode=e_mode,n_compartments=nc,
-                                  is_zip=is_zip,fcol=fcn,area_tol_ha=at,method=method,run_id=run_id)
+            src_data = file if is_zip else read_input(file)
+            poly, line, pts = group_e(src_data, crs, out, mapping, e_mode=e_mode,
+                                      n_compartments=nc, is_zip=is_zip, fcol=fcn,
+                                      area_tol_ha=at, method=method, run_id=run_id)
             _prog(run_id,"Rendering preview…",88)
-            preview_compartments(poly,os.path.join(out,"output.png"),title=title,
-                                 legend_title=legend_title,label_col=label_col or "Comp_ID")
-            kmz_url=None
-            try: kmz_url=generate_kmz(poly,line,pts,out,run_id)
+            preview_compartments(poly, os.path.join(out,"output.png"), title=title,
+                                 legend_title=legend_title, label_col=label_col or "Comp_ID")
+            kmz_url = None
+            try: kmz_url = generate_kmz(poly, line, pts, out, run_id)
             except: pass
-            _append_run(username,run_id,"E"); _prog(run_id,"Complete.",100)
+            _append_run(username, run_id, "E"); _prog(run_id,"Complete.",100)
             return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
-        elif module=="F":
+        elif module == "F":
             dem_catalog_path = request.form.get("dem_catalog_path","").strip()
             if dem_catalog_path:
                 cat_full = os.path.join("dem_catalog", dem_catalog_path)
                 if not os.path.exists(cat_full):
-                    return jsonify({"error":f"DEM catalog file not found: {dem_catalog_path}","run_id":run_id}),400
+                    return jsonify({"error":f"DEM catalog file not found: {dem_catalog_path}","run_id":run_id}), 400
                 class _CatDEM:
                     def __init__(self, p):
-                        self.filename=os.path.basename(p); self._p=p
+                        self.filename = os.path.basename(p); self._p = p
                     def save(self, dest):
                         import shutil as _sh; _sh.copy2(self._p, dest)
                 dem_f = _CatDEM(cat_full)
             else:
-                dem_f=request.files.get("dem_file")
-                if not dem_f: return jsonify({"error":"No DEM file uploaded (or select from server catalog).","run_id":run_id}),400
-            f_forest=request.form.get("f_forest") or forest
-            f_mode=request.form.get("f_mode","A"); cc=request.form.get("comp_col") or None
-            bzip=file.filename.lower().endswith(".zip"); fa=None
-            fas=request.form.get("field_area_ha","").strip()
+                dem_f = request.files.get("dem_file")
+                if not dem_f:
+                    return jsonify({"error":"No DEM file uploaded (or select from server catalog).","run_id":run_id}), 400
+            f_forest = request.form.get("f_forest") or forest
+            f_mode   = request.form.get("f_mode","A"); cc = request.form.get("comp_col") or None
+            bzip     = file.filename.lower().endswith(".zip"); fa = None
+            fas      = request.form.get("field_area_ha","").strip()
             if fas:
-                try: fa=float(fas)
+                try: fa = float(fas)
                 except: pass
-            sr,vgdf,bgdf,fmo,pgs=group_f(file,dem_f,crs,out,mapping,boundary_is_zip=bzip,
-                                          forest_name=f_forest,f_mode=f_mode,comp_col_name=cc,
-                                          field_area_ha=fa,run_id=run_id)
+            sr, vgdf, bgdf, fmo, pgs = group_f(
+                file, dem_f, crs, out, mapping,
+                boundary_is_zip=bzip, forest_name=f_forest,
+                f_mode=f_mode, comp_col_name=cc,
+                field_area_ha=fa, run_id=run_id)
             _prog(run_id,"Rendering preview…",92)
-            preview_slope(vgdf,bgdf,sr,os.path.join(out,"output.png"),
-                          f_mode=fmo,per_group_summaries=pgs,title=title,legend_title=legend_title)
-            poly=vgdf if (vgdf is not None and not vgdf.empty) else gpd.GeoDataFrame()
-            line=gpd.GeoDataFrame(); pts=gpd.GeoDataFrame()
-            kmz_url=None
-            try: kmz_url=generate_kmz(poly,line,pts,out,run_id)
+            preview_slope(vgdf, bgdf, sr, os.path.join(out,"output.png"),
+                          f_mode=fmo, per_group_summaries=pgs,
+                          title=title, legend_title=legend_title)
+            poly = vgdf if (vgdf is not None and not vgdf.empty) else gpd.GeoDataFrame()
+            line = gpd.GeoDataFrame(); pts = gpd.GeoDataFrame()
+            kmz_url = None
+            try: kmz_url = generate_kmz(poly, line, pts, out, run_id)
             except: pass
-            _append_run(username,run_id,"F"); _prog(run_id,"Complete.",100)
+            _append_run(username, run_id, "F"); _prog(run_id,"Complete.",100)
             return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
         else:
-            _prog(run_id,"Reading…",8); df=read_input(file)
-            poly,line,pts=group_a(df,forest,crs,out,mapping)
+            _prog(run_id,"Reading…",8); df = read_input(file)
+            poly, line, pts = group_a(df, forest, crs, out, mapping)
             if not poly.empty and "Area_ha" in poly.columns:
-                area_ha_disp=float(poly["Area_ha"].sum())
-            lc_out=label_col or "Forest"
+                area_ha_disp = float(poly["Area_ha"].sum())
+            lc_out = label_col or "Forest"
 
         _prog(run_id,"Rendering A4 preview…",88)
-        preview(poly,line,pts,os.path.join(out,"output.png"),
-                pc="blue",lc="black",ptc="red",
-                label_col=lc_out,label_pts_gdf=lp_gdf,
-                area_ha=area_ha_disp,title=title,legend_title=legend_title,
+        preview(poly, line, pts, os.path.join(out,"output.png"),
+                pc="blue", lc="black", ptc="red",
+                label_col=lc_out, label_pts_gdf=lp_gdf,
+                area_ha=area_ha_disp, title=title, legend_title=legend_title,
                 user_label_col=label_col or None)
-        kmz_url=None
-        try: kmz_url=generate_kmz(poly,line,pts,out,run_id)
+        kmz_url = None
+        try: kmz_url = generate_kmz(poly, line, pts, out, run_id)
         except: pass
-        _append_run(username,run_id,module); _prog(run_id,"Complete.",100)
+        _append_run(username, run_id, module); _prog(run_id,"Complete.",100)
         return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
     except ValueError as e:
-        _prog(run_id,f"ERROR: {e}",0)
-        return jsonify({"error":str(e),"run_id":run_id}),400
+        _prog(run_id, f"ERROR: {e}", 0)
+        return jsonify({"error":str(e),"run_id":run_id}), 400
     except Exception as e:
-        _prog(run_id,f"ERROR: {e}",0)
-        return jsonify({"error":f"Unexpected error: {e}","run_id":run_id}),500
+        _prog(run_id, f"ERROR: {e}", 0)
+        return jsonify({"error":f"Unexpected error: {e}","run_id":run_id}), 500
 
-
-
-# ── DEM CATALOG: pre-loaded large DEM files ────────────────────────────────
-# Place .tif files in the "dem_catalog/" folder on the server.
-# Users pick from this dropdown instead of uploading 2GB files each time.
-# DEM_CATALOG_DIR already initialised in startup block
+# ── DEM CATALOG ───────────────────────────────────────────────────────────────
 @app.route("/dem_catalog")
 @_rate_limit(limit=60, window=60)
 def dem_catalog():
-    """Return list of available DEM files from server catalog."""
     try:
         files = []
         for root, _, fnames in os.walk(DEM_CATALOG_DIR):
@@ -2163,7 +2407,6 @@ def dem_catalog():
 @app.route("/zip_inspect", methods=["POST"])
 @_rate_limit(limit=20, window=60)
 def zip_inspect():
-    """Return list of .shp files inside an uploaded ZIP for user selection."""
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
     f = request.files["file"]
@@ -2196,32 +2439,27 @@ def run_g():
     try:
         if "file" not in request.files:
             return jsonify({"error": "No shapefile uploaded.", "run_id": run_id}), 400
-        file       = request.files["file"]
-        zone       = request.form.get("zone", "44")
-        comp_col   = request.form.get("comp_col", "").strip() or None
-        title      = request.form.get("title", "Forest Survey Points").strip()
+        file     = request.files["file"]
+        zone     = request.form.get("zone", "44")
+        comp_col = request.form.get("comp_col", "").strip() or None
+        title    = request.form.get("title", "Forest Survey Points").strip()
         try:
             spacing = float(request.form.get("spacing", "20"))
             if spacing <= 0: raise ValueError
         except:
             return jsonify({"error": "Invalid spacing value.", "run_id": run_id}), 400
-
-        username = _require_login() or "guest"
-        out = os.path.join(OUTPUT, run_id); os.makedirs(out, exist_ok=True)
-
+        username   = _require_login() or "guest"
+        out        = os.path.join(OUTPUT, run_id); os.makedirs(out, exist_ok=True)
         target_shp = request.form.get("target_shp","").strip() or None
-        df, shp_gdf, poly_gdf, summary = group_g(file, zone, comp_col, spacing, out, run_id,
-                                                   target_shp=target_shp)
-
+        df, shp_gdf, poly_gdf, summary = group_g(
+            file, zone, comp_col, spacing, out, run_id, target_shp=target_shp)
         _prog(run_id, "Rendering A4 map…", 90)
         _g_preview(shp_gdf, poly_gdf, os.path.join(out, "output.png"),
                    title=title, area_ha=summary["area_ha"])
-
         try:
             kmz_url = generate_kmz(poly_gdf, gpd.GeoDataFrame(), shp_gdf, out, run_id)
         except:
             kmz_url = None
-
         _append_run(username, run_id, "G",
                     f"{summary['total']} pts | {summary['compartments']} compartments")
         _prog(run_id, "Complete.", 100)
@@ -2240,20 +2478,22 @@ def run_g():
 
 @app.route("/outputs/<run_id>/<path:filename>")
 @_rate_limit(limit=120, window=60)
-def serve_output(run_id,filename):
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(os.path.join(folder,filename)): return jsonify({"error":"File not found"}),404
-    return send_from_directory(folder,filename)
+def serve_output(run_id, filename):
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(os.path.join(folder, filename)):
+        return jsonify({"error":"File not found"}), 404
+    return send_from_directory(folder, filename)
 
-def zip_folder(folder): return shutil.make_archive(folder,"zip",folder)
+def zip_folder(folder): return shutil.make_archive(folder, "zip", folder)
 
 @app.route("/download/<run_id>")
 def download(run_id):
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
-    return send_file(zip_folder(folder),as_attachment=True)
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(folder):
+        return jsonify({"error":"Run not found"}), 404
+    return send_file(zip_folder(folder), as_attachment=True)
 
 @app.route("/")
 def home(): return render_template("index.html")
 
-if __name__=="__main__": app.run(debug=True,threaded=True)
+if __name__ == "__main__": app.run(debug=True, threaded=True)
