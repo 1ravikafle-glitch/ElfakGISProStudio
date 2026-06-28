@@ -468,14 +468,35 @@ def _scale_bar(ax):
     ax.text(bx+bar_m,     by - bh*0.6, _fmt(bar_m),      ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
 
 def _add_legend(ax, handles, legend_title="Legend", loc="lower right"):
-    """Styled legend: grey-background box matching reference images."""
+    """Place legend OUTSIDE the map axes area — never overlaps the drawing."""
     if not handles: return
-    leg = ax.legend(handles=handles, title=legend_title, loc=loc,
-                    fontsize=8, title_fontsize=8.5, framealpha=0.92,
-                    edgecolor="#555", fancybox=False, frameon=True,
-                    borderpad=0.8, labelspacing=0.45, facecolor="#f5f5f5")
-    leg.get_frame().set_linewidth(1.0)
-    leg.get_title().set_fontweight("bold")
+    # Anchor outside the axes so it never overlaps the map
+    anchor_lut = {
+        "lower right": (1.02, 0.00, "upper left"),
+        "lower left":  (-0.02, 0.00, "upper right"),
+        "upper right": (1.02, 1.00, "lower left"),
+        "upper left":  (-0.02, 1.00, "lower right"),
+        "right":       (1.02, 0.50, "center left"),
+    }
+    bba, bbl, loca = anchor_lut.get(loc, (1.02, 0.00, "upper left"))
+    try:
+        leg = ax.legend(
+            handles=handles, title=legend_title,
+            loc=loca,
+            bbox_to_anchor=(bba, bbl),
+            bbox_transform=ax.transAxes,
+            fontsize=8, title_fontsize=8.5,
+            framealpha=0.96, edgecolor="#888",
+            fancybox=False, frameon=True,
+            borderpad=0.9, labelspacing=0.5,
+            facecolor="#f8f8f8", handlelength=1.8,
+        )
+        leg.get_frame().set_linewidth(1.0)
+        leg.get_title().set_fontweight("bold")
+    except Exception:
+        # Fallback: inside axes
+        ax.legend(handles=handles, title=legend_title, loc=loc,
+                  fontsize=8, framealpha=0.9, facecolor="#f8f8f8")
 
 def _graticule(ax):
     """Coord labels on all 4 edges, NO interior gridlines. Matches reference."""
@@ -997,9 +1018,14 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
         features,_=_load_polys_from_zip(file_or_df,ts,crs,fcol)
         for idx,(fn,poly) in enumerate(features):
             pct_start = 20 + int(60*idx/max(len(features),1))
-            if run_id: _prog(run_id,f"[{idx+1}/{len(features)}] Building polygon for {fn}…", pct_start)
+            if run_id: _prog(run_id,f"[{idx+1}/{len(features)}] Subdividing {fn}…", pct_start)
             pieces=_subdivide(poly,n_compartments,method,area_tol_ha)
-            if run_id: _prog(run_id,f"[{idx+1}/{len(features)}] {fn} → {len(pieces)} compartments ✓",pct_start+5)
+            areas=[round(p.area/10000,2) for p in pieces if p]
+            ideal=round(poly.area/10000/max(n_compartments,1),2)
+            diff=max((abs(a-ideal) for a in areas),default=0)
+            if run_id: _prog(run_id,
+                f"[{idx+1}/{len(features)}] {fn}: {len(pieces)} parts ✓  ideal={ideal}ha  max_diff={diff:.2f}ha",
+                pct_start+5)
             fd=os.path.join(out,_safe_dn(fn)) if len(features)>1 else out
             pg,lg,ptg=_save_compartments(pieces,fn,crs,fd)
             ap.append(pg); al.append(lg); apts.append(ptg)
@@ -1274,7 +1300,7 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
     _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
     ax.set_title(title.strip() or "Compartment Division Map",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    plt.tight_layout(pad=0.5, rect=[0, 0, 1, 0.97])
+    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
     fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
@@ -1300,8 +1326,10 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
         else:
             poly_gdf.plot(ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=2.0)
             ha_lbl = f"Area = {area_ha:.3f}.ha" if area_ha else "Forest Boundary"
-            handles.append(mpatches.Patch(facecolor="none", edgecolor="#1565C0",
-                                          linewidth=2.0, label=ha_lbl))
+            from matplotlib.lines import Line2D as _L2D
+            handles.append(_L2D([0],[0], color="#1565C0", linewidth=2.5, label="Forest Boundary"))
+            if area_ha:
+                handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=f"Area = {area_ha:.3f} ha"))
 
     if line_gdf is not None and not line_gdf.empty:
         line_gdf.plot(ax=ax, color=lc, linewidth=1.0)
@@ -1311,7 +1339,10 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
         has_comp = (poly_gdf is not None and not poly_gdf.empty
                     and "Comp_ID" in poly_gdf.columns)
         pt_lbl = "Sub-compartment Survey Points" if has_comp else "Survey Points"
-        handles.append(mpatches.Patch(facecolor=ptc, edgecolor=ptc, label=pt_lbl))
+        from matplotlib.lines import Line2D as _L2D
+        handles.append(_L2D([0],[0], marker="o", color="w",
+                            markerfacecolor=ptc, markeredgecolor=ptc,
+                            markersize=7, label=pt_lbl, linewidth=0))
 
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
     lc_use  = user_label_col or label_col
@@ -1338,7 +1369,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
     head = title.strip() if title.strip() else (
         f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    plt.tight_layout(pad=0.5, rect=[0, 0, 1, 0.97])
+    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
     fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
 
@@ -1773,22 +1804,41 @@ def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, tar
 
 # ── ROUTES ───────────────────────────────────────────────────────────────────
 @app.route("/progress/<run_id>")
+@_rate_limit(limit=120, window=60)
 def progress_stream(run_id):
+    """Real-time SSE progress stream — polls at 250ms for smooth UI updates."""
+    try: run_id = _safe_runid(run_id)
+    except: pass  # allow non-UUID for backward compat
+
     def gen():
-        sent=0
-        import time
-        for _ in range(1200):
-            msgs=_PROG.get(run_id,[])
-            if len(msgs)>sent:
-                for m in msgs[sent:]: yield f"data: {m}\n\n"
-                sent=len(msgs)
+        sent     = 0
+        deadline = time.time() + 600   # 10 min max
+        while time.time() < deadline:
+            with _PROG_LOCK:
+                msgs = list(_PROG.get(run_id, []))
+            new = msgs[sent:]
+            if new:
+                for m in new:
+                    yield f"data: {m}\n\n"
+                sent += len(new)
                 try:
-                    last=json.loads(msgs[-1])
-                    if last.get("pct",0)>=100: break
+                    if json.loads(msgs[-1]).get("pct", 0) >= 100:
+                        return
                 except: pass
-            time.sleep(0.2)
-    return Response(stream_with_context(gen()),mimetype="text/event-stream",
-                    headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+            else:
+                yield f": heartbeat\n\n"   # keep connection alive
+            time.sleep(0.25)
+
+    return Response(
+        stream_with_context(gen()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache, no-store",
+            "X-Accel-Buffering": "no",
+            "Connection":        "keep-alive",
+            "Transfer-Encoding": "chunked",
+        }
+    )
 
 @app.route("/geojson/<run_id>")
 @_rate_limit(limit=60, window=60)
