@@ -44,7 +44,15 @@ app.config.update(
 
 UPLOAD, OUTPUT, USERS_FILE = "uploads", "outputs", "users.json"
 DEM_CATALOG_DIR = os.environ.get("DEM_CATALOG_DIR", "dem_catalog")
-for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR): os.makedirs(_d, exist_ok=True)
+# GitHub raw base URL for DEM catalog (set in environment or auto-detected)
+# Format: https://raw.githubusercontent.com/USER/REPO/BRANCH/dem_catalog
+GITHUB_DEM_BASE = os.environ.get(
+    "GITHUB_DEM_BASE",
+    "https://github.com/1ravikafle-glitch/ElfakGISProStudio/tree/main/dem_catalog"
+)
+DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
+for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
+    os.makedirs(_d, exist_ok=True)
 
 A4W, A4H, DPI = 8.27, 11.69, 200
 
@@ -356,13 +364,126 @@ def _with_pipeline_sem(fn):
 @app.route("/server_status")
 @_rate_limit(limit=10, window=60)
 def server_status():
-    """Public health + load endpoint."""
-    return jsonify({
-        "status": "ok",
-        "active_pipelines": _ACTIVE_PIPELINES,
-        "max_pipelines": int(os.environ.get("MAX_PIPELINES", "20")),
-        "registered_users": len(_lu()),
-    })
+    return jsonify({"status":"ok","active_pipelines":_ACTIVE_PIPELINES,
+                    "max_pipelines":int(os.environ.get("MAX_PIPELINES","20")),
+                    "registered_users":len(_lu())})
+
+@app.route("/robots.txt")
+def robots_txt():
+    return Response("""User-agent: *
+Allow: /
+Allow: /about
+Allow: /sitemap.xml
+Disallow: /upload
+Disallow: /run_g
+Disallow: /outputs/
+Disallow: /download/
+Disallow: /progress/
+Disallow: /geojson/
+Sitemap: https://elfakgisprostudio.onrender.com/sitemap.xml
+""", mimetype="text/plain")
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    return Response("""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://elfakgisprostudio.onrender.com/</loc>
+       <priority>1.0</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://elfakgisprostudio.onrender.com/about</loc>
+       <priority>0.9</priority><changefreq>monthly</changefreq></url>
+</urlset>""", mimetype="application/xml")
+
+@app.route("/about")
+def about_page():
+    """Public SEO-optimised about page — visible to Google without login."""
+    return Response("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Elfak GIS Pro Studio — Professional Forest GIS Application</title>
+<meta name="description" content="Elfak GIS Pro Studio (elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio) is a professional web-based GIS application for forest boundary mapping, slope analysis, compartment subdivision, survey point generation and multi-forest analysis. Built for Nepal forestry professionals.">
+<meta name="keywords" content="elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio, elfak gis, elfak gis pro, forest gis nepal, forest boundary mapping, slope analysis nepal, compartment mapping, survey points gis, forestry nepal gis, GIS tool nepal">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Elfak GIS Pro Studio — Forest GIS Application">
+<meta property="og:description" content="Professional web GIS for Nepal forestry: boundary mapping, slope analysis, compartment subdivision, survey points. Free to use at elfakgisprostudio.onrender.com">
+<meta property="og:url" content="https://elfakgisprostudio.onrender.com/">
+<meta property="og:type" content="website">
+<link rel="canonical" href="https://elfakgisprostudio.onrender.com/">
+<link rel="alternate" href="https://elfakgisprostudio.onrender.com/" hreflang="en">
+<style>
+  body{font-family:system-ui,sans-serif;max-width:900px;margin:0 auto;padding:20px 24px;
+       color:#1a2e22;background:#f0f8f3;line-height:1.7}
+  h1{color:#059669;font-size:2em;margin-bottom:8px}
+  h2{color:#065f46;border-bottom:2px solid #34d399;padding-bottom:6px;margin-top:32px}
+  .badge{display:inline-block;background:#d1fae5;color:#065f46;padding:3px 10px;
+         border-radius:20px;font-size:13px;font-weight:600;margin:3px}
+  .cta{display:inline-block;background:linear-gradient(135deg,#34d399,#059669);
+       color:white;padding:12px 28px;border-radius:8px;text-decoration:none;
+       font-weight:700;font-size:16px;margin-top:20px;box-shadow:0 4px 14px rgba(16,185,129,.35)}
+  .feature{background:white;border-radius:10px;padding:16px 20px;margin:12px 0;
+            border-left:4px solid #10b981;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+  footer{margin-top:48px;padding-top:16px;border-top:1px solid #b7eacf;
+         color:#6b9880;font-size:13px}
+</style>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication",
+ "name":"Elfak GIS Pro Studio",
+ "alternateName":["elfakgis","elfakgispro","elfakgisstudio","elfakgisprostudio"],
+ "url":"https://elfakgisprostudio.onrender.com/",
+ "description":"Professional web-based GIS application for forest boundary mapping, slope analysis, compartment subdivision and survey point generation for Nepal forestry professionals.",
+ "applicationCategory":"GIS Software",
+ "operatingSystem":"Web Browser",
+ "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
+ "author":{"@type":"Organization","name":"Elfak GIS"}}
+</script>
+</head>
+<body>
+<h1>🌲 Elfak GIS Pro Studio</h1>
+<p><strong>Professional Forest GIS Application</strong> for boundary mapping, slope analysis, compartment subdivision, and survey point generation.</p>
+<p>
+  <span class="badge">elfakgis</span>
+  <span class="badge">elfakgispro</span>
+  <span class="badge">elfakgisstudio</span>
+  <span class="badge">elfakgisprostudio</span>
+  <span class="badge">Forest GIS Nepal</span>
+</p>
+<a href="/" class="cta">🚀 Open Application</a>
+
+<h2>What is Elfak GIS Pro Studio?</h2>
+<p>Elfak GIS Pro Studio is a free, web-based Geographic Information System designed for forestry professionals in Nepal and the broader Himalayan region. It provides a complete workflow from raw survey data to professional-quality GIS outputs — all without requiring QGIS, ArcGIS, or any desktop installation.</p>
+
+<h2>Features</h2>
+<div class="feature"><strong>A — Boundary Whole</strong>: Generate forest boundary polygon from GPS survey points (Excel/CSV). Produces shapefile, line, and point layers with area calculation.</div>
+<div class="feature"><strong>B — Segmented Forest</strong>: Multi-forest boundary generation with separate shapefile per forest/compartment.</div>
+<div class="feature"><strong>C — Sample Plot Generator</strong>: Systematic grid-based sample plot placement inside forest boundaries for forest inventory.</div>
+<div class="feature"><strong>D — Multi-Forest Complex</strong>: Batch process multiple forests with nested compartment structure.</div>
+<div class="feature"><strong>E — Polygon Subdivider</strong>: Automatically divide a forest polygon into N equal-area compartments (2–15) with configurable area tolerance.</div>
+<div class="feature"><strong>F — Slope Analysis</strong>: DEM-based slope classification (0–19°, 19–31°, 31–45°, >45°) with raster-to-polygon conversion, per-compartment area tables, and professional A4 map output.</div>
+<div class="feature"><strong>G — Survey Point Generator</strong>: Generate boundary, vertex, and divider survey points from compartment shapefiles. Exports SHP, CSV, and Excel.</div>
+
+<h2>Technical Specifications</h2>
+<ul>
+<li>Coordinate systems: UTM Zone 43N, 44N, 45N, 46N (EPSG:32643–32646)</li>
+<li>Input formats: Excel (.xlsx), CSV, Shapefile (.shp), ZIP of shapefiles</li>
+<li>Output formats: Shapefile (.shp), GeoJSON, KMZ, PNG map, Excel, CSV</li>
+<li>Map output: A4 size, 200 DPI, professional cartography</li>
+<li>DEM analysis: Slope reclassification, raster-to-polygon, area statistics</li>
+<li>Supports 100+ simultaneous users with per-user data isolation</li>
+</ul>
+
+<h2>Who Uses Elfak GIS Pro Studio?</h2>
+<p>Forest rangers, community forestry groups, district forest offices, forest inventory teams, and GIS professionals in Nepal, Bhutan, and similar forested regions who need professional GIS output without expensive desktop software.</p>
+
+<h2>Open the Application</h2>
+<p><a href="/" class="cta">🌲 Launch Elfak GIS Pro Studio</a></p>
+
+<footer>
+  <p>Elfak GIS Pro Studio · <a href="https://elfakgisprostudio.onrender.com/">elfakgisprostudio.onrender.com</a></p>
+  <p>Keywords: elfakgis · elfakgispro · elfakgisstudio · elfakgisprostudio · forest gis nepal · slope analysis · compartment mapping · survey points · forestry gis</p>
+</footer>
+</body>
+</html>""", mimetype="text/html")
 
 # ── column aliases ───────────────────────────────────────────────────────────
 def _norm(s): return "".join(c for c in str(s).lower() if c.isalnum())
@@ -401,8 +522,20 @@ def _safe_dn(s): return str(s).strip().replace("/","_").replace("\\","_").replac
 def safe_polygon(coords):
     p = Polygon(coords); return p if p.is_valid else p.buffer(0)
 def _repair(g):
-    if g is None or g.is_empty: return None
-    return g if g.is_valid else g.buffer(0)
+    """Repair geometry: fix invalid, handle collections, normalize."""
+    if g is None: return None
+    try:
+        if g.is_empty: return None
+        if not g.is_valid: g = g.buffer(0)
+        if g is None or g.is_empty: return None
+        # Unwrap single-part MultiPolygon
+        if g.geom_type == "MultiPolygon":
+            parts = [p for p in g.geoms if not p.is_empty]
+            if len(parts) == 1: g = parts[0]
+        return g
+    except Exception:
+        try: return g.buffer(0) if g else None
+        except: return None
 def _as_poly(g):
     if g is None or g.is_empty: return None
     if g.geom_type == "Polygon": return g
@@ -421,28 +554,67 @@ def _close_poly(p):
         c = Polygon(ext, holes); return (c if c.is_valid else c.buffer(0)) if not c.is_empty else p
     except: return p
 def _enforce_poly_gdf(gdf):
+    """Ensure GDF only has Polygon/MultiPolygon geometry (shapefile requirement).
+    Extracts polygon parts from GeometryCollections, drops lines/points."""
     if gdf is None or gdf.empty: return gdf
     keep = []
     for _, row in gdf.iterrows():
-        pg = _as_poly(_repair(row.geometry))
-        if pg and not pg.is_empty and pg.area>1e-10:
+        g = row.geometry
+        if g is None: continue
+        # Handle GeometryCollection: extract polygon parts
+        if hasattr(g, "geoms"):
+            polys = [p for p in g.geoms if p.geom_type in ("Polygon","MultiPolygon") and not p.is_empty and p.area>1e-10]
+            if not polys: continue
+            g = _repair(unary_union(polys))
+        if g is None or g.is_empty: continue
+        pg = _as_poly(_repair(g))
+        if pg and not pg.is_empty and pg.area > 1e-10:
             r2 = row.copy(); r2["geometry"] = _close_poly(pg); keep.append(r2)
     if not keep: return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
     return gpd.GeoDataFrame(keep, crs=gdf.crs)
 
 # ── map decorations (reference-image accurate) ───────────────────────────────
 def _north_arrow(ax):
-    """N-arrow top-right, matching reference images."""
+    """Professional north arrow matching reference images.
+    Shows: 'N' label + filled black downward triangle + white upward triangle.
+    Positioned top-right corner, inside axes."""
+    from matplotlib.patches import FancyArrow, Polygon as MPoly
     x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
     aw = x1-x0; ah = y1-y0
-    nx = x1 - aw*0.045
-    ny = y1 - ah*0.055
-    arrh = ah*0.08
-    ax.annotate("", xy=(nx, ny), xytext=(nx, ny - arrh),
-                arrowprops=dict(arrowstyle="-|>", color="black",
-                                linewidth=1.8, mutation_scale=16), zorder=22)
-    ax.text(nx, ny + ah*0.004, "N", ha="center", va="bottom",
-            fontsize=9, fontweight="bold", color="black", zorder=22)
+    # Position: top-right, slightly inset
+    cx = x1 - aw*0.055   # centre x
+    ty = y1 - ah*0.025   # top of N letter
+    arh = ah*0.085        # arrow height
+    arw = aw*0.018        # half-width of arrow
+
+    # N letter at top
+    ax.text(cx, ty, "N", ha="center", va="top",
+            fontsize=12, fontweight="bold", color="black",
+            fontfamily="sans-serif", zorder=25)
+
+    # Arrow shaft centre
+    ac_top = ty - ah*0.022   # just below N
+    ac_bot = ac_top - arh
+
+    # Upper (black) filled triangle — pointing UP
+    tri_up = MPoly([
+        [cx,      ac_top],
+        [cx-arw,  ac_top - arh*0.5],
+        [cx+arw,  ac_top - arh*0.5],
+    ], closed=True, facecolor="black", edgecolor="black", linewidth=0.8, zorder=24)
+    ax.add_patch(tri_up)
+
+    # Lower (white) filled triangle — pointing DOWN
+    tri_dn = MPoly([
+        [cx,      ac_bot],
+        [cx-arw,  ac_bot + arh*0.5],
+        [cx+arw,  ac_bot + arh*0.5],
+    ], closed=True, facecolor="white", edgecolor="black", linewidth=0.8, zorder=24)
+    ax.add_patch(tri_dn)
+
+    # Thin vertical centre line
+    ax.plot([cx, cx], [ac_top - arh*0.5, ac_bot + arh*0.5],
+            color="black", linewidth=0.8, zorder=23)
 
 def _scale_bar(ax):
     """Black-white-black 3-segment scale bar like reference images."""
@@ -516,7 +688,12 @@ def _graticule(ax):
 
 def _style_ax(ax):
     ax.set_aspect("equal")
+    ax.set_facecolor("white")
     _graticule(ax)
+    # Draw neat map frame (thick outer border like reference images)
+    for sp in ax.spines.values():
+        sp.set_linewidth(1.2)
+        sp.set_color("#222")
 
 def _label_feat(ax, gdf, col, fs=8, color="black"):
     """Bold centroid labels with white stroke outline, like reference maps."""
@@ -2295,24 +2472,36 @@ def upload():
             _append_run(username,run_id,"E"); _prog(run_id,"Complete.",100)
             return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
         elif module=="F":
+            # Priority: 1) cached DEM key  2) catalog path  3) uploaded file
+            dem_cache_key = request.form.get("dem_cache_key","").strip()
             dem_catalog_path = request.form.get("dem_catalog_path","").strip()
-            if dem_catalog_path:
-                cat_full = os.path.join("dem_catalog", dem_catalog_path)
+
+            class _FileDEM:
+                """Unified file-like wrapper for cached/catalog/uploaded DEMs."""
+                def __init__(self, p):
+                    self.filename = os.path.basename(p); self._p = p
+                def save(self, dest):
+                    shutil.copy2(self._p, dest)
+                def read(self, size=-1):
+                    with open(self._p,"rb") as f: return f.read(size)
+
+            if dem_cache_key:
+                # Find cached file by key prefix
+                candidates = [f for f in os.listdir(DEM_CACHE_DIR)
+                              if f.startswith(dem_cache_key)]
+                if not candidates:
+                    return jsonify({"error":"Cached DEM not found. Please select again.","run_id":run_id}),400
+                dem_f = _FileDEM(os.path.join(DEM_CACHE_DIR, candidates[0]))
+            elif dem_catalog_path:
+                # Local catalog file
+                cat_full = _safe_path(DEM_CATALOG_DIR, dem_catalog_path)
                 if not os.path.exists(cat_full):
                     return jsonify({"error":f"DEM catalog file not found: {dem_catalog_path}","run_id":run_id}),400
-                class _CatDEM:
-                    def __init__(self, p):
-                        self.filename = os.path.basename(p)
-                        self._p = p
-                    def save(self, dest):
-                        shutil.copy2(self._p, dest)
-                    def read(self, size=-1):
-                        with open(self._p,"rb") as f:
-                            return f.read(size)
-                dem_f = _CatDEM(cat_full)
+                dem_f = _FileDEM(cat_full)
             else:
-                dem_f=request.files.get("dem_file")
-                if not dem_f: return jsonify({"error":"No DEM file uploaded (or select from server catalog).","run_id":run_id}),400
+                dem_f = request.files.get("dem_file")
+                if not dem_f:
+                    return jsonify({"error":"No DEM selected. Choose from the catalog dropdown or upload a .tif file.","run_id":run_id}),400
             f_forest=request.form.get("f_forest") or forest
             f_mode=request.form.get("f_mode","A"); cc=request.form.get("comp_col") or None
             bzip=file.filename.lower().endswith(".zip"); fa=None
@@ -2365,21 +2554,112 @@ def upload():
 # Users pick from this dropdown instead of uploading 2GB files each time.
 # DEM_CATALOG_DIR already initialised in startup block
 @app.route("/dem_catalog")
-@_rate_limit(limit=60, window=60)
+@_rate_limit(limit=30, window=60)
 def dem_catalog():
-    """Return list of available DEM files from server catalog."""
+    """Return list of DEM files available in GitHub repo dem_catalog/ folder.
+    Checks GitHub API first (live list), falls back to local cache manifest.
+    """
+    import urllib.request as _ur
+    import json as _json
+
+    # Try GitHub API to get live file list
+    # Repo: read from GITHUB_DEM_BASE env, extract owner/repo/branch
+    github_api_urls = []
+    for zone in ("44N", "45N"):
+        # GitHub Contents API
+        api_base = os.environ.get("GITHUB_API_DEM",
+            "https://api.github.com/1ravikafle-glitch/ElfakGISProStudio/tree/main/dem_catalog")
+        github_api_urls.append((zone, f"{api_base}/{zone}"))
+
+    files = []
+    for zone, api_url in github_api_urls:
+        try:
+            req = _ur.Request(api_url, headers={"User-Agent": "elfak-gis-app"})
+            with _ur.urlopen(req, timeout=8) as resp:
+                items = _json.loads(resp.read())
+            for item in items:
+                name = item.get("name","")
+                if not name.lower().endswith((".tif",".tiff")): continue
+                size_mb = round(item.get("size",0)/(1024*1024), 1)
+                dl_url  = item.get("download_url","")
+                files.append({
+                    "name":     name,
+                    "zone":     zone,
+                    "path":     f"{zone}/{name}",
+                    "size_mb":  size_mb,
+                    "url":      dl_url,
+                })
+        except Exception as e:
+            log.warning(f"GitHub API {zone} failed: {e}")
+            # Fallback: check local folder
+            local = os.path.join(DEM_CATALOG_DIR, zone)
+            if os.path.isdir(local):
+                for f in os.listdir(local):
+                    if f.lower().endswith((".tif",".tiff")):
+                        fp = os.path.join(local, f)
+                        files.append({
+                            "name":    f,
+                            "zone":    zone,
+                            "path":    f"{zone}/{f}",
+                            "size_mb": round(os.path.getsize(fp)/(1024*1024),1),
+                            "url":     "",
+                        })
+
+    files.sort(key=lambda x: (x["zone"], x["name"]))
+    return jsonify({"files": files, "source": "github"})
+
+@app.route("/dem_fetch", methods=["POST"])
+@_rate_limit(limit=5, window=60)
+def dem_fetch():
+    """Download a DEM file from GitHub to the local cache, return its cache key.
+    Called by frontend before running Group F when catalog DEM is selected."""
+    import urllib.request as _ur
+
+    data   = request.get_json(silent=True) or {}
+    url    = data.get("url","").strip()
+    path   = data.get("path","").strip()   # e.g. "44N/N27E083.tif"
+
+    if not url and not path:
+        return jsonify({"error":"No DEM URL or path provided."}),400
+
+    # Validate URL is from GitHub (security)
+    if url and not (url.startswith("https://raw.githubusercontent.com/") or
+                    url.startswith("https://github.com/")):
+        return jsonify({"error":"DEM URL must be from GitHub raw content."}),400
+
+    # Build local cache path
+    safe_name = re.sub(r"[^A-Za-z0-9._-]","_", os.path.basename(path or url))[:120]
+    cache_key  = hashlib.sha256((url or path).encode()).hexdigest()[:16]
+    local_path = os.path.join(DEM_CACHE_DIR, f"{cache_key}_{safe_name}")
+
+    # Return immediately if already cached
+    if os.path.exists(local_path) and os.path.getsize(local_path) > 1000:
+        size_mb = round(os.path.getsize(local_path)/(1024*1024),1)
+        log.info(f"DEM cache hit: {safe_name} ({size_mb}MB)")
+        return jsonify({"ok":True,"cache_key":cache_key,"local":local_path,
+                        "size_mb":size_mb,"cached":True})
+
+    # Download
+    if not url:
+        # Build URL from GITHUB_DEM_BASE + path
+        url = GITHUB_DEM_BASE.rstrip("/") + "/" + path.lstrip("/")
+
+    log.info(f"Downloading DEM from GitHub: {url}")
     try:
-        files = []
-        for root, _, fnames in os.walk(DEM_CATALOG_DIR):
-            for f in fnames:
-                if f.lower().endswith((".tif", ".tiff")):
-                    rel = os.path.relpath(os.path.join(root, f), DEM_CATALOG_DIR)
-                    size_mb = round(os.path.getsize(os.path.join(root, f)) / (1024*1024), 1)
-                    files.append({"name": f, "path": rel, "size_mb": size_mb})
-        files.sort(key=lambda x: x["name"])
-        return jsonify({"files": files})
+        req = _ur.Request(url, headers={"User-Agent":"elfak-gis-app"})
+        with _ur.urlopen(req, timeout=120) as resp, open(local_path,"wb") as fout:
+            while True:
+                chunk = resp.read(1024*1024)  # 1MB chunks
+                if not chunk: break
+                fout.write(chunk)
+        size_mb = round(os.path.getsize(local_path)/(1024*1024),1)
+        log.info(f"DEM downloaded: {safe_name} ({size_mb}MB)")
+        return jsonify({"ok":True,"cache_key":cache_key,"local":local_path,
+                        "size_mb":size_mb,"cached":False})
     except Exception as e:
-        return jsonify({"files": [], "error": str(e)})
+        if os.path.exists(local_path): os.remove(local_path)
+        log.error(f"DEM download error: {e}")
+        return jsonify({"error":f"Failed to download DEM: {e}"}),500
 
 @app.route("/zip_inspect", methods=["POST"])
 @_rate_limit(limit=20, window=60)
