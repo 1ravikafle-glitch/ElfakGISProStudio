@@ -673,18 +673,26 @@ def _enforce_poly_gdf(gdf):
     return result
 
 # ── map decorations (reference-image accurate) ───────────────────────────────
-def _north_arrow(ax):
-    """Reference-image accurate north arrow: N text + black/white split arrow,
-    drawn in axes fraction coordinates so it never moves with data zoom."""
+def _north_arrow(ax, pos=None):
+    """Reference-image accurate north arrow: N text + black/white split arrow.
+    `pos` = optional (fx, fy) in AXES-FRACTION coords [0..1] for the TOP of
+    the arrow (where the 'N' sits). If None, defaults to top-right corner.
+    This lets the frontend let users drag the arrow and re-render it exactly
+    where they placed it."""
     from matplotlib.patches import FancyArrowPatch
-    # Use axes inset_axes to draw arrow in a fixed top-right corner
     try:
         x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
         aw = x1-x0; ah = y1-y0
 
-        # Arrow centre in data coords — top-right corner inset
-        cx  = x1 - aw*0.06
-        top = y1 - ah*0.02
+        if pos is not None:
+            fx, fy = pos
+            fx = min(max(fx, 0.0), 1.0); fy = min(max(fy, 0.0), 1.0)
+            cx  = x0 + aw*fx
+            top = y0 + ah*fy
+        else:
+            # Default: top-right corner inset
+            cx  = x1 - aw*0.06
+            top = y1 - ah*0.02
         bot = top - ah*0.10
         mid = (top + bot) / 2
         hw  = aw*0.018   # half-width of triangles
@@ -735,20 +743,61 @@ def _scale_bar(ax):
     ax.text(bx+bar_m/2,   by - bh*0.6, _fmt(bar_m/2),    ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
     ax.text(bx+bar_m,     by - bh*0.6, _fmt(bar_m),      ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
 
-def _add_legend(ax, handles, legend_title="Legend", loc="lower right"):
-    """Legend INSIDE axes frame — inset box in corner, never touching map features.
-    Uses bbox_to_anchor with axes fraction to pin to corner with padding."""
+def _reserve_legend_margin(ax, loc="lower right", frac=0.22, custom_pos=None):
+    """
+    Expand the axes data-limits to carve out a genuinely EMPTY margin strip
+    for the legend, so it never sits on top of the drawn map geometry.
+    Must be called BEFORE _add_legend(), after all geometry has been plotted.
+    `frac` = fraction of the current axis range to add as blank margin.
+    `custom_pos` = if the user manually dragged the legend, skip the
+    automatic preset margin and expand symmetrically in all directions
+    instead, so the dragged position always has room regardless of corner.
+    """
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    w = x1 - x0
+    h = y1 - y0
+    if custom_pos is not None:
+        # Symmetric margin on all sides — safe for any drag position
+        m = frac * 0.6
+        ax.set_xlim(x0 - w*m, x1 + w*m)
+        ax.set_ylim(y0 - h*m, y1 + h*m)
+        return
+    if loc == "lower right":
+        ax.set_ylim(y0 - h*frac, y1)          # extra blank space BELOW the data
+    elif loc == "lower left":
+        ax.set_ylim(y0 - h*frac, y1)
+    elif loc == "upper right":
+        ax.set_ylim(y0, y1 + h*frac)          # extra blank space ABOVE the data
+    elif loc == "upper left":
+        ax.set_ylim(y0, y1 + h*frac)
+    elif loc == "right":
+        ax.set_xlim(x0, x1 + w*frac)          # extra blank space to the RIGHT
+
+def _add_legend(ax, handles, legend_title="Legend", loc="lower right", pos=None):
+    """Legend placed in a RESERVED BLANK MARGIN — never overlaps the drawn map.
+    Call _reserve_legend_margin(ax, loc) BEFORE this, after plotting geometry.
+    `pos` = optional (fx, fy) in AXES-FRACTION coords [0..1] for the legend's
+    anchor corner — overrides the `loc` preset. Lets the frontend send a
+    user-dragged position and have it re-rendered exactly there."""
     if not handles: return
-    # Map loc → (bbox_to_anchor_x, bbox_to_anchor_y, corner alignment)
-    # Values slightly inside the axes so box is fully inside the frame
-    inset = {
-        "lower right": (0.98, 0.02, "lower right"),
-        "lower left":  (0.02, 0.02, "lower left"),
-        "upper right": (0.98, 0.98, "upper right"),
-        "upper left":  (0.02, 0.98, "upper left"),
-        "right":       (0.98, 0.50, "center right"),
-    }
-    bba_x, bba_y, loca = inset.get(loc, (0.98, 0.02, "lower right"))
+    if pos is not None:
+        fx, fy = pos
+        bba_x = min(max(fx, 0.0), 1.0)
+        bba_y = min(max(fy, 0.0), 1.0)
+        # Pick the nearest matplotlib anchor corner so the box still reads
+        # in the natural direction relative to where the user dropped it
+        loca = ("upper" if bba_y > 0.5 else "lower") + " " + \
+               ("right" if bba_x > 0.5 else "left")
+    else:
+        inset = {
+            "lower right": (0.98, 0.01, "lower right"),
+            "lower left":  (0.02, 0.01, "lower left"),
+            "upper right": (0.98, 0.99, "upper right"),
+            "upper left":  (0.02, 0.99, "upper left"),
+            "right":       (0.99, 0.50, "center right"),
+        }
+        bba_x, bba_y, loca = inset.get(loc, (0.98, 0.01, "lower right"))
     try:
         leg = ax.legend(
             handles=handles,
@@ -757,23 +806,23 @@ def _add_legend(ax, handles, legend_title="Legend", loc="lower right"):
             bbox_to_anchor=(bba_x, bba_y),
             bbox_transform=ax.transAxes,
             fontsize=8.5, title_fontsize=9,
-            framealpha=0.92,
+            framealpha=1.0,
             edgecolor="#555",
             fancybox=False,
             frameon=True,
             borderpad=0.9,
             labelspacing=0.55,
-            facecolor="#f5f5f5",
+            facecolor="white",
             handlelength=1.8,
             handletextpad=0.6,
         )
         leg.get_frame().set_linewidth(1.2)
         leg.get_title().set_fontweight("bold")
         leg.get_title().set_fontsize(9)
-        leg.set_zorder(30)   # on top of everything
+        leg.set_zorder(30)
     except Exception:
         ax.legend(handles=handles, title=legend_title, loc=loc,
-                  fontsize=8, framealpha=0.9)
+                  fontsize=8, framealpha=1.0, facecolor="white")
 
 def _graticule(ax):
     """Coord labels on all 4 edges, NO interior gridlines. Matches reference."""
@@ -1813,7 +1862,8 @@ _COMP_COLORS_RICH = [
     "#E91E63","#009688","#FFC107","#3F51B5","#8BC34A"
 ]
 
-def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID"):
+def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID",
+                          legend_pos=None, north_pos=None):
     """Render compartment map like reference image 3: solid colored fills, dark border, legend with ha."""
     fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white")
@@ -1841,8 +1891,9 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
     if lc_use:
         _label_feat(ax, poly_gdf, lc_use, fs=9, color="#111111")
 
-    _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
-    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
+    _style_ax(ax); _north_arrow(ax, pos=north_pos); _scale_bar(ax)
+    _reserve_legend_margin(ax, loc="lower right", custom_pos=legend_pos)
+    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right", pos=legend_pos)
     ax.set_title(title.strip() or "Compartment Division Map",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
@@ -1851,7 +1902,8 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
             label_col=None, label_pts_gdf=None, area_ha=None, title="",
-            legend_title="Legend", user_label_col=None):
+            legend_title="Legend", user_label_col=None,
+            legend_pos=None, north_pos=None):
     """A4 map matching reference images: white bg, blue boundary, red pts, numbered labels."""
     fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white"); handles = []
@@ -1910,8 +1962,9 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
         elif "Forest" in poly_gdf.columns:
             _label_feat(ax, poly_gdf, "Forest", fs=9, color="#1565C0")
 
-    _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
-    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
+    _style_ax(ax); _north_arrow(ax, pos=north_pos); _scale_bar(ax)
+    _reserve_legend_margin(ax, loc="lower right", custom_pos=legend_pos)
+    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right", pos=legend_pos)
     head = title.strip() if title.strip() else (
         f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
@@ -1945,6 +1998,7 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
              for cid,c in cc.items()]
     from matplotlib.lines import Line2D as _L2Dp
     handles.append(_L2Dp([0],[0],color="black",linewidth=1.8,label="Forest Boundary"))
+    _reserve_legend_margin(ax1, loc="lower right")
     _add_legend(ax1, handles, legend_title=legend_title or "Slope Classes", loc="lower right")
     mt=title.strip() if title.strip() else "Slope Classification Map"
     if hg: mt+=f" — {len(per_group_summaries)} Groups"
@@ -2294,6 +2348,7 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
         handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=ha_txt))
 
     _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
+    _reserve_legend_margin(ax, loc="lower right")
     _add_legend(ax, handles, legend_title="Legend", loc="lower right")
     ax.set_title(title.strip() or "Forest Survey Points",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
@@ -2443,6 +2498,14 @@ def compose_map(run_id):
     try:
         data=request.get_json(silent=True) or {}
         title=data.get("title",""); lt=data.get("legend_title","Legend"); lc=data.get("label_col","")
+
+        # Optional user-dragged positions (axes-fraction 0..1) for legend box
+        # and north arrow, sent from the draggable overlay in the preview UI.
+        legend_pos = data.get("legend_pos")   # e.g. [0.75, 0.15]
+        north_pos  = data.get("north_pos")    # e.g. [0.92, 0.92]
+        legend_pos = tuple(legend_pos) if isinstance(legend_pos,(list,tuple)) and len(legend_pos)==2 else None
+        north_pos  = tuple(north_pos)  if isinstance(north_pos, (list,tuple)) and len(north_pos)==2  else None
+
         shps=[os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith("_polygon.shp")]
         if not shps: return jsonify({"error":"No shapefiles found."}),400
         gdfs=[]; crs0=None
@@ -2453,10 +2516,12 @@ def compose_map(run_id):
         pg=gpd.GeoDataFrame(pd.concat(gdfs,ignore_index=True),crs=crs0)
         pp=os.path.join(folder,"output.png")
         if "Comp_ID" in pg.columns:
-            preview_compartments(pg,pp,title=title,legend_title=lt,label_col=lc or "Comp_ID")
+            preview_compartments(pg,pp,title=title,legend_title=lt,label_col=lc or "Comp_ID",
+                                  legend_pos=legend_pos, north_pos=north_pos)
         else:
             ah=float(pg["Area_ha"].sum()) if "Area_ha" in pg.columns else None
-            preview(pg,None,None,pp,title=title,legend_title=lt,area_ha=ah,user_label_col=lc or None)
+            preview(pg,None,None,pp,title=title,legend_title=lt,area_ha=ah,user_label_col=lc or None,
+                    legend_pos=legend_pos, north_pos=north_pos)
         return jsonify({"ok":True,"png":f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
     except Exception as e: return jsonify({"error":f"Compose error: {e}"}),500
 
