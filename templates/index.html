@@ -737,6 +737,63 @@ select:focus, input:focus {
   display:none; border-radius:var(--r4);
   transition:opacity .4s var(--ease), transform .4s var(--ease);
 }
+
+/* ── DRAGGABLE LEGEND / NORTH-ARROW OVERLAY ─────────────────────────────── */
+.drag-overlay {
+  position:absolute; inset:0; display:none; pointer-events:none; z-index:5;
+}
+.drag-overlay.active { display:block; pointer-events:none; }
+.drag-handle {
+  position:absolute;
+  pointer-events:auto;
+  cursor:grab;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(16,185,129,.16);
+  border:2px dashed var(--mint);
+  border-radius:8px;
+  color:#065f46;
+  font-family:var(--mono);
+  font-weight:700;
+  font-size:11px;
+  user-select:none;
+  -webkit-user-select:none;
+  touch-action:none;
+  box-shadow:0 2px 10px rgba(16,185,129,.25);
+  transition:box-shadow .2s, transform .15s, background .2s;
+  z-index:6;
+}
+.drag-handle:hover {
+  background:rgba(16,185,129,.26);
+  box-shadow:0 4px 16px rgba(16,185,129,.35);
+}
+.drag-handle.dragging {
+  cursor:grabbing;
+  background:rgba(16,185,129,.32);
+  box-shadow:0 6px 24px rgba(16,185,129,.45);
+  transform:scale(1.04);
+  z-index:7;
+}
+.drag-handle-label { pointer-events:none; white-space:nowrap; }
+.drag-legend {
+  width:120px; height:60px;
+  /* default position: bottom-right, matches matplotlib default */
+  right:4%; bottom:4%;
+}
+.drag-north {
+  width:48px; height:48px;
+  border-radius:50%;
+  right:6%; top:4%;
+}
+
+/* ── LAYOUT EDIT TOOLBAR ─────────────────────────────────────────────────── */
+.layout-toolbar {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:6px 4px;
+}
+.layout-hint {
+  font-size:10px; color:var(--mint); font-family:var(--mono);
+  animation:pillPulse 2.2s ease-in-out infinite;
+}
 .empty-msg {
   text-align:center; color:var(--muted);
   font-family:var(--mono); font-size:10px; padding:20px; line-height:1.9;
@@ -954,6 +1011,147 @@ select:focus, input:focus {
 .hidden { display:none!important }
 
 /* ── REDUCED MOTION ── */
+/* ═══════════════════════════════════════════════════════════════════════
+   RESPONSIVE DESIGN — Mobile, Tablet, Laptop, Desktop
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Hamburger menu button — hidden on desktop, shown on small screens */
+.mobile-nav-btn {
+  display:none;
+  flex-direction:column; justify-content:center; gap:4px;
+  width:34px; height:34px; padding:6px;
+  background:var(--glass); border:1px solid var(--panel-border);
+  border-radius:8px; cursor:pointer; flex-shrink:0;
+}
+.mobile-nav-btn span {
+  display:block; width:100%; height:2px; border-radius:2px;
+  background:var(--txt); transition:transform .25s var(--ease), opacity .2s;
+}
+.mobile-nav-btn.open span:nth-child(1) { transform:translateY(6px) rotate(45deg); }
+.mobile-nav-btn.open span:nth-child(2) { opacity:0; }
+.mobile-nav-btn.open span:nth-child(3) { transform:translateY(-6px) rotate(-45deg); }
+
+.mobile-nav-bg {
+  display:none; position:fixed; inset:0; z-index:50;
+  background:rgba(0,0,0,.35); backdrop-filter:blur(2px);
+}
+.mobile-nav-bg.show { display:block; }
+
+/* ── LAPTOP / SMALL DESKTOP (≤1280px): narrow the side columns ── */
+@media (max-width: 1280px) {
+  .main { grid-template-columns:210px 1fr 330px; }
+  .hdr-pills .pill:nth-child(3) { display:none; } /* hide module pill, redundant with nav */
+}
+
+/* ── TABLET (≤1024px): stack right preview panel below, 2-col grid ── */
+@media (max-width: 1024px) {
+  .main {
+    grid-template-columns:200px 1fr;
+    grid-template-rows:1fr auto;
+    overflow-y:auto;
+  }
+  .preview-panel {
+    grid-column:1 / -1;
+    min-height:420px;
+    max-height:60vh;
+  }
+  .center { min-height:380px; }
+  body { overflow-y:auto; }
+  .shell { height:auto; min-height:100vh; }
+}
+
+/* ── TABLET PORTRAIT / LARGE MOBILE (≤820px): hide left nav behind hamburger ── */
+@media (max-width: 820px) {
+  .mobile-nav-btn { display:flex; }
+  .logo-sub { display:none; }
+  .hdr-pills { display:none; }
+  .hdr { padding:0 12px; gap:8px; }
+  .hdr-user span#uname { display:none; }
+
+  .main {
+    grid-template-columns:1fr;
+    grid-template-rows:auto auto;
+    padding:8px;
+    gap:8px;
+  }
+  #left-nav-panel {
+    position:fixed;
+    top:0; left:-300px; bottom:0;
+    width:280px; z-index:60;
+    border-radius:0;
+    transition:left .3s var(--ease);
+    box-shadow:8px 0 32px rgba(0,0,0,.25);
+  }
+  #left-nav-panel.mobile-open { left:0; }
+  .center { order:1; }
+  .preview-panel { order:2; min-height:380px; max-height:70vh; }
+
+  #theme-btn span#theme-label { display:none; }
+  #theme-btn { min-width:auto; padding:6px 10px; }
+
+  .console { flex-wrap:wrap; gap:8px; }
+  .run-btn { width:100%; }
+  .prog-wrap { width:100%; }
+}
+
+/* ── MOBILE (≤640px) ── */
+@media (max-width: 640px) {
+  html { font-size:15px; }
+  .hdr { min-height:48px; }
+  .logo-text { font-size:11.5px; }
+  .logo-mark { width:28px; height:28px; }
+
+  .main { padding:6px; gap:6px; }
+  .panel-hd { padding:9px 12px; font-size:8px; }
+  .panel-body { padding:10px; }
+
+  .row2, .row3 { grid-template-columns:1fr; }
+  .mtabs { flex-wrap:wrap; }
+  .mtab { width:28px; height:28px; font-size:10px; }
+
+  .ptabs { flex-wrap:wrap; }
+  .ptab { min-width:30%; font-size:8.5px; padding:6px 4px; }
+
+  .preview-panel { min-height:320px; }
+  .preview-foot { flex-wrap:wrap; gap:8px; }
+  .dl-btn, #view-full-btn { width:100%; text-align:center; }
+
+  #hist-drawer { width:92vw; right:-92vw; }
+
+  .login-card { padding:26px 22px; width:94vw; }
+  .login-card h2 { font-size:17px; }
+
+  .drag-legend { width:96px; height:50px; font-size:9px; }
+  .drag-north { width:38px; height:38px; }
+
+  .layout-toolbar { flex-direction:column; align-items:stretch; }
+  .layout-toolbar .etool { width:100%; text-align:center; }
+}
+
+/* ── VERY SMALL MOBILE (≤400px) ── */
+@media (max-width: 400px) {
+  .logo-text { font-size:10px; }
+  .hdr-btn { padding:5px 8px; font-size:9.5px; }
+  .hdr-btn span#hcnt { display:none; }
+  #left-nav-panel { width:240px; }
+}
+
+/* ── TOUCH DEVICES: bigger tap targets ── */
+@media (hover: none) and (pointer: coarse) {
+  .nav-item, .mtab, .ptab, .etool, .hdr-btn, .tog, .run-act {
+    min-height:38px;
+  }
+  .drag-handle { min-width:60px; min-height:44px; }
+  select, input[type=number], input[type=text] { min-height:40px; font-size:16px; } /* 16px prevents iOS zoom */
+}
+
+/* ── LANDSCAPE MOBILE: tighten vertical space ── */
+@media (max-width: 900px) and (max-height: 480px) and (orientation: landscape) {
+  .hdr { min-height:42px; }
+  .preview-panel { max-height:50vh; }
+  .main { padding:4px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration:.01ms!important;
@@ -1037,6 +1235,9 @@ select:focus, input:focus {
 
 <!-- HEADER -->
 <header class="hdr">
+  <button id="mobile-nav-btn" class="mobile-nav-btn" onclick="toggleMobileNav()" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
   <div class="logo">
     <div class="logo-mark">
       <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.6"/><path d="M12 4l2.2 7L20 12l-5.8 1L12 20l-2.2-7L4 12l5.8-1z" fill="#fff"/></svg>
@@ -1068,9 +1269,10 @@ select:focus, input:focus {
 
 <!-- MAIN -->
 <div class="main">
+<div id="mobile-nav-bg" class="mobile-nav-bg" onclick="toggleMobileNav()"></div>
 
 <!-- LEFT NAV -->
-<div class="panel">
+<div class="panel" id="left-nav-panel">
   <div class="panel-hd">🗂 Module Navigator</div>
   <div class="panel-body">
     <div class="nav-item active" onclick="switchTab('A')">🌲 A — Boundary Whole</div>
@@ -1408,10 +1610,26 @@ select:focus, input:focus {
 
   <!-- PNG view -->
   <div id="pv-static" style="flex:1;display:flex;flex-direction:column;gap:6px;min-height:0">
-    <div class="canvas-wrap">
+    <div class="canvas-wrap" id="canvas-wrap-static">
       <img id="out-img" alt="Map Output">
       <div class="empty-msg" id="empty-msg">🌲 Run a pipeline to see your A4 map here.<br><br>
         Supports Groups A–G<br>PNG · SHP · CSV · Excel</div>
+      <!-- Draggable overlay layer — only shown when "Edit Layout" is active -->
+      <div id="drag-overlay" class="drag-overlay">
+        <div id="drag-legend" class="drag-handle drag-legend" title="Drag to reposition legend">
+          <span class="drag-handle-label">🗂 Legend</span>
+        </div>
+        <div id="drag-north" class="drag-handle drag-north" title="Drag to reposition north arrow">
+          <span class="drag-handle-label">🧭 N</span>
+        </div>
+      </div>
+    </div>
+    <!-- Layout edit toolbar -->
+    <div class="layout-toolbar" id="layout-toolbar">
+      <button class="etool" id="layout-edit-btn" onclick="toggleLayoutEdit()">✥ Edit Layout</button>
+      <button class="etool" id="layout-apply-btn" onclick="applyLayoutPositions()" style="display:none">✓ Apply Position</button>
+      <button class="etool" id="layout-reset-btn" onclick="resetLayoutPositions()" style="display:none">↺ Reset to Default</button>
+      <span class="layout-hint" id="layout-hint" style="display:none">Drag the boxes below, then click Apply</span>
     </div>
   </div>
 
@@ -2235,10 +2453,16 @@ async function _onDemSelect(sel) {
       clearInterval(interval);
       if (dlLbl)  dlLbl.textContent = `❌ Download failed: ${d.error}`;
       if (dlBar)  dlBar.style.background = '#ef4444';
-      if (info)   info.textContent = `Download error: ${d.error}. Upload manually instead.`;
+      let extra = '';
+      if (d.attempted_urls && d.attempted_urls.length) {
+        extra = ` Tried ${d.attempted_urls.length} URL(s) — check the file exists at: ` +
+                d.attempted_urls[d.attempted_urls.length-1];
+      }
+      if (info) info.textContent = `Download error: ${d.error}.${extra} Upload manually instead.`;
       _demCacheKey = '';
       const dzDem = document.getElementById('dz-F-dem');
       if (dzDem) { dzDem.style.opacity='1'; dzDem.style.pointerEvents='auto'; }
+      console.warn('DEM fetch failed. Attempted URLs:', d.attempted_urls, 'Hint:', d.hint);
     }
   } catch(e) {
     clearInterval(interval);
@@ -2461,21 +2685,225 @@ function viewFullMap() {
 }
 
 /* ── MAP COMPOSER ────────────────────────────────────────────────────────── */
-async function doCompose(){
+async function doCompose(extraPayload){
   if(!currentRunId){alert('Run a pipeline first.'); return;}
-  document.getElementById('comp-status').textContent='Re-rendering…';
+  const statusEl = document.getElementById('comp-status');
+  if (statusEl) statusEl.textContent='Re-rendering…';
   try{
+    const payload = Object.assign({
+      title:document.getElementById('comp-title').value,
+      legend_title:document.getElementById('comp-legend').value,
+      label_col:document.getElementById('comp-label').value,
+      module:document.getElementById('comp-module').value
+    }, extraPayload || {});
     const res=await fetch(`${BASE}/compose/${currentRunId}`,{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({title:document.getElementById('comp-title').value,legend_title:document.getElementById('comp-legend').value,label_col:document.getElementById('comp-label').value,module:document.getElementById('comp-module').value})
+      body:JSON.stringify(payload)
     });
     const d=await res.json(); if(d.error) throw new Error(d.error);
-    document.getElementById('comp-status').textContent='✅ Map re-rendered successfully!';
+    if (statusEl) statusEl.textContent='✅ Map re-rendered successfully!';
     const img=document.getElementById('out-img');
-    img.style.display='block'; img.src=`${BASE}${d.png}`;
+    img.style.opacity='0';
+    img.onload=()=>{
+      img.style.display='block';
+      img.style.transition='opacity .35s var(--ease)';
+      requestAnimationFrame(()=>{img.style.opacity='1';});
+      setTimeout(()=>img.style.transition='',400);
+    };
+    img.src=`${BASE}${d.png}`;
     document.getElementById('empty-msg').style.display='none'; switchPView('static');
-  }catch(e){document.getElementById('comp-status').textContent='❌ Error: '+e.message;}
+    return true;
+  }catch(e){
+    if (statusEl) statusEl.textContent='❌ Error: '+e.message;
+    else alert('Compose error: '+e.message);
+    return false;
+  }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DRAGGABLE LEGEND / NORTH-ARROW LAYOUT EDITOR
+   Lets the user drag the legend box and north-arrow icon anywhere on the
+   preview image, then "Apply Position" re-renders the PNG on the server
+   with matplotlib placing them at the exact normalized coordinates.
+═══════════════════════════════════════════════════════════════════════ */
+let _layoutEditActive = false;
+let _dragState = null;          // {el, startX, startY, origLeft, origTop}
+let _legendPosFrac = null;      // [fx, fy] in 0..1, axes-fraction (image space)
+let _northPosFrac  = null;
+
+function toggleLayoutEdit() {
+  if (!currentRunId) { alert('Run a pipeline first to edit the map layout.'); return; }
+  const img = document.getElementById('out-img');
+  if (!img || img.style.display === 'none' || !img.src) {
+    alert('Generate a map first, then you can drag the legend and north arrow.');
+    return;
+  }
+  _layoutEditActive = !_layoutEditActive;
+  const overlay   = document.getElementById('drag-overlay');
+  const editBtn   = document.getElementById('layout-edit-btn');
+  const applyBtn  = document.getElementById('layout-apply-btn');
+  const resetBtn  = document.getElementById('layout-reset-btn');
+  const hint      = document.getElementById('layout-hint');
+
+  overlay.classList.toggle('active', _layoutEditActive);
+  editBtn.textContent   = _layoutEditActive ? '✕ Close Editor' : '✥ Edit Layout';
+  applyBtn.style.display = _layoutEditActive ? 'inline-flex' : 'none';
+  resetBtn.style.display = _layoutEditActive ? 'inline-flex' : 'none';
+  hint.style.display     = _layoutEditActive ? 'inline' : 'none';
+
+  if (_layoutEditActive) {
+    _initDragHandles();
+  }
+}
+
+function _initDragHandles() {
+  const legendEl = document.getElementById('drag-legend');
+  const northEl  = document.getElementById('drag-north');
+  [legendEl, northEl].forEach(el => {
+    if (el.dataset.wired) return;     // only wire listeners once
+    el.dataset.wired = '1';
+    el.addEventListener('pointerdown', _onDragStart);
+  });
+}
+
+function _onDragStart(e) {
+  e.preventDefault();
+  const el = e.currentTarget;
+  const wrap = document.getElementById('canvas-wrap-static');
+  const wrapRect = wrap.getBoundingClientRect();
+  const elRect   = el.getBoundingClientRect();
+
+  _dragState = {
+    el, wrap, wrapRect,
+    offsetX: e.clientX - elRect.left,
+    offsetY: e.clientY - elRect.top,
+  };
+  el.classList.add('dragging');
+  el.setPointerCapture(e.pointerId);
+  el.addEventListener('pointermove', _onDragMove);
+  el.addEventListener('pointerup', _onDragEnd);
+  el.addEventListener('pointercancel', _onDragEnd);
+}
+
+function _onDragMove(e) {
+  if (!_dragState) return;
+  const { el, wrapRect, offsetX, offsetY } = _dragState;
+  let newLeft = e.clientX - wrapRect.left - offsetX;
+  let newTop  = e.clientY - wrapRect.top  - offsetY;
+  // Clamp inside the wrap bounds
+  const elW = el.offsetWidth, elH = el.offsetHeight;
+  newLeft = Math.max(0, Math.min(newLeft, wrapRect.width  - elW));
+  newTop  = Math.max(0, Math.min(newTop,  wrapRect.height - elH));
+  el.style.left  = newLeft + 'px';
+  el.style.top   = newTop  + 'px';
+  el.style.right = 'auto';
+  el.style.bottom= 'auto';
+}
+
+function _onDragEnd(e) {
+  if (!_dragState) return;
+  const { el } = _dragState;
+  el.classList.remove('dragging');
+  el.removeEventListener('pointermove', _onDragMove);
+  el.removeEventListener('pointerup', _onDragEnd);
+  el.removeEventListener('pointercancel', _onDragEnd);
+  _computeFracFromHandle(el);
+  _dragState = null;
+}
+
+function _computeFracFromHandle(el) {
+  // Convert the handle's pixel position (relative to the displayed <img>)
+  // into axes-fraction coords [0..1] matching matplotlib's coordinate
+  // system used by _add_legend(pos=...) / _north_arrow(pos=...).
+  const img = document.getElementById('out-img');
+  const wrap = document.getElementById('canvas-wrap-static');
+  const imgRect  = img.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+
+  // Handle position relative to the wrap
+  const handleLeft = parseFloat(el.style.left) || 0;
+  const handleTop  = parseFloat(el.style.top)  || 0;
+  const handleCx = handleLeft + el.offsetWidth / 2;
+  const handleCy = handleTop  + el.offsetHeight / 2;
+
+  // Image offset within the wrap (object-fit:contain centers it)
+  const imgLeftInWrap = imgRect.left - wrapRect.left;
+  const imgTopInWrap  = imgRect.top  - wrapRect.top;
+
+  // DOM pixel Y grows downward (top=0); matplotlib axes-fraction Y grows
+  // upward (bottom=0, top=1). Flip Y so a handle dragged near the TOP of
+  // the image maps to fy≈1 (matplotlib top), and near the BOTTOM maps to
+  // fy≈0 (matplotlib bottom) — matching _add_legend/_north_arrow's pos arg.
+  let fx = (handleCx - imgLeftInWrap) / imgRect.width;
+  let fy = 1 - ((handleCy - imgTopInWrap) / imgRect.height);
+  fx = Math.max(0, Math.min(1, fx));
+  fy = Math.max(0, Math.min(1, fy));
+
+  if (el.id === 'drag-legend') {
+    _legendPosFrac = [fx, fy];
+  } else if (el.id === 'drag-north') {
+    _northPosFrac = [fx, fy];
+  }
+}
+
+async function applyLayoutPositions() {
+  const applyBtn = document.getElementById('layout-apply-btn');
+  const hint = document.getElementById('layout-hint');
+  if (!_legendPosFrac && !_northPosFrac) {
+    alert('Drag the legend or north-arrow box first, then click Apply.');
+    return;
+  }
+  applyBtn.disabled = true;
+  applyBtn.textContent = '⏳ Applying…';
+  if (hint) hint.textContent = 'Re-rendering map with new layout…';
+
+  const payload = {};
+  if (_legendPosFrac) payload.legend_pos = _legendPosFrac;
+  if (_northPosFrac)  payload.north_pos  = _northPosFrac;
+
+  const ok = await doCompose(payload);
+
+  applyBtn.disabled = false;
+  applyBtn.textContent = '✓ Apply Position';
+  if (hint) hint.textContent = ok ? '✓ Layout applied!' : 'Drag the boxes below, then click Apply';
+  if (ok) {
+    setTimeout(() => { if(hint) hint.textContent = 'Drag the boxes below, then click Apply'; }, 2500);
+  }
+}
+
+function resetLayoutPositions() {
+  _legendPosFrac = null;
+  _northPosFrac  = null;
+  const legendEl = document.getElementById('drag-legend');
+  const northEl  = document.getElementById('drag-north');
+  // Reset to CSS default positions
+  [legendEl, northEl].forEach(el => {
+    el.style.left = ''; el.style.top = '';
+    el.style.right = ''; el.style.bottom = '';
+  });
+  legendEl.style.right = '4%'; legendEl.style.bottom = '4%';
+  northEl.style.right  = '6%'; northEl.style.top    = '4%';
+  doCompose({legend_pos: null, north_pos: null});
+}
+
+/* ── MOBILE NAV TOGGLE ───────────────────────────────────────────────────── */
+function toggleMobileNav() {
+  const panel = document.getElementById('left-nav-panel');
+  const bg    = document.getElementById('mobile-nav-bg');
+  const btn   = document.getElementById('mobile-nav-btn');
+  const isOpen = panel.classList.toggle('mobile-open');
+  bg.classList.toggle('show', isOpen);
+  btn.classList.toggle('open', isOpen);
+}
+// Auto-close mobile nav when a module is selected (better UX on phones)
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.nav-item') && window.innerWidth <= 820) {
+    const panel = document.getElementById('left-nav-panel');
+    if (panel.classList.contains('mobile-open')) {
+      setTimeout(() => toggleMobileNav(), 150);
+    }
+  }
+});
 
 /* ── AUTH ────────────────────────────────────────────────────────────────── */
 /* Username hint debounce */
