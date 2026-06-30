@@ -3,7 +3,25 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Elfak GIS Engine Pro — Forest Studio</title>
+<title>Elfak GIS Pro Studio — Professional Forest GIS Application</title>
+<meta name="description" content="Elfak GIS Pro Studio (elfakgis, elfakgispro, elfakgisprostudio) — Professional web GIS for forest boundary mapping, slope analysis, compartment subdivision and survey points. Free for Nepal forestry professionals.">
+<meta name="keywords" content="elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio, elfak gis, forest gis nepal, boundary mapping, slope analysis, compartment mapping, forestry nepal">
+<meta name="robots" content="index, follow">
+<meta name="author" content="Elfak GIS Pro Studio">
+<meta property="og:title" content="Elfak GIS Pro Studio — Forest GIS Application">
+<meta property="og:description" content="Professional web GIS: boundary mapping, slope analysis, compartment subdivision, survey points. Free at elfakgisprostudio.onrender.com">
+<meta property="og:url" content="https://elfakgisprostudio.onrender.com/">
+<meta property="og:type" content="website">
+<link rel="canonical" href="https://elfakgisprostudio.onrender.com/">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication",
+ "name":"Elfak GIS Pro Studio",
+ "alternateName":["elfakgis","elfakgispro","elfakgisstudio","elfakgisprostudio"],
+ "url":"https://elfakgisprostudio.onrender.com/",
+ "description":"Professional web-based GIS for forest boundary mapping, slope analysis, compartment subdivision and survey point generation.",
+ "applicationCategory":"GIS Software","operatingSystem":"Web Browser",
+ "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <!-- Leaflet.PM for drag vertex editing -->
@@ -1034,6 +1052,7 @@ select:focus, input:focus {
     <div class="avatar" id="uavatar">?</div>
     <span id="uname" style="font-size:12px;font-weight:600;color:var(--txt2)"></span>
     <button class="hdr-btn" onclick="toggleHist()">📋 History <span id="hcnt"></span></button>
+    <a href="/about" target="_blank" class="hdr-btn" style="text-decoration:none">ℹ About</a>
     <button class="hdr-btn danger" onclick="doLogout()">Sign Out</button>
   </div>
   <!-- Dark/Light Mode Toggle -->
@@ -1261,21 +1280,62 @@ select:focus, input:focus {
         </div>
         <div class="fg"><label>Step 2 — DEM GeoTIFF</label></div>
         <div style="display:flex;flex-direction:column;gap:6px">
-          <!-- Server DEM catalog (searchable) -->
+          <!-- GitHub DEM catalog (searchable by zone and name) -->
           <div class="fg">
-            <label>Server DEM Library <span style="color:var(--mint);font-size:8px">(pre-loaded, searchable)</span></label>
-            <input type="text" id="f-dem-search" placeholder="🔍 Type to search DEM by name…"
+            <label>DEM Library from GitHub
+              <span style="color:var(--mint);font-size:8px;margin-left:4px">📦 44N &amp; 45N pre-loaded</span>
+            </label>
+            <input type="text" id="f-dem-search"
+                   placeholder="🔍 Search by name or zone (e.g. 44N, N27…)"
                    oninput="_filterDemList(this.value)"
-                   style="border-color:rgba(16,185,129,.3);margin-bottom:3px">
-            <select id="f-dem-catalog" size="4"
-                    style="height:auto;border-color:rgba(16,185,129,.25);font-size:10px;padding:4px;min-height:60px"
+                   style="margin-bottom:3px">
+            <!-- Zone filter tabs -->
+            <div style="display:flex;gap:4px;margin-bottom:4px">
+              <button onclick="_filterDemList('','')"
+                style="flex:1;padding:4px;font-size:9px;font-family:var(--mono);font-weight:700;
+                       border:1px solid var(--border);border-radius:4px;cursor:pointer;
+                       background:var(--panel);color:var(--txt2);transition:all .2s"
+                id="dem-tab-all">All Zones</button>
+              <button onclick="_filterDemList('','44N')"
+                style="flex:1;padding:4px;font-size:9px;font-family:var(--mono);font-weight:700;
+                       border:1px solid var(--border);border-radius:4px;cursor:pointer;
+                       background:var(--panel);color:var(--txt2);transition:all .2s"
+                id="dem-tab-44">Zone 44N</button>
+              <button onclick="_filterDemList('','45N')"
+                style="flex:1;padding:4px;font-size:9px;font-family:var(--mono);font-weight:700;
+                       border:1px solid var(--border);border-radius:4px;cursor:pointer;
+                       background:var(--panel);color:var(--txt2);transition:all .2s"
+                id="dem-tab-45">Zone 45N</button>
+            </div>
+            <select id="f-dem-catalog" size="5"
+                    style="height:auto;border-color:rgba(16,185,129,.25);
+                           font-size:10px;font-family:var(--mono);padding:4px;min-height:65px"
                     onchange="_onDemSelect(this)">
-              <option value="" disabled>Loading DEM catalog…</option>
+              <option value="" disabled>Loading DEM catalog from GitHub…</option>
             </select>
-            <div id="f-dem-cat-info" style="font-size:9px;color:var(--muted);font-family:var(--mono);min-height:14px"></div>
+            <div id="f-dem-cat-info"
+                 style="font-size:9px;color:var(--muted);font-family:var(--mono);min-height:16px;line-height:1.6">
+            </div>
+            <!-- Download progress -->
+            <div id="f-dem-dl-wrap" style="display:none;margin-top:4px">
+              <div style="font-size:9px;color:var(--mint);font-family:var(--mono);margin-bottom:3px"
+                   id="f-dem-dl-label">Downloading DEM…</div>
+              <div style="height:4px;background:rgba(16,185,129,.12);border-radius:4px;overflow:hidden">
+                <div id="f-dem-dl-bar"
+                     style="height:100%;background:var(--mint-g);width:0%;transition:width .4s;border-radius:4px">
+                </div>
+              </div>
+            </div>
           </div>
-          <div style="text-align:center;font-size:9px;color:var(--muted);font-family:var(--mono)">— or upload manually —</div>
-          <div class="dz" id="dz-F-dem"><span class="dz-text" id="f-dem-lbl">🏔 Upload DEM (.tif)</span><input type="file" id="fi-F-dem" accept=".tif,.tiff"></div>
+          <div style="text-align:center;font-size:9px;color:var(--muted);font-family:var(--mono);
+               padding:4px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
+            — or upload a local .tif manually —
+          </div>
+          <div class="dz" id="dz-F-dem" style="transition:opacity .3s,filter .3s">
+            <span class="dz-text" id="f-dem-lbl">🏔 Upload DEM (.tif) — only if not selected from catalog above</span>
+            <input type="file" id="fi-F-dem" accept=".tif,.tiff"
+                   onchange="if(this.files[0]){_demCacheKey='';document.getElementById('f-dem-lbl').textContent='📄 '+this.files[0].name;const dzD=document.getElementById('dz-F-dem');dzD.style.opacity='1';dzD.style.filter='none';}">
+          </div>
         </div>
         <div class="fg"><label>Field Area ha (optional recalibration)</label>
           <input type="number" id="f-fa" placeholder="e.g. 464.4" step="any" min="0"></div>
@@ -1799,22 +1859,26 @@ async function runF(title, legendTitle, labelCol, zone) {
   document.getElementById('run-btn').disabled=true;
   setProgress('Processing…','Starting Group F…',5);
   const fd=new FormData();
-  // Check if server catalog DEM selected (read .value directly from <select>)
-  const demCatSel  = document.getElementById('f-dem-catalog');
-  const demCatPath = (demCatSel && demCatSel.value && demCatSel.value.trim() !== '')
-                      ? demCatSel.value.trim() : '';
-  const manualDem  = document.getElementById('fi-F-dem')?.files?.[0];
-
   fd.append('file', bFile);
-  if (demCatPath) {
-    // Use server-side catalog DEM — no upload needed
-    fd.append('dem_catalog_path', demCatPath);
-    // Don't append dem_file — backend loads from catalog
-  } else if (manualDem) {
-    fd.append('dem_file', manualDem);
+
+  // Priority: 1) pre-downloaded GitHub cache  2) manual upload
+  if (_demCacheKey) {
+    // DEM was downloaded from GitHub catalog — pass cache key
+    fd.append('dem_cache_key', _demCacheKey);
   } else {
-    // Neither selected — let backend give the clear error
-    fd.append('dem_catalog_path', '');
+    // Manual upload
+    const manualDem = document.getElementById('fi-F-dem')?.files?.[0];
+    if (manualDem) {
+      fd.append('dem_file', manualDem);
+    } else {
+      // Nothing — check catalog path as last resort
+      const demCatSel = document.getElementById('f-dem-catalog');
+      const demCatPath = (demCatSel && demCatSel.value) ? demCatSel.value.trim() : '';
+      if (demCatPath) {
+        fd.append('dem_catalog_path', demCatPath);
+      }
+      // If still nothing, backend gives clear error — don't block frontend
+    }
   }
   fd.append('module','F'); fd.append('f_mode',fMode);
   fd.append('zone',zone); fd.append('title',title);
@@ -1902,8 +1966,10 @@ async function runG() {
       try { const hr=await fetch(`${BASE}/history`); if(hr.ok){const hd=await hr.json();if(hd.runs)renderHistory(hd.runs);} } catch {}
     }, 900);
   } catch(e) {
-    setProgress('Error', 'Group G failed — ' + e.message, 0, true);
-    alert('Error: ' + (e.message || 'Backend error'));
+    const msg2 = e.message || 'Group G failed';
+    const isRL2 = msg2.includes('Too many') || msg2.includes('retry_after');
+    setProgress('Error', msg2, 0, true);
+    if (!isRL2) alert('Error: ' + msg2);
   } finally {
     document.getElementById('run-btn').disabled = false;
   }
@@ -1936,9 +2002,31 @@ async function sendRequest(fd) {
     document.getElementById('comp-label').value=fd.get('label_col')||'';
     setTimeout(async()=>{try{const hr=await fetch(`${BASE}/history`);if(hr.ok){const hd=await hr.json();if(hd.runs)renderHistory(hd.runs);}}catch{}},800);
   } catch(e) {
-    const isRL = e.message && e.message.includes('Too many');
-    setProgress('Error', e.message || 'Pipeline failed', 0, true);
-    if (!isRL) alert('Error: ' + (e.message || 'Unexpected error'));
+    const msg = e.message || 'Pipeline failed';
+    const isRL = msg.includes('Too many') || msg.includes('retry_after');
+    setProgress('Error', msg, 0, true);
+    if (isRL) {
+      // Extract retry seconds and show countdown
+      const sec = (msg.match(/(\d+)s/) || [])[1] || 5;
+      let cd = parseInt(sec);
+      const rb = document.getElementById('run-btn');
+      rb.disabled = true;
+      rb.textContent = `⏳ Wait ${cd}s…`;
+      const iv = setInterval(() => {
+        cd--;
+        if (cd <= 0) {
+          clearInterval(iv);
+          rb.disabled = false;
+          rb.textContent = activeModule==='G'?'📌 Generate Points':'▶ Run Pipeline';
+          setProgress('Ready','You can try again now.',0);
+        } else {
+          rb.textContent = `⏳ Wait ${cd}s…`;
+        }
+      }, 1000);
+      return; // skip the finally re-enable
+    } else {
+      alert('Error: ' + msg);
+    }
   } finally {
     document.getElementById('run-btn').disabled = false;
   }
@@ -2042,46 +2130,121 @@ function _bindPopupAndHover(feat, lyr) {
   lyr.on('mouseout', ()=>{if(lyr!==selectedLayer)try{lyr.setStyle&&lyr.setStyle({weight:2,color:'#1a3a22'});}catch{}});
 }
 
-/* ── DEM CATALOG ── */
+/* ── DEM CATALOG — GitHub ─────────────────────────────────────────────── */
 let _demCatalog = [];
+let _demCacheKey = '';       // set after successful download
+let _demActiveZone = '';     // current zone filter
+
 async function _loadDemCatalog() {
+  const sel  = document.getElementById('f-dem-catalog');
+  const info = document.getElementById('f-dem-cat-info');
   try {
+    if (sel) sel.innerHTML = '<option value="" disabled>⏳ Loading catalog from GitHub…</option>';
     const r = await fetch(`${BASE}/dem_catalog`);
     const d = await r.json();
     _demCatalog = d.files || [];
-    _filterDemList('');
-  } catch(e) { console.warn('DEM catalog load failed:', e); }
+    if (info) info.textContent = `${_demCatalog.length} DEM file(s) available`;
+    _filterDemList('', '');
+  } catch(e) {
+    console.warn('DEM catalog load failed:', e);
+    if (sel)  sel.innerHTML = '<option value="" disabled>⚠ Could not load catalog</option>';
+    if (info) info.textContent = 'GitHub catalog unavailable — upload a .tif manually.';
+  }
 }
-function _filterDemList(q) {
-  const sel = document.getElementById('f-dem-catalog');
+
+function _filterDemList(q, zone) {
+  const sel  = document.getElementById('f-dem-catalog');
   const info = document.getElementById('f-dem-cat-info');
   if (!sel) return;
-  const lower = q.toLowerCase();
-  const filtered = _demCatalog.filter(f =>
-    !lower || f.name.toLowerCase().includes(lower) || f.path.toLowerCase().includes(lower)
-  );
+  if (zone !== undefined) _demActiveZone = zone;
+  const qLow = (q || document.getElementById('f-dem-search')?.value || '').toLowerCase();
+
+  const filtered = _demCatalog.filter(f => {
+    const matchQ    = !qLow || f.name.toLowerCase().includes(qLow) || f.path.toLowerCase().includes(qLow);
+    const matchZone = !_demActiveZone || f.zone === _demActiveZone;
+    return matchQ && matchZone;
+  });
+
   if (_demCatalog.length === 0) {
-    sel.innerHTML = '<option value="" disabled>No DEM files in server catalog yet.</option>';
-    if (info) info.textContent = 'Place .tif files in the dem_catalog/ folder on the server.';
+    sel.innerHTML = '<option value="" disabled>No DEM files found in GitHub repo</option>';
+    if (info) info.textContent = 'Add .tif files to dem_catalog/44N/ and dem_catalog/45N/ in your GitHub repo.';
     return;
   }
   sel.innerHTML = filtered.length
-    ? filtered.map(f=>`<option value="${f.path}" title="${f.path}">${f.name} (${f.size_mb}MB)</option>`).join('')
-    : '<option value="" disabled>No matches found</option>';
-  if (info) info.textContent = `${filtered.length} of ${_demCatalog.length} DEM file(s) shown`;
+    ? filtered.map(f => {
+        const zone_badge = f.zone ? `[${f.zone}] ` : '';
+        return `<option value="${f.path}" data-url="${f.url||''}" title="${f.path}">${zone_badge}${f.name} (${f.size_mb}MB)</option>`;
+      }).join('')
+    : '<option value="" disabled>No matches — try different search</option>';
+
+  if (info) info.textContent = `Showing ${filtered.length} of ${_demCatalog.length} DEM file(s)`;
 }
-function _onDemSelect(sel) {
-  const v = sel.value;
-  if (!v) return;
+
+async function _onDemSelect(sel) {
+  const path = sel.value;
+  if (!path) return;
+  const opt  = sel.options[sel.selectedIndex];
+  const url  = opt?.dataset?.url || '';
   const info = document.getElementById('f-dem-cat-info');
-  const f = _demCatalog.find(x=>x.path===v);
-  if (f && info) info.textContent = `✓ Selected: ${f.name} (${f.size_mb} MB) — will load from server`;
-  // Store catalog selection
-  sel.dataset.selected = v;
-  // Clear manual upload
-  const manualInp = document.getElementById('fi-F-dem');
-  if (manualInp) manualInp.value = '';
-  document.getElementById('f-dem-lbl').textContent = '🏔 Upload DEM (.tif)';
+  const dlWrap = document.getElementById('f-dem-dl-wrap');
+  const dlBar  = document.getElementById('f-dem-dl-bar');
+  const dlLbl  = document.getElementById('f-dem-dl-label');
+
+  const f = _demCatalog.find(x => x.path === path);
+  const size_mb = f?.size_mb || 0;
+
+  if (info) info.textContent = `Selected: ${path} (${size_mb}MB) — downloading to server cache…`;
+
+  // Show download progress
+  if (dlWrap) dlWrap.style.display = 'block';
+  if (dlBar)  dlBar.style.width = '5%';
+  if (dlLbl)  dlLbl.textContent = `Downloading ${path} from GitHub… (${size_mb}MB)`;
+
+  // Animate progress bar (fake progress while downloading)
+  let prog = 5;
+  const interval = setInterval(() => {
+    prog = Math.min(prog + (100 / Math.max(size_mb * 2, 10)), 88);
+    if (dlBar) dlBar.style.width = prog + '%';
+  }, 800);
+
+  try {
+    const r = await fetch(`${BASE}/dem_fetch`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url, path})
+    });
+    const d = await r.json();
+    clearInterval(interval);
+
+    if (d.ok) {
+      _demCacheKey = d.cache_key;
+      if (dlBar)  dlBar.style.width = '100%';
+      if (dlLbl)  dlLbl.textContent = d.cached
+        ? `✓ Already cached: ${path} (${d.size_mb}MB) — ready`
+        : `✓ Downloaded: ${path} (${d.size_mb}MB) — ready`;
+      if (info)   info.textContent = `✓ DEM ready: ${path} (${d.size_mb} MB). No manual upload needed.`;
+      // Hide upload zone since catalog DEM is selected
+      const dzDem = document.getElementById('dz-F-dem');
+      if (dzDem) { dzDem.style.opacity='0.4'; dzDem.style.pointerEvents='none'; }
+      const manualInp = document.getElementById('fi-F-dem');
+      if (manualInp) manualInp.value = '';
+      document.getElementById('f-dem-lbl').textContent = '🏔 DEM from catalog — no upload needed';
+      // Hide progress after 2s
+      setTimeout(() => { if(dlWrap) dlWrap.style.display='none'; }, 2500);
+    } else {
+      clearInterval(interval);
+      if (dlLbl)  dlLbl.textContent = `❌ Download failed: ${d.error}`;
+      if (dlBar)  dlBar.style.background = '#ef4444';
+      if (info)   info.textContent = `Download error: ${d.error}. Upload manually instead.`;
+      _demCacheKey = '';
+      const dzDem = document.getElementById('dz-F-dem');
+      if (dzDem) { dzDem.style.opacity='1'; dzDem.style.pointerEvents='auto'; }
+    }
+  } catch(e) {
+    clearInterval(interval);
+    if (dlLbl) dlLbl.textContent = `❌ Network error: ${e.message}`;
+    _demCacheKey = '';
+  }
 }
 
 function _ensureLeafMap() {
@@ -2168,13 +2331,20 @@ async function loadOSM(runId, kmzInfo) {
           _buildOsmLegend(pointFeats, 'point');
         }
 
-        // Fit bounds
-        if (polyFeats.length === 0 && pointFeats.length > 0) {
+        // AUTO-ZOOM: always fit to all loaded features
+        setTimeout(() => {
           try {
-            const b = leafLayers[leafLayers.length-1].getBounds();
-            leafMap.fitBounds(b.pad(0.1));
-          } catch{}
-        }
+            const allBounds = leafLayers
+              .filter(l => l.getBounds)
+              .map(l => { try { return l.getBounds(); } catch{ return null; }})
+              .filter(Boolean);
+            if (allBounds.length > 0) {
+              let combined = allBounds[0];
+              allBounds.slice(1).forEach(b => { try { combined = combined.extend(b); } catch{} });
+              leafMap.fitBounds(combined.pad(0.06));
+            }
+          } catch(e) { console.warn('fitBounds error:', e); }
+        }, 100);
 
         // Dummy layer ref for backward compat
         const layer = {getBounds: ()=>{
