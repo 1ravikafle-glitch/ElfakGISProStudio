@@ -643,7 +643,19 @@ def _enforce_poly_gdf(gdf):
                     continue
             if pg is None or pg.is_empty or pg.area < 1e-12:
                 continue
-            pg = _close_poly(pg)
+            # Close rings WITHOUT discarding MultiPolygon parts
+            if pg.geom_type == "Polygon":
+                pg = _close_poly(pg)
+            elif pg.geom_type == "MultiPolygon":
+                fixed = []
+                for part in pg.geoms:
+                    if part is None or part.is_empty: continue
+                    cp = _close_poly(part)
+                    if cp is not None and cp.geom_type == "Polygon" and not cp.is_empty and cp.area > 1e-12:
+                        fixed.append(cp)
+                if not fixed:
+                    continue
+                pg = MultiPolygon(fixed) if len(fixed) > 1 else fixed[0]
             r2 = row.copy()
             r2["geometry"] = pg
             keep.append(r2)
@@ -1483,14 +1495,37 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
 
     # ── STEP 2: Compute slope (Horn method) ───────────────────────────────────
     if run_id: _prog(run_id, "Step 2 — Computing slope (Horn method)…", 28)
-    valid  = ~np.isnan(rdm)
-    filled = np.nan_to_num(rdm, nan=0.0)
-    dzdx   = ndi.sobel(filled, axis=1) / (8.0 * rx)
-    dzdy   = ndi.sobel(filled, axis=0) / (8.0 * ry)
-    slope  = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2))).astype(np.float32)
-    # Erode 1-pixel border (Sobel artifact) to nodata
-    fnv = ndi.binary_erosion(valid, structure=np.ones((3,3), bool), border_value=0)
-    slope[~fnv] = SN
+    valid = ~np.isnan(rdm)
+
+    if not valid.any():
+        raise ValueError("DEM has no valid elevation data inside the boundary+buffer rectangle.")
+
+    # FIX: instead of zero-filling NaN (which creates fake cliffs that corrupt
+    # neighbouring slope values and force over-erosion), fill any internal
+    # voids using nearest-valid-pixel interpolation. This keeps slope accurate
+    # right up to the true raster edge and eliminates white gaps from internal
+    # DEM voids near the boundary.
+    if (~valid).any():
+        # Distance-transform based nearest-neighbour fill for internal NaN voids
+        ind = ndi.distance_transform_edt(
+            ~valid, return_distances=False, return_indices=True
+        )
+        filled = rdm[tuple(ind)]
+    else:
+        filled = rdm.copy()
+
+    dzdx  = ndi.sobel(filled, axis=1) / (8.0 * rx)
+    dzdy  = ndi.sobel(filled, axis=0) / (8.0 * ry)
+    slope = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2))).astype(np.float32)
+
+    # Only mark nodata at the TRUE outer edge of the rectangle (1-pixel ring),
+    # NOT at every internal void — internal voids are now filled above, so
+    # there is full slope coverage everywhere within the rectangle except the
+    # true raster border (where Sobel has no real gradient information).
+    outer_valid = np.ones_like(valid, dtype=bool)
+    outer_valid[0, :] = False; outer_valid[-1, :] = False
+    outer_valid[:, 0] = False; outer_valid[:, -1] = False
+    slope[~outer_valid] = SN
 
     # Save rectangular slope raster
     rp = dem_profile.copy()
@@ -1501,10 +1536,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         dst.write(slope, 1)
     if run_id: _prog(run_id, f"Step 2 — Slope raster saved ({slope.shape[1]}×{slope.shape[0]}px)", 35)
 
-    # ── STEP 3: Reclassify slope ──────────────────────────────────────────────
-    #   1 = 0–19°  (Gentle)    2 = 19–31° (Moderate)
-    #   3 = 31–45° (Steep)     4 = >45°   (Very Steep)
-    if run_id: _prog(run_id, "Step 3 — Reclassifying slope into 4 classes…", 40)
+    # ── STEP 3: Reclassify slope into 3 classes ───────────────────────────────
+    #   1 = 0–19°  (Gentle)    2 = 19–31° (Moderate)    3 = >31° (Steep)
+    if run_id: _prog(run_id, "Step 3 — Reclassifying slope into 3 classes…", 40)
     vm  = (slope != SN) & ~np.isnan(slope)
     cls = np.zeros_like(slope, dtype=np.uint8)
     cls[vm & (slope <  19)]          = 1   # 0-19° Gentle
@@ -1600,22 +1634,50 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             if dgeom is None or dgeom.is_empty: continue
             if cid not in class_defs: continue
             try:
-                clipped = _repair(dgeom.intersection(clip_poly))
+                # Tiny buffer compensates for sub-pixel floating-point gaps
+                # between dissolved raster polygon edges and the vector
+                # boundary (prevents hairline white slivers at the edge)
+                dgeom_safe = dgeom.buffer(rx * 0.05) if rx else dgeom
+                clipped = _repair(dgeom_safe.intersection(clip_poly))
             except Exception as e:
                 log.debug(f"intersection error cid={cid}: {e}"); continue
             if clipped is None or clipped.is_empty: continue
-            # Normalise to (Multi)Polygon
-            if clipped.geom_type in ("Polygon", "MultiPolygon"):
-                pg = _close_poly(clipped)
+            # Normalise to (Multi)Polygon — KEEP ALL DISCONNECTED PARTS.
+            # A slope class (e.g. "0-19°") is almost always scattered across
+            # many separate patches throughout the forest. Collapsing to a
+            # single largest part (old bug) silently deleted every other
+            # patch, causing large white gaps in the middle of the map.
+            if clipped.geom_type == "Polygon":
+                pg = clipped if clipped.is_valid else _repair(clipped)
+            elif clipped.geom_type == "MultiPolygon":
+                # Keep as MultiPolygon — do NOT collapse to one part
+                valid_parts = [p for p in clipped.geoms if p and not p.is_empty and p.area > 1e-10]
+                if not valid_parts: continue
+                pg = MultiPolygon(valid_parts) if len(valid_parts) > 1 else valid_parts[0]
             elif hasattr(clipped, "geoms"):
-                parts = [_as_poly(_repair(g)) for g in clipped.geoms
-                         if g.geom_type in ("Polygon", "MultiPolygon")]
-                parts = [p for p in parts if p and p.area > 1e-10]
+                # GeometryCollection from intersection — extract ALL polygon parts
+                parts = []
+                for g in clipped.geoms:
+                    if g.geom_type == "Polygon" and not g.is_empty and g.area > 1e-10:
+                        parts.append(g)
+                    elif g.geom_type == "MultiPolygon":
+                        parts.extend([p for p in g.geoms if not p.is_empty and p.area > 1e-10])
                 if not parts: continue
-                pg = _close_poly(max(parts, key=lambda x: x.area))
+                pg = MultiPolygon(parts) if len(parts) > 1 else parts[0]
             else:
                 pg = _as_poly(clipped)
             if pg is None or pg.is_empty or pg.area < 1e-10: continue
+            # Close/repair rings WITHOUT discarding MultiPolygon parts
+            if pg.geom_type == "Polygon":
+                pg = _close_poly(pg)
+            elif pg.geom_type == "MultiPolygon":
+                fixed_parts = []
+                for part in pg.geoms:
+                    cp = _close_poly(part)
+                    if cp and cp.geom_type == "Polygon" and not cp.is_empty:
+                        fixed_parts.append(cp)
+                if fixed_parts:
+                    pg = MultiPolygon(fixed_parts) if len(fixed_parts) > 1 else fixed_parts[0]
             ah = round(pg.area / 10000, 4); total += ah
             vrecs.append({
                 "Label":       label,
