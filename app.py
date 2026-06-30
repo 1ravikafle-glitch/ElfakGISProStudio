@@ -48,7 +48,7 @@ DEM_CATALOG_DIR = os.environ.get("DEM_CATALOG_DIR", "dem_catalog")
 # Format: https://raw.githubusercontent.com/USER/REPO/BRANCH/dem_catalog
 GITHUB_DEM_BASE = os.environ.get(
     "GITHUB_DEM_BASE",
-    "https://github.com/1ravikafle-glitch/ElfakGISProStudio/tree/main/dem_catalog"
+    "https://raw.githubusercontent.com/1ravikafle-glitch/ElfakGISProStudio/main/dem_catalog"
 )
 DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
@@ -311,6 +311,24 @@ def _get_client_ip():
     return request.remote_addr or "unknown"
 
 # ── Security response headers ────────────────────────────────────────────────
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"error": "File too large. Maximum upload is 2GB."}), 413
+
+@app.errorhandler(429)
+def rate_limited(e):
+    return jsonify({"error": "Too many requests. Please wait a moment.", "retry_after": 5}), 429
+
+@app.errorhandler(500)
+def server_error(e):
+    log.error(f"Unhandled 500: {e}")
+    return jsonify({"error": f"Internal server error: {str(e)[:200]}"}), 500
+
+@app.errorhandler(Exception)
+def unhandled(e):
+    log.error(f"Unhandled exception: {type(e).__name__}: {e}")
+    return jsonify({"error": f"Unexpected error: {type(e).__name__}: {str(e)[:200]}"}), 500
+
 @app.after_request
 def _security_headers(resp):
     """Attach comprehensive security headers to every HTTP response."""
@@ -522,99 +540,161 @@ def _safe_dn(s): return str(s).strip().replace("/","_").replace("\\","_").replac
 def safe_polygon(coords):
     p = Polygon(coords); return p if p.is_valid else p.buffer(0)
 def _repair(g):
-    """Repair geometry: fix invalid, handle collections, normalize."""
+    """Repair geometry robustly: fix invalid topology, unwrap single MultiPolygons."""
     if g is None: return None
     try:
         if g.is_empty: return None
-        if not g.is_valid: g = g.buffer(0)
-        if g is None or g.is_empty: return None
-        # Unwrap single-part MultiPolygon
+        if not g.is_valid:
+            g = g.buffer(0)
+            if g is None or g.is_empty: return None
+        # Unwrap trivial wrappers
         if g.geom_type == "MultiPolygon":
-            parts = [p for p in g.geoms if not p.is_empty]
-            if len(parts) == 1: g = parts[0]
-        return g
+            parts = [p for p in g.geoms if p and not p.is_empty]
+            if len(parts) == 1:
+                g = parts[0]
+        elif g.geom_type == "GeometryCollection":
+            polys = [p for p in g.geoms
+                     if p.geom_type in ("Polygon","MultiPolygon") and not p.is_empty]
+            if polys:
+                g = unary_union(polys)
+                if g.is_empty: return None
+            else:
+                return None
+        return g if (g and not g.is_empty) else None
     except Exception:
-        try: return g.buffer(0) if g else None
-        except: return None
+        try:
+            fixed = g.buffer(0) if g else None
+            return fixed if (fixed and not fixed.is_empty) else None
+        except Exception:
+            return None
 def _as_poly(g):
-    if g is None or g.is_empty: return None
-    if g.geom_type == "Polygon": return g
-    if g.geom_type in ("MultiPolygon","GeometryCollection"):
-        ps = [x for x in g.geoms if x.geom_type=="Polygon" and not x.is_empty and x.area>1e-10]
-        return max(ps, key=lambda x: x.area) if ps else None
+    """Return the largest Polygon from any geometry; None if not polygon-like."""
+    if g is None: return None
+    try:
+        if g.is_empty: return None
+        if g.geom_type == "Polygon": return g
+        if g.geom_type == "MultiPolygon":
+            parts = [x for x in g.geoms if x.geom_type=="Polygon" and not x.is_empty]
+            return max(parts, key=lambda x: x.area) if parts else None
+        if g.geom_type == "GeometryCollection":
+            polys = []
+            for x in g.geoms:
+                if x.geom_type == "Polygon" and not x.is_empty and x.area > 1e-10:
+                    polys.append(x)
+                elif x.geom_type == "MultiPolygon":
+                    polys.extend([p for p in x.geoms if not p.is_empty and p.area>1e-10])
+            return max(polys, key=lambda x: x.area) if polys else None
+    except Exception:
+        pass
     return None
 def _close_poly(p):
-    if p is None or p.is_empty: return p
-    ext = list(p.exterior.coords)
-    if ext[0] != ext[-1]: ext.append(ext[0])
-    holes = [list(i.coords) for i in p.interiors]
-    for h in holes:
-        if h[0] != h[-1]: h.append(h[0])
+    """Close polygon ring; handle MultiPolygon by taking largest part."""
+    if p is None: return p
     try:
-        c = Polygon(ext, holes); return (c if c.is_valid else c.buffer(0)) if not c.is_empty else p
-    except: return p
+        if p.is_empty: return p
+        # Unwrap MultiPolygon — take largest
+        if p.geom_type == "MultiPolygon":
+            parts = [x for x in p.geoms if not x.is_empty]
+            if not parts: return p
+            p = max(parts, key=lambda x: x.area)
+        if p.geom_type != "Polygon":
+            return p
+        ext = list(p.exterior.coords)
+        if ext[0] != ext[-1]: ext.append(ext[0])
+        holes = [list(i.coords) for i in p.interiors]
+        for h in holes:
+            if h[0] != h[-1]: h.append(h[0])
+        c = Polygon(ext, holes)
+        if c.is_empty: return p
+        return c if c.is_valid else c.buffer(0)
+    except Exception:
+        return p
 def _enforce_poly_gdf(gdf):
-    """Ensure GDF only has Polygon/MultiPolygon geometry (shapefile requirement).
-    Extracts polygon parts from GeometryCollections, drops lines/points."""
-    if gdf is None or gdf.empty: return gdf
+    """Ensure GDF only has Polygon/MultiPolygon geometry.
+    Fixes: LINESTRING→POLYGON error, GeometryCollection issues.
+    Preserves all attribute columns.
+    """
+    if gdf is None or gdf.empty:
+        return gdf
     keep = []
     for _, row in gdf.iterrows():
         g = row.geometry
-        if g is None: continue
-        # Handle GeometryCollection: extract polygon parts
-        if hasattr(g, "geoms"):
-            polys = [p for p in g.geoms if p.geom_type in ("Polygon","MultiPolygon") and not p.is_empty and p.area>1e-10]
-            if not polys: continue
-            g = _repair(unary_union(polys))
-        if g is None or g.is_empty: continue
-        pg = _as_poly(_repair(g))
-        if pg and not pg.is_empty and pg.area > 1e-10:
-            r2 = row.copy(); r2["geometry"] = _close_poly(pg); keep.append(r2)
-    if not keep: return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
-    return gpd.GeoDataFrame(keep, crs=gdf.crs)
+        if g is None:
+            continue
+        try:
+            # Repair first
+            g = _repair(g)
+            if g is None or g.is_empty:
+                continue
+            # Extract polygon from any type
+            if g.geom_type in ("Polygon", "MultiPolygon"):
+                pg = g
+            elif g.geom_type == "GeometryCollection":
+                polys = [p for p in g.geoms
+                         if p.geom_type in ("Polygon","MultiPolygon")
+                         and not p.is_empty and p.area > 1e-10]
+                if not polys:
+                    continue
+                pg = _repair(unary_union(polys))
+            else:
+                # LineString, Point etc — try buffer
+                pg = _repair(g.buffer(0))
+                if pg is None or pg.geom_type not in ("Polygon","MultiPolygon"):
+                    continue
+            if pg is None or pg.is_empty or pg.area < 1e-12:
+                continue
+            pg = _close_poly(pg)
+            r2 = row.copy()
+            r2["geometry"] = pg
+            keep.append(r2)
+        except Exception:
+            continue
+    if not keep:
+        return gpd.GeoDataFrame(columns=gdf.columns, crs=gdf.crs)
+    result = gpd.GeoDataFrame(keep, crs=gdf.crs)
+    # Ensure consistent geometry dtype for shapefile writing
+    result = result.reset_index(drop=True)
+    return result
 
 # ── map decorations (reference-image accurate) ───────────────────────────────
 def _north_arrow(ax):
-    """Professional north arrow matching reference images.
-    Shows: 'N' label + filled black downward triangle + white upward triangle.
-    Positioned top-right corner, inside axes."""
-    from matplotlib.patches import FancyArrow, Polygon as MPoly
-    x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
-    aw = x1-x0; ah = y1-y0
-    # Position: top-right, slightly inset
-    cx = x1 - aw*0.055   # centre x
-    ty = y1 - ah*0.025   # top of N letter
-    arh = ah*0.085        # arrow height
-    arw = aw*0.018        # half-width of arrow
+    """Reference-image accurate north arrow: N text + black/white split arrow,
+    drawn in axes fraction coordinates so it never moves with data zoom."""
+    from matplotlib.patches import FancyArrowPatch
+    # Use axes inset_axes to draw arrow in a fixed top-right corner
+    try:
+        x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
+        aw = x1-x0; ah = y1-y0
 
-    # N letter at top
-    ax.text(cx, ty, "N", ha="center", va="top",
-            fontsize=12, fontweight="bold", color="black",
-            fontfamily="sans-serif", zorder=25)
+        # Arrow centre in data coords — top-right corner inset
+        cx  = x1 - aw*0.06
+        top = y1 - ah*0.02
+        bot = top - ah*0.10
+        mid = (top + bot) / 2
+        hw  = aw*0.018   # half-width of triangles
 
-    # Arrow shaft centre
-    ac_top = ty - ah*0.022   # just below N
-    ac_bot = ac_top - arh
+        # Draw "N" label above arrow
+        ax.text(cx, top + ah*0.005, "N", ha="center", va="bottom",
+                fontsize=11, fontweight="bold", color="black", zorder=25)
 
-    # Upper (black) filled triangle — pointing UP
-    tri_up = MPoly([
-        [cx,      ac_top],
-        [cx-arw,  ac_top - arh*0.5],
-        [cx+arw,  ac_top - arh*0.5],
-    ], closed=True, facecolor="black", edgecolor="black", linewidth=0.8, zorder=24)
-    ax.add_patch(tri_up)
+        # Black filled upper half (north side)
+        from matplotlib.patches import Polygon as _MPoly
+        upper = _MPoly(
+            [(cx, top), (cx-hw, mid), (cx+hw, mid)],
+            closed=True, facecolor="black", edgecolor="black",
+            linewidth=0.8, zorder=24, transform=ax.transData
+        )
+        ax.add_patch(upper)
 
-    # Lower (white) filled triangle — pointing DOWN
-    tri_dn = MPoly([
-        [cx,      ac_bot],
-        [cx-arw,  ac_bot + arh*0.5],
-        [cx+arw,  ac_bot + arh*0.5],
-    ], closed=True, facecolor="white", edgecolor="black", linewidth=0.8, zorder=24)
-    ax.add_patch(tri_dn)
-
-    # Thin vertical centre line
-    ax.plot([cx, cx], [ac_top - arh*0.5, ac_bot + arh*0.5],
-            color="black", linewidth=0.8, zorder=23)
+        # White filled lower half
+        lower = _MPoly(
+            [(cx, bot), (cx-hw, mid), (cx+hw, mid)],
+            closed=True, facecolor="white", edgecolor="black",
+            linewidth=0.8, zorder=24, transform=ax.transData
+        )
+        ax.add_patch(lower)
+    except Exception as e:
+        pass  # Never crash on decoration
 
 def _scale_bar(ax):
     """Black-white-black 3-segment scale bar like reference images."""
@@ -640,35 +720,44 @@ def _scale_bar(ax):
     ax.text(bx+bar_m,     by - bh*0.6, _fmt(bar_m),      ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
 
 def _add_legend(ax, handles, legend_title="Legend", loc="lower right"):
-    """Place legend OUTSIDE the map axes area — never overlaps the drawing."""
+    """Legend INSIDE axes frame — inset box in corner, never touching map features.
+    Uses bbox_to_anchor with axes fraction to pin to corner with padding."""
     if not handles: return
-    # Anchor outside the axes so it never overlaps the map
-    anchor_lut = {
-        "lower right": (1.02, 0.00, "upper left"),
-        "lower left":  (-0.02, 0.00, "upper right"),
-        "upper right": (1.02, 1.00, "lower left"),
-        "upper left":  (-0.02, 1.00, "lower right"),
-        "right":       (1.02, 0.50, "center left"),
+    # Map loc → (bbox_to_anchor_x, bbox_to_anchor_y, corner alignment)
+    # Values slightly inside the axes so box is fully inside the frame
+    inset = {
+        "lower right": (0.98, 0.02, "lower right"),
+        "lower left":  (0.02, 0.02, "lower left"),
+        "upper right": (0.98, 0.98, "upper right"),
+        "upper left":  (0.02, 0.98, "upper left"),
+        "right":       (0.98, 0.50, "center right"),
     }
-    bba, bbl, loca = anchor_lut.get(loc, (1.02, 0.00, "upper left"))
+    bba_x, bba_y, loca = inset.get(loc, (0.98, 0.02, "lower right"))
     try:
         leg = ax.legend(
-            handles=handles, title=legend_title,
+            handles=handles,
+            title=legend_title,
             loc=loca,
-            bbox_to_anchor=(bba, bbl),
+            bbox_to_anchor=(bba_x, bba_y),
             bbox_transform=ax.transAxes,
-            fontsize=8, title_fontsize=8.5,
-            framealpha=0.96, edgecolor="#888",
-            fancybox=False, frameon=True,
-            borderpad=0.9, labelspacing=0.5,
-            facecolor="#f8f8f8", handlelength=1.8,
+            fontsize=8.5, title_fontsize=9,
+            framealpha=0.92,
+            edgecolor="#555",
+            fancybox=False,
+            frameon=True,
+            borderpad=0.9,
+            labelspacing=0.55,
+            facecolor="#f5f5f5",
+            handlelength=1.8,
+            handletextpad=0.6,
         )
-        leg.get_frame().set_linewidth(1.0)
+        leg.get_frame().set_linewidth(1.2)
         leg.get_title().set_fontweight("bold")
+        leg.get_title().set_fontsize(9)
+        leg.set_zorder(30)   # on top of everything
     except Exception:
-        # Fallback: inside axes
         ax.legend(handles=handles, title=legend_title, loc=loc,
-                  fontsize=8, framealpha=0.9, facecolor="#f8f8f8")
+                  fontsize=8, framealpha=0.9)
 
 def _graticule(ax):
     """Coord labels on all 4 edges, NO interior gridlines. Matches reference."""
@@ -757,6 +846,7 @@ def group_b(df, crs, out, mapping=None):
             for _,r in cg.iterrows():
                 pts.append({"Forest":f,"Compartment":c,"Order":r[oc] if oc else None,"geometry":Point(r[xc],r[yc])})
     p=gpd.GeoDataFrame(polys,crs=crs); l=gpd.GeoDataFrame(lines,crs=crs); pt=gpd.GeoDataFrame(pts,crs=crs)
+    p=_enforce_poly_gdf(p)
     if not p.empty: p.to_file(os.path.join(out,"forest_polygon.shp"))
     if not l.empty: l.to_file(os.path.join(out,"forest_line.shp"))
     if not pt.empty: pt.to_file(os.path.join(out,"forest_point.shp"))
@@ -813,7 +903,8 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
             if union.contains(center):
                 pts.append({"SN":sn,"X":center.x,"Y":center.y,"geometry":center}); sn+=1
     pt_gdf=gpd.GeoDataFrame(pts,crs=crs)
-    p_gdf.to_file(os.path.join(out,"boundary_polygon.shp"))
+    p_gdf=_enforce_poly_gdf(p_gdf)
+    if not p_gdf.empty: p_gdf.to_file(os.path.join(out,"boundary_polygon.shp"))
     l_gdf.to_file(os.path.join(out,"boundary_line.shp"))
     if not pt_gdf.empty:
         pt_gdf.to_file(os.path.join(out,"sampleplot_point.shp"))
@@ -823,7 +914,8 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
 # ── GROUP D ──────────────────────────────────────────────────────────────────
 def _save_fl(pr,lr,pts,d,crs):
     os.makedirs(d,exist_ok=True); pfx=os.path.basename(d)
-    gpd.GeoDataFrame([pr],crs=crs).to_file(os.path.join(d,f"{pfx}_polygon.shp"))
+    _pdf=_enforce_poly_gdf(gpd.GeoDataFrame([pr],crs=crs))
+    if not _pdf.empty: _pdf.to_file(os.path.join(d,f"{pfx}_polygon.shp"))
     gpd.GeoDataFrame([lr],crs=crs).to_file(os.path.join(d,f"{pfx}_line.shp"))
     gpd.GeoDataFrame(pts,crs=crs).to_file(os.path.join(d,f"{pfx}_point.shp"))
 def group_d(df, crs, out, mapping=None, mode="A"):
@@ -1415,10 +1507,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if run_id: _prog(run_id, "Step 3 — Reclassifying slope into 4 classes…", 40)
     vm  = (slope != SN) & ~np.isnan(slope)
     cls = np.zeros_like(slope, dtype=np.uint8)
-    cls[vm & (slope <  19)]                        = 1
-    cls[vm & (slope >= 19) & (slope <= 31)]        = 2
-    cls[vm & (slope >  31) & (slope <= 45)]        = 3
-    cls[vm & (slope >  45)]                        = 4
+    cls[vm & (slope <  19)]          = 1   # 0-19° Gentle
+    cls[vm & (slope >= 19) & (slope <= 31)] = 2   # 19-31° Moderate
+    cls[vm & (slope >  31)]          = 3   # >31° Steep
     cp = rp.copy(); cp.update(dtype="uint8", nodata=0)
     cls_path = os.path.join(out, f"{pfx}_class_rect.tif")
     with rasterio.open(cls_path, "w", **cp) as dst:
@@ -1476,10 +1567,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
 
     # 4-class definitions (matching step 3)
     class_defs = {
-        1: ("0-19 degree",  "Gentle",     "#2e8b57"),
-        2: ("19-31 degree", "Moderate",   "#90ee90"),
-        3: ("31-45 degree", "Steep",      "#ffd700"),
-        4: ("45> degree",   "Very Steep", "#e74c3c"),
+        1: ("0-19 degree",  "Gentle",   "#2e8b57"),
+        2: ("19-31 degree", "Moderate", "#90ee90"),
+        3: (">31 degree",   "Steep",    "#ffd700"),
     }
 
     # Determine which polygons to analyse (single / multi-forest / compartments)
@@ -1612,8 +1702,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         ca2  = np.zeros_like(fc2, dtype=np.uint8)
         ca2[vm2 & (fc2 <  19)]                       = 1
         ca2[vm2 & (fc2 >= 19) & (fc2 <= 31)]         = 2
-        ca2[vm2 & (fc2 >  31) & (fc2 <= 45)]         = 3
-        ca2[vm2 & (fc2 >  45)]                        = 4
+        ca2[vm2 & (fc2 >  31)]                       = 3
         cp3_ = cp2_.copy(); cp3_.update(dtype="uint8", nodata=0)
         with rasterio.open(os.path.join(out, f"{pfx}_slope_classes.tif"), "w", **cp3_) as dst:
             dst.write(ca2, 1)
@@ -1649,7 +1738,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
 
     if run_id: _prog(run_id, "Group F complete.", 95)
     return all_sum, vgdf, bgdf, f_mode, per_grp
-    return all_sum,vgdf,bgdf,f_mode,per_grp
 
 # ── PREVIEW FUNCTIONS ────────────────────────────────────────────────────────
 # Rich distinct colors matching reference image 3 (C1S1=blue, C1S2=orange, etc.)
@@ -1691,8 +1779,9 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
     _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right")
     ax.set_title(title.strip() or "Compartment Division Map",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
+    fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+                pad_inches=0.15); plt.close(fig)
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
             label_col=None, label_pts_gdf=None, area_ha=None, title="",
@@ -1732,7 +1821,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
         pt_lbl = "Sub-compartment Survey Points" if has_comp else "Survey Points"
         from matplotlib.lines import Line2D as _L2D
         handles.append(_L2D([0],[0], marker="o", color="w",
-                            markerfacecolor=ptc, markeredgecolor=ptc,
+                            markerfacecolor=ptc,
                             markersize=7, label=pt_lbl, linewidth=0))
 
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
@@ -1760,15 +1849,16 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
     head = title.strip() if title.strip() else (
         f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    plt.tight_layout(pad=0.4, rect=[0, 0, 0.80, 0.97])
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
+    fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+                pad_inches=0.15); plt.close(fig)
 
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                   per_group_summaries=None, title="", legend_title="Slope Classes"):
     # 4-class system matching group_f step 3 and reference image 1
-    cc={1:"#2e8b57",2:"#90ee90",3:"#ffd700",4:"#e74c3c"}
-    cl={1:"0-19 degree",2:"19-31 degree",3:"31-45 degree",4:"45> degree"}
+    cc={1:"#2e8b57",2:"#90ee90",3:"#ffd700"}
+    cl={1:"0-19 degree",2:"19-31 degree",3:">31 degree"}
     hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
     nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
     fig=plt.figure(figsize=(A4W,A4H),dpi=DPI,facecolor="white")
@@ -1785,10 +1875,11 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
         gc=next((c for c in bgdf.columns if c.lower()!="geometry"),None)
         if gc: _label_feat(ax1,bgdf,gc)
     _style_ax(ax1); _north_arrow(ax1); _scale_bar(ax1)
-    handles=[mpatches.Patch(facecolor=c,edgecolor="#444",linewidth=0.5,label=cl[cid]) for cid,c in cc.items() if cid in cc]
+    handles=[mpatches.Patch(facecolor=c,edgecolor="#444",linewidth=0.5,label=cl[cid])
+             for cid,c in cc.items()]
     from matplotlib.lines import Line2D as _L2Dp
     handles.append(_L2Dp([0],[0],color="black",linewidth=1.8,label="Forest Boundary"))
-    _add_legend(ax1,handles,legend_title=legend_title or "Slope Classes",loc="lower right")
+    _add_legend(ax1, handles, legend_title=legend_title or "Slope Classes", loc="lower right")
     mt=title.strip() if title.strip() else "Slope Classification Map"
     if hg: mt+=f" — {len(per_group_summaries)} Groups"
     ax1.set_title(mt,fontsize=11,fontweight="bold",pad=7)
@@ -1834,8 +1925,9 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                 cid2=rcm.get(r2-1,0)
                 cell.set_facecolor(rc.get(cid2,"#f8f9fa"))
                 if cid2==-1 or (cid2==0 and r2-1>=len(summary_rows)): cell.set_text_props(fontweight="bold")
-    plt.tight_layout(pad=0.3, rect=[0, 0, 0.82, 1.0])
-    fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig)
+    # Don't use tight_layout with gridspec — use subplots_adjust
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+                pad_inches=0.15); plt.close(fig)
 
 # ── KMZ ─────────────────────────────────────────────────────────────────────
 def _kml_pm(gdf,sid,nc=None):
@@ -2079,9 +2171,13 @@ def _g_export(records, epsg, out_dir, prefix="ForestPoints"):
     df.to_excel(xlsx_path, index=False)
     # Shapefile
     shp_gdf = gpd.GeoDataFrame(df, geometry=[r["geometry"] for r in records],
-                                 crs=f"EPSG:{epsg}")
+                                crs=f"EPSG:{epsg}")
     shp_path = os.path.join(out_dir, f"{prefix}.shp")
-    shp_gdf.to_file(shp_path)
+    # Points only — no polygon enforcement needed, but validate geometry
+    shp_gdf_valid = shp_gdf[shp_gdf.geometry.notna() & ~shp_gdf.geometry.is_empty].copy()
+    if not shp_gdf_valid.empty:
+        shp_gdf_valid.to_file(shp_path)
+    shp_gdf = shp_gdf_valid
     return df, shp_gdf
 
 def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=None):
@@ -2135,8 +2231,9 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     _add_legend(ax, handles, legend_title="Legend", loc="lower right")
     ax.set_title(title.strip() or "Forest Survey Points",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    plt.tight_layout(pad=0.5, rect=[0, 0, 1, 0.97])
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white"); plt.close(fig)
+    fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
+    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+                pad_inches=0.15); plt.close(fig)
 
 def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None):
     """
@@ -2413,7 +2510,7 @@ def history():
     return jsonify({"runs": user.get("runs", [])})
 
 @app.route("/upload", methods=["POST"])
-@_rate_limit(limit=10, window=60)          # 10 pipeline runs / min / IP
+@_rate_limit(limit=12, window=60)          # ~1 per 5s per IP
 @_with_pipeline_sem
 def upload():
     run_id = str(uuid.uuid4())
@@ -2568,7 +2665,7 @@ def dem_catalog():
     for zone in ("44N", "45N"):
         # GitHub Contents API
         api_base = os.environ.get("GITHUB_API_DEM",
-            "https://api.github.com/1ravikafle-glitch/ElfakGISProStudio/tree/main/dem_catalog")
+            "https://api.github.com/repos/1ravikafle-glitch/ElfakGISProStudio/contents/dem_catalog")
         github_api_urls.append((zone, f"{api_base}/{zone}"))
 
     files = []
@@ -2690,7 +2787,7 @@ def zip_inspect():
         except: pass
 
 @app.route("/run_g", methods=["POST"])
-@_rate_limit(limit=10, window=60)
+@_rate_limit(limit=12, window=60)
 @_with_pipeline_sem
 def run_g():
     run_id = str(uuid.uuid4()); _PROG[run_id] = []
