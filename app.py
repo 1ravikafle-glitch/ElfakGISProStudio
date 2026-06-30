@@ -50,6 +50,10 @@ GITHUB_DEM_BASE = os.environ.get(
     "GITHUB_DEM_BASE",
     "https://raw.githubusercontent.com/1ravikafle-glitch/ElfakGISProStudio/main/dem_catalog"
 )
+# Set this environment variable on your server if the GitHub repo is PRIVATE:
+#   GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+# Generate one at: github.com/settings/tokens (fine-grained, read-only, repo contents)
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
@@ -2733,24 +2737,33 @@ def dem_catalog():
     files = []
     for zone, api_url in github_api_urls:
         try:
-            req = _ur.Request(api_url, headers={"User-Agent": "elfak-gis-app"})
+            hdrs = {
+                "User-Agent":  "elfak-gis-app",
+                "Accept":      "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            if GITHUB_TOKEN:
+                hdrs["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+            req = _ur.Request(api_url, headers=hdrs)
             with _ur.urlopen(req, timeout=8) as resp:
                 items = _json.loads(resp.read())
             for item in items:
                 name = item.get("name","")
                 if not name.lower().endswith((".tif",".tiff")): continue
                 size_mb = round(item.get("size",0)/(1024*1024), 1)
-                dl_url  = item.get("download_url","")
+                # IMPORTANT: do NOT rely on item["download_url"] — GitHub
+                # often omits it for private repos or large files. Instead
+                # always use the authenticated Contents API endpoint itself
+                # as the "url" — dem_fetch() knows how to download from it.
                 files.append({
                     "name":     name,
                     "zone":     zone,
                     "path":     f"{zone}/{name}",
                     "size_mb":  size_mb,
-                    "url":      dl_url,
+                    "url":      item.get("url", api_url + "/" + name),  # API self-link, always present
                 })
         except Exception as e:
             log.warning(f"GitHub API {zone} failed: {e}")
-            # Fallback: check local folder
             local = os.path.join(DEM_CATALOG_DIR, zone)
             if os.path.isdir(local):
                 for f in os.listdir(local):
@@ -2767,58 +2780,134 @@ def dem_catalog():
     files.sort(key=lambda x: (x["zone"], x["name"]))
     return jsonify({"files": files, "source": "github"})
 
+def _github_candidate_urls(url, path):
+    """Build an ordered list of candidate URLs to try for a GitHub DEM file.
+    Tries: 1) the exact url given (from GitHub API download_url — most reliable)
+           2) raw.githubusercontent on 'main' branch
+           3) raw.githubusercontent on 'master' branch (older repos)
+    Each path segment is URL-encoded to handle spaces/special characters.
+    """
+    import urllib.parse as _up
+    candidates = []
+    if url:
+        candidates.append(url)
+    if path:
+        # Encode each path segment separately (preserve the '/' separators)
+        enc_path = "/".join(_up.quote(seg) for seg in path.split("/"))
+        owner_repo = "1ravikafle-glitch/ElfakGISProStudio"
+        for branch in ("main", "master"):
+            candidates.append(
+                f"https://raw.githubusercontent.com/{owner_repo}/{branch}/dem_catalog/{enc_path}"
+            )
+    # De-duplicate while preserving order
+    seen = set(); out = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c); out.append(c)
+    return out
+
 @app.route("/dem_fetch", methods=["POST"])
 @_rate_limit(limit=5, window=60)
 def dem_fetch():
     """Download a DEM file from GitHub to the local cache, return its cache key.
-    Called by frontend before running Group F when catalog DEM is selected."""
+    Tries multiple candidate URLs (exact API url, main branch, master branch).
+    If GITHUB_TOKEN is set, authenticates so PRIVATE repos work too."""
     import urllib.request as _ur
+    import urllib.error as _ue
 
-    data   = request.get_json(silent=True) or {}
-    url    = data.get("url","").strip()
-    path   = data.get("path","").strip()   # e.g. "44N/N27E083.tif"
+    data = request.get_json(silent=True) or {}
+    url  = data.get("url", "").strip()
+    path = data.get("path", "").strip()   # e.g. "44N/PALPA_44N.tif"
 
     if not url and not path:
-        return jsonify({"error":"No DEM URL or path provided."}),400
+        return jsonify({"error": "No DEM URL or path provided."}), 400
 
-    # Validate URL is from GitHub (security)
     if url and not (url.startswith("https://raw.githubusercontent.com/") or
-                    url.startswith("https://github.com/")):
-        return jsonify({"error":"DEM URL must be from GitHub raw content."}),400
+                    url.startswith("https://github.com/") or
+                    url.startswith("https://api.github.com/")):
+        return jsonify({"error": "DEM URL must be from GitHub."}), 400
 
-    # Build local cache path
-    safe_name = re.sub(r"[^A-Za-z0-9._-]","_", os.path.basename(path or url))[:120]
+    safe_name  = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(path or url))[:120]
     cache_key  = hashlib.sha256((url or path).encode()).hexdigest()[:16]
     local_path = os.path.join(DEM_CACHE_DIR, f"{cache_key}_{safe_name}")
 
-    # Return immediately if already cached
     if os.path.exists(local_path) and os.path.getsize(local_path) > 1000:
-        size_mb = round(os.path.getsize(local_path)/(1024*1024),1)
+        size_mb = round(os.path.getsize(local_path) / (1024*1024), 1)
         log.info(f"DEM cache hit: {safe_name} ({size_mb}MB)")
-        return jsonify({"ok":True,"cache_key":cache_key,"local":local_path,
-                        "size_mb":size_mb,"cached":True})
+        return jsonify({"ok": True, "cache_key": cache_key, "local": local_path,
+                        "size_mb": size_mb, "cached": True})
 
-    # Download
-    if not url:
-        # Build URL from GITHUB_DEM_BASE + path
-        url = GITHUB_DEM_BASE.rstrip("/") + "/" + path.lstrip("/")
+    candidates = _github_candidate_urls(url, path)
+    if not candidates:
+        return jsonify({"error": "Could not build a download URL from the given path."}), 400
 
-    log.info(f"Downloading DEM from GitHub: {url}")
-    try:
-        req = _ur.Request(url, headers={"User-Agent":"elfak-gis-app"})
-        with _ur.urlopen(req, timeout=120) as resp, open(local_path,"wb") as fout:
-            while True:
-                chunk = resp.read(1024*1024)  # 1MB chunks
-                if not chunk: break
-                fout.write(chunk)
-        size_mb = round(os.path.getsize(local_path)/(1024*1024),1)
-        log.info(f"DEM downloaded: {safe_name} ({size_mb}MB)")
-        return jsonify({"ok":True,"cache_key":cache_key,"local":local_path,
-                        "size_mb":size_mb,"cached":False})
-    except Exception as e:
-        if os.path.exists(local_path): os.remove(local_path)
-        log.error(f"DEM download error: {e}")
-        return jsonify({"error":f"Failed to download DEM: {e}"}),500
+    # If repo is private, also try the GitHub Contents API with auth — this
+    # returns base64 content which we decode and write directly.
+    if GITHUB_TOKEN and path:
+        api_url = f"https://api.github.com/repos/1ravikafle-glitch/ElfakGISProStudio/contents/dem_catalog/{path}"
+        try:
+            req = _ur.Request(api_url, headers={
+                "User-Agent": "elfak-gis-app",
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3.raw",
+                "X-GitHub-Api-Version": "2022-11-28",
+            })
+            with _ur.urlopen(req, timeout=120) as resp, open(local_path, "wb") as fout:
+                total = 0
+                while True:
+                    chunk = resp.read(1024*1024)
+                    if not chunk: break
+                    fout.write(chunk); total += len(chunk)
+            if total > 500:
+                size_mb = round(os.path.getsize(local_path)/(1024*1024), 1)
+                log.info(f"DEM downloaded via authenticated API: {safe_name} ({size_mb}MB)")
+                return jsonify({"ok": True, "cache_key": cache_key, "local": local_path,
+                                "size_mb": size_mb, "cached": False, "source_url": api_url})
+            os.remove(local_path)
+        except Exception as e:
+            log.warning(f"Authenticated GitHub fetch failed: {e}")
+            if os.path.exists(local_path): os.remove(local_path)
+
+    last_error = None
+    attempted  = []
+    for candidate_url in candidates:
+        attempted.append(candidate_url)
+        log.info(f"Trying DEM download: {candidate_url}")
+        try:
+            req = _ur.Request(candidate_url, headers={"User-Agent": "elfak-gis-app"})
+            with _ur.urlopen(req, timeout=120) as resp, open(local_path, "wb") as fout:
+                total = 0
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk: break
+                    fout.write(chunk); total += len(chunk)
+            if total < 500:
+                os.remove(local_path)
+                last_error = f"Response too small ({total} bytes) — likely a GitHub error page, not a real file."
+                continue
+            size_mb = round(os.path.getsize(local_path) / (1024*1024), 1)
+            log.info(f"DEM downloaded successfully: {safe_name} ({size_mb}MB) from {candidate_url}")
+            return jsonify({"ok": True, "cache_key": cache_key, "local": local_path,
+                            "size_mb": size_mb, "cached": False, "source_url": candidate_url})
+        except _ue.HTTPError as e:
+            last_error = f"HTTP {e.code} at {candidate_url}"
+            if os.path.exists(local_path): os.remove(local_path)
+            continue
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e} at {candidate_url}"
+            if os.path.exists(local_path): os.remove(local_path)
+            continue
+
+    log.error(f"DEM download failed after {len(attempted)} attempt(s): {last_error}")
+    hint = ("Verify the repo is PUBLIC at github.com/1ravikafle-glitch/ElfakGISProStudio "
+            "— raw.githubusercontent.com cannot serve files from private repos without a token. "
+            "If it must stay private, set the GITHUB_TOKEN environment variable on your server.")
+    return jsonify({
+        "error": f"Failed to download DEM. {last_error}",
+        "attempted_urls": attempted,
+        "hint": hint,
+        "github_token_configured": bool(GITHUB_TOKEN),
+    }), 404
 
 @app.route("/zip_inspect", methods=["POST"])
 @_rate_limit(limit=20, window=60)
