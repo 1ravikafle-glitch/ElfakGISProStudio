@@ -605,7 +605,7 @@ def _enforce_poly_gdf(gdf):
     return result
 
 def _north_arrow(ax, pos=None):
-    # REMOVED — hardcoded north arrow is disabled; only draggable overlay remains
+    # Hardcoded north arrow removed
     pass
 
 def _scale_bar(ax):
@@ -642,11 +642,11 @@ def _scale_bar(ax):
                 fontweight="bold", color="black", zorder=16)
 
 def _reserve_legend_margin(ax, loc="lower right", frac=0.22, custom_pos=None):
-    # REMOVED — hardcoded legend margin is disabled
+    # Hardcoded legend margin removed
     pass
 
 def _add_legend(ax, handles, legend_title="Legend", loc="lower right", pos=None):
-    # REMOVED — hardcoded legend is disabled
+    # Hardcoded legend removed
     pass
 
 def _graticule(ax):
@@ -1362,6 +1362,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if run_id: _prog(run_id, "Step 3 — Reclassifying slope into 3 classes…", 40)
     vm  = (slope != SN) & ~np.isnan(slope)
     cls = np.zeros_like(slope, dtype=np.uint8)
+    # Green, Yellow, Red
     cls[vm & (slope <  19)]          = 1
     cls[vm & (slope >= 19) & (slope <= 31)] = 2
     cls[vm & (slope >  31)]          = 3
@@ -1413,10 +1414,11 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
 
     if run_id: _prog(run_id, "Step 6 — Clipping dissolved polygons to boundary…", 70)
 
+    # Green, Yellow, Red
     class_defs = {
-        1: ("0-19 degree",  "Gentle",   "#008000"),
-        2: ("19-31 degree", "Moderate", "#FFD700"),
-        3: (">31 degree",   "Steep",    "#DC143C"),
+        1: ("0-19 degree",  "Gentle",   "#2e8b57"),
+        2: ("19-31 degree", "Moderate", "#ffd700"),
+        3: (">31 degree",   "Steep",    "#ef4444"),
     }
 
     comp_polygons = []
@@ -1706,8 +1708,9 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                   per_group_summaries=None, title="", legend_title="Slope Classes"):
-    cc={1:"#008000",2:"#FFD700",3:"#DC143C"}
-    cl={1:"0-19 degree",2:"19-31 degree",3:">31 degree"}
+    # Green, Yellow, Red
+    cc={1:"#2e8b57", 2:"#ffd700", 3:"#ef4444"}
+    cl={1:"0-19 degree", 2:"19-31 degree", 3:">31 degree"}
     hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
     nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
     fig=plt.figure(figsize=(A4W,A4H),dpi=DPI,facecolor="white")
@@ -1761,7 +1764,7 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
         tbl=ax2.table(cellText=td,colLabels=cols,cellLoc="center",loc="center",bbox=[0,0,1,1])
         tbl.auto_set_font_size(False); tbl.set_fontsize(6.5 if hg else 8.5)
         tbl.auto_set_column_width(list(range(len(cols))))
-        rc={1:"#d5f5e3",2:"#c8f7c5",3:"#fef9e7",4:"#fadbd8",0:"#f8f9fa",-1:"#ddeeff"}
+        rc={1:"#d5f5e3",2:"#fef9e7",3:"#fadbd8",0:"#f8f9fa",-1:"#ddeeff"}
         for (r2,c2),cell in tbl.get_celld().items():
             cell.set_edgecolor("#ccc")
             if r2==0: cell.set_facecolor("#1a5276"); cell.set_text_props(color="white",fontweight="bold")
@@ -2138,13 +2141,15 @@ def get_geojson(run_id):
     folder = _safe_path(OUTPUT, run_id)
     if not os.path.exists(folder):
         return jsonify({"type": "FeatureCollection", "features": []}), 200
+    # Ensure point and line shapefiles are included so points show in the legend
     shps = []
     for r, _, fs in os.walk(folder):
         for f in fs:
             if not f.endswith(".shp"): continue
             fl = f.lower()
-            if "polygon" in fl or "forestpoints" in fl or "rtp" in fl:
+            if "polygon" in fl or "forestpoints" in fl or "rtp" in fl or "point" in fl or "line" in fl:
                 shps.append(os.path.join(r, f))
+
     if not shps:
         shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
                 for f in fs if f.endswith(".shp")]
