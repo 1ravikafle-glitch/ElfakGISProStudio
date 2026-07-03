@@ -3783,20 +3783,33 @@
             const mdl = document.getElementById('modal-dl-btn');
             const target = document.getElementById('canvas-wrap-static');
 
-            // Clear previous image and show loading indicator
+            // Show loading
             mimg.src = '';
             modal.style.display = 'flex';
 
             // Capture the entire canvas area (map + overlays) using html2canvas
+            // Force the overlays to render by removing pointer-events: none in the clone
             html2canvas(target, {
-                scale: 1.5,
+                scale: 2.0,           // High scale for crisp A4 quality
                 useCORS: true,
                 allowTaint: false,
-                backgroundColor: null
+                backgroundColor: null,
+                logging: false,
+                onclone: (clonedDoc) => {
+                    // Ensure the overlay layer is visible and forced to render in the cloned document
+                    const clonedOverlay = clonedDoc.querySelector('#overlay-layer');
+                    if (clonedOverlay) {
+                        clonedOverlay.classList.add('visible');
+                        // Force the boxes to render (they are hidden via pointer-events in the original)
+                        clonedOverlay.querySelectorAll('.ov-box').forEach(box => {
+                            box.style.pointerEvents = 'auto'; 
+                            box.style.display = 'block';
+                        });
+                    }
+                }
             }).then(canvas => {
                 const dataUrl = canvas.toDataURL('image/png');
                 mimg.src = dataUrl;
-                // Update download link
                 if (mdl) {
                     mdl.href = dataUrl;
                     mdl.download = 'elfak_map_edited.png';
