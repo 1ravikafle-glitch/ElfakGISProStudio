@@ -1219,12 +1219,12 @@
         /* Legend box */
         .ov-legend {
             min-width: 118px;
+            min-height: 80px;
             max-width: 350px;
             right: 4%;
             bottom: 5%;
             padding: 7px 10px 8px;
             font-family: 'Inter', system-ui, sans-serif;
-            resize: both;
             overflow: auto;
         }
         .ov-legend-title {
@@ -2053,6 +2053,7 @@
             }
             .ov-legend {
                 min-width: 96px;
+                min-height: 60px;
                 font-size: 9px;
                 padding: 5px 7px 6px;
             }
@@ -2598,6 +2599,13 @@
                                 <div style="display:flex;align-items:center;gap:6px">
                                     <input type="range" id="legend-width-slider" min="100" max="350" value="180" step="2" oninput="updateLegendSize()">
                                     <span class="resize-val" id="legend-width-val">180</span>
+                                </div>
+                            </div>
+                            <div class="fg">
+                                <label>Legend Height</label>
+                                <div style="display:flex;align-items:center;gap:6px">
+                                    <input type="range" id="legend-height-slider" min="80" max="350" value="150" step="2" oninput="updateLegendSize()">
+                                    <span class="resize-val" id="legend-height-val">150</span>
                                 </div>
                             </div>
                             <div class="fg">
@@ -3811,27 +3819,11 @@
             if (!body) return;
             body.innerHTML = '';
 
-            // ---- Group A, B, C: white fill, black outline ----
-            const SIMPLE_POLY_COLOR = '#ffffff';
-            const SIMPLE_POLY_EDGE = '#000000';
-            const LINE_COLOR = '#000000';
-            const POINT_COLOR = '#ff0000';
-
-            // ---- Group F: slope colors ----
             const SLOPE_ROWS = [
-                { color: '#2e8b57', label: '0-19° Gentle' },
-                { color: '#90ee90', label: '19-31° Moderate' },
-                { color: '#ffd700', label: '>31° Steep' },
+                { color: '#008000', label: '0-19° Gentle' },
+                { color: '#FFD700', label: '19-31° Moderate' },
+                { color: '#DC143C', label: '>31° Steep' },
             ];
-
-            // ---- Group G: point type colors ----
-            const POINT_TYPE_COLORS = {
-                'Vertex': '#2196F3',
-                'Boundary': '#FF9800',
-                'Divider': '#9C27B0'
-            };
-
-            // ---- Compartment colors (distinguishable) ----
             const COMP_COLORS = ['#2196F3', '#FF9800', '#4CAF50', '#9C27B0', '#F48FB1',
                 '#607D8B', '#CDDC39', '#00BCD4', '#FF5722', '#795548',
                 '#E91E63', '#009688', '#FFC107', '#3F51B5', '#8BC34A'
@@ -3839,32 +3831,23 @@
 
             let rows = [];
 
-            // ---- DETECT MODULE & BUILD LEGEND ----
             if (module === 'F') {
-                // SLOPE: green, light green, yellow
                 titleEl.textContent = 'Legend';
-                rows = SLOPE_ROWS.map(r => ({
-                    color: r.color,
-                    label: r.label,
-                    type: 'polygon'
-                }));
+                rows = SLOPE_ROWS.map(r => ({ color: r.color, label: r.label, type: 'polygon' }));
                 rows.push({ color: '#000000', label: 'Forest Boundary', type: 'line' });
                 rows.unshift({ header: true, label: 'Slope Classes' });
             } else if (module === 'G') {
-                // SURVEY POINTS: vertex, boundary, divider
                 titleEl.textContent = 'Legend';
                 rows = [
-                    { color: POINT_TYPE_COLORS['Vertex'], label: 'Vertex Points', type: 'circle' },
-                    { color: POINT_TYPE_COLORS['Boundary'], label: 'Boundary Points', type: 'circle' },
-                    { color: POINT_TYPE_COLORS['Divider'], label: 'Divider Points', type: 'circle' },
+                    { color: '#2196F3', label: 'Vertex Points', type: 'circle' },
+                    { color: '#FF9800', label: 'Boundary Points', type: 'circle' },
+                    { color: '#9C27B0', label: 'Divider Points', type: 'circle' },
                 ];
-                // Also show compartment boundaries if present
                 if (geojson && geojson.features && geojson.features.some(f => f.geometry &&
                         f.geometry.type !== 'Point' && f.geometry.type !== 'MultiPoint')) {
                     rows.push({ color: '#1565C0', label: 'Compartment Boundary', type: 'line' });
                 }
             } else if (module === 'E' || module === 'D') {
-                // COMPARTMENTS: distinguishable colors
                 titleEl.textContent = 'Legend';
                 const seen = new Map();
                 let ci = 0;
@@ -3881,36 +3864,27 @@
                         rows.push({ color, label, type: 'polygon' });
                     });
                 } else {
-                    // Fallback: show a generic polygon
                     rows.push({ color: COMP_COLORS[0], label: 'Compartment', type: 'polygon' });
                 }
-                // Add boundary line
                 rows.push({ color: '#000000', label: 'Boundary', type: 'line' });
-                // Add points if present
                 if (geojson && geojson.features && geojson.features.some(f =>
                         f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'))) {
-                    rows.push({ color: POINT_COLOR, label: 'Survey Points', type: 'circle' });
+                    rows.push({ color: '#ef4444', label: 'Survey Points', type: 'circle' });
                 }
             } else {
-                // GROUP A, B, C: white fill, black outline, red points, black lines
                 titleEl.textContent = 'Legend';
-                // Polygon: white fill with black border
-                rows.push({ color: SIMPLE_POLY_COLOR, edge: SIMPLE_POLY_EDGE, label: 'Forest Polygon', type: 'polygon' });
-                // Line: black
-                rows.push({ color: LINE_COLOR, label: 'Boundary Line', type: 'line' });
-                // Point: red
+                rows.push({ color: '#ffffff', edge: '#000000', label: 'Forest Polygon', type: 'polygon' });
+                rows.push({ color: '#000000', label: 'Boundary Line', type: 'line' });
                 if (geojson && geojson.features && geojson.features.some(f =>
                         f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'))) {
-                    rows.push({ color: POINT_COLOR, label: 'Survey Points', type: 'circle' });
+                    rows.push({ color: '#ef4444', label: 'Survey Points', type: 'circle' });
                 }
-                // Area info if present
                 const ah = geojson?.features?.reduce((s, f) => s + (f.properties?.Area_ha || 0), 0) || 0;
                 if (ah > 0) {
                     rows.push({ separator: true, label: `Area = ${ah.toFixed(3)} ha` });
                 }
             }
 
-            // ---- Render rows ----
             rows.forEach(r => {
                 const row = document.createElement('div');
                 row.className = 'ov-legend-row';
@@ -3924,15 +3898,12 @@
                     row.innerHTML =
                         `<span class="ov-legend-label" contenteditable="true" spellcheck="false" style="outline:none;cursor:text;font-style:italic;color:#555;font-size:9px;font-family:var(--sans)">${r.label}</span>`;
                 } else {
-                    // Swatch
                     const sw = document.createElement('div');
                     sw.className = 'ov-legend-swatch';
                     if (r.type === 'circle') {
                         sw.classList.add('circle');
                     } else if (r.type === 'line') {
                         sw.classList.add('line');
-                    } else {
-                        // polygon: fill color + optional edge
                     }
                     sw.style.background = r.color || '#ffffff';
                     if (r.edge) {
@@ -3940,8 +3911,6 @@
                     } else {
                         sw.style.border = '1px solid rgba(0,0,0,.35)';
                     }
-
-                    // Label
                     const lb = document.createElement('span');
                     lb.className = 'ov-legend-label';
                     lb.textContent = r.label || '';
@@ -3953,7 +3922,6 @@
                     lb.addEventListener('focus', () => {
                         if (_selectedOvEl) _setSelected(null);
                     });
-
                     row.appendChild(sw);
                     row.appendChild(lb);
                 }
@@ -4081,8 +4049,8 @@
             }
             const title = document.getElementById('ov-legend-title');
             if (title) state['legend-title'] = title.textContent;
-            // Save resize values
             state['legend-width'] = document.getElementById('legend-width-slider')?.value || '180';
+            state['legend-height'] = document.getElementById('legend-height-slider')?.value || '150';
             state['north-size'] = document.getElementById('north-size-slider')?.value || '42';
             try { localStorage.setItem('ov-state-' + currentRunId, JSON.stringify(state)); } catch (e) {}
         }
@@ -4112,10 +4080,14 @@
                 const t = document.getElementById('ov-legend-title');
                 if (t) t.textContent = state['legend-title'];
             }
-            // Restore resize values
             if (state['legend-width']) {
                 const slider = document.getElementById('legend-width-slider');
                 if (slider) { slider.value = state['legend-width'];
+                    updateLegendSize(); }
+            }
+            if (state['legend-height']) {
+                const slider = document.getElementById('legend-height-slider');
+                if (slider) { slider.value = state['legend-height'];
                     updateLegendSize(); }
             }
             if (state['north-size']) {
@@ -4133,6 +4105,11 @@
             if (state['legend-width']) {
                 const slider = document.getElementById('legend-width-slider');
                 if (slider) { slider.value = state['legend-width'];
+                    updateLegendSize(); }
+            }
+            if (state['legend-height']) {
+                const slider = document.getElementById('legend-height-slider');
+                if (slider) { slider.value = state['legend-height'];
                     updateLegendSize(); }
             }
             if (state['north-size']) {
@@ -4158,9 +4135,11 @@
             if (nth) { nth.style.right = '6%';
                 nth.style.top = '4%'; }
             if (currentRunId) try { localStorage.removeItem('ov-state-' + currentRunId); } catch (e) {}
-            // Reset resize sliders
             const lw = document.getElementById('legend-width-slider');
             if (lw) { lw.value = '180';
+                updateLegendSize(); }
+            const lh = document.getElementById('legend-height-slider');
+            if (lh) { lh.value = '150';
                 updateLegendSize(); }
             const ns = document.getElementById('north-size-slider');
             if (ns) { ns.value = '42';
@@ -4170,19 +4149,25 @@
 
         /* ── RESIZE FUNCTIONS ── */
         function updateLegendSize() {
-            const slider = document.getElementById('legend-width-slider');
-            const valDisplay = document.getElementById('legend-width-val');
+            const wSlider = document.getElementById('legend-width-slider');
+            const hSlider = document.getElementById('legend-height-slider');
+            const wVal = document.getElementById('legend-width-val');
+            const hVal = document.getElementById('legend-height-val');
             const legend = document.getElementById('ov-legend');
-            if (!slider || !legend) return;
-            const width = parseInt(slider.value);
+            if (!wSlider || !hSlider || !legend) return;
+            const width = parseInt(wSlider.value);
+            const height = parseInt(hSlider.value);
             legend.style.width = width + 'px';
-            if (valDisplay) valDisplay.textContent = width;
+            legend.style.height = height + 'px';
+            if (wVal) wVal.textContent = width;
+            if (hVal) hVal.textContent = height;
             if (currentRunId) {
                 let state;
                 try { state = JSON.parse(localStorage.getItem('ov-state-' + currentRunId) || 'null'); } catch { state =
                     {}; }
                 if (!state) state = {};
                 state['legend-width'] = String(width);
+                state['legend-height'] = String(height);
                 try { localStorage.setItem('ov-state-' + currentRunId, JSON.stringify(state)); } catch (e) {}
             }
         }
