@@ -605,41 +605,8 @@ def _enforce_poly_gdf(gdf):
     return result
 
 def _north_arrow(ax, pos=None):
-    try:
-        x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
-        aw = x1-x0; ah = y1-y0
-
-        if pos is not None:
-            fx, fy = pos
-            fx = min(max(fx, 0.0), 1.0); fy = min(max(fy, 0.0), 1.0)
-            cx  = x0 + aw*fx
-            top = y0 + ah*fy
-        else:
-            cx  = x1 - aw*0.06
-            top = y1 - ah*0.02
-        bot = top - ah*0.10
-        mid = (top + bot) / 2
-        hw  = aw*0.018
-
-        ax.text(cx, top + ah*0.005, "N", ha="center", va="bottom",
-                fontsize=11, fontweight="bold", color="black", zorder=25)
-
-        from matplotlib.patches import Polygon as _MPoly
-        upper = _MPoly(
-            [(cx, top), (cx-hw, mid), (cx+hw, mid)],
-            closed=True, facecolor="black", edgecolor="black",
-            linewidth=0.8, zorder=24, transform=ax.transData
-        )
-        ax.add_patch(upper)
-
-        lower = _MPoly(
-            [(cx, bot), (cx-hw, mid), (cx+hw, mid)],
-            closed=True, facecolor="white", edgecolor="black",
-            linewidth=0.8, zorder=24, transform=ax.transData
-        )
-        ax.add_patch(lower)
-    except Exception as e:
-        pass
+    # REMOVED — hardcoded north arrow is disabled; only draggable overlay remains
+    pass
 
 def _scale_bar(ax):
     x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
@@ -663,7 +630,7 @@ def _scale_bar(ax):
     ax.text(bx+bar_m/2,  by - bh*0.6, _fmt(bar_m/2),    ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
     ax.text(bx+bar_m,    by - bh*0.6, _fmt(bar_m),      ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
 
-    # ── Scale text (RF) above the bar ──
+    # Scale text (RF) above the bar
     ax_w_paper_m = 0.76 * A4W * 0.0254
     rf = aw / ax_w_paper_m if ax_w_paper_m > 0 else 0
     if rf > 0:
@@ -675,68 +642,12 @@ def _scale_bar(ax):
                 fontweight="bold", color="black", zorder=16)
 
 def _reserve_legend_margin(ax, loc="lower right", frac=0.22, custom_pos=None):
-    x0, x1 = ax.get_xlim()
-    y0, y1 = ax.get_ylim()
-    w = x1 - x0
-    h = y1 - y0
-    if custom_pos is not None:
-        m = frac * 0.6
-        ax.set_xlim(x0 - w*m, x1 + w*m)
-        ax.set_ylim(y0 - h*m, y1 + h*m)
-        return
-    if loc == "lower right":
-        ax.set_ylim(y0 - h*frac, y1)
-    elif loc == "lower left":
-        ax.set_ylim(y0 - h*frac, y1)
-    elif loc == "upper right":
-        ax.set_ylim(y0, y1 + h*frac)
-    elif loc == "upper left":
-        ax.set_ylim(y0, y1 + h*frac)
-    elif loc == "right":
-        ax.set_xlim(x0, x1 + w*frac)
+    # REMOVED — hardcoded legend margin is disabled
+    pass
 
 def _add_legend(ax, handles, legend_title="Legend", loc="lower right", pos=None):
-    if not handles: return
-    if pos is not None:
-        fx, fy = pos
-        bba_x = min(max(fx, 0.0), 1.0)
-        bba_y = min(max(fy, 0.0), 1.0)
-        loca = ("upper" if bba_y > 0.5 else "lower") + " " + \
-               ("right" if bba_x > 0.5 else "left")
-    else:
-        inset = {
-            "lower right": (0.98, 0.01, "lower right"),
-            "lower left":  (0.02, 0.01, "lower left"),
-            "upper right": (0.98, 0.99, "upper right"),
-            "upper left":  (0.02, 0.99, "upper left"),
-            "right":       (0.99, 0.50, "center right"),
-        }
-        bba_x, bba_y, loca = inset.get(loc, (0.98, 0.01, "lower right"))
-    try:
-        leg = ax.legend(
-            handles=handles,
-            title=legend_title,
-            loc=loca,
-            bbox_to_anchor=(bba_x, bba_y),
-            bbox_transform=ax.transAxes,
-            fontsize=8.5, title_fontsize=9,
-            framealpha=1.0,
-            edgecolor="#555",
-            fancybox=False,
-            frameon=True,
-            borderpad=0.9,
-            labelspacing=0.55,
-            facecolor="white",
-            handlelength=1.8,
-            handletextpad=0.6,
-        )
-        leg.get_frame().set_linewidth(1.2)
-        leg.get_title().set_fontweight("bold")
-        leg.get_title().set_fontsize(9)
-        leg.set_zorder(30)
-    except Exception:
-        ax.legend(handles=handles, title=legend_title, loc=loc,
-                  fontsize=8, framealpha=1.0, facecolor="white")
+    # REMOVED — hardcoded legend is disabled
+    pass
 
 def _graticule(ax):
     ax.tick_params(axis="both", which="major",
@@ -1503,9 +1414,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if run_id: _prog(run_id, "Step 6 — Clipping dissolved polygons to boundary…", 70)
 
     class_defs = {
-        1: ("0-19 degree",  "Gentle",   "#2e8b57"),
-        2: ("19-31 degree", "Moderate", "#90ee90"),
-        3: (">31 degree",   "Steep",    "#ffd700"),
+        1: ("0-19 degree",  "Gentle",   "#008000"),
+        2: ("19-31 degree", "Moderate", "#FFD700"),
+        3: (">31 degree",   "Steep",    "#DC143C"),
     }
 
     comp_polygons = []
@@ -1716,9 +1627,7 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
     if lc_use:
         _label_feat(ax, poly_gdf, lc_use, fs=9, color="#111111")
 
-    _style_ax(ax); _north_arrow(ax, pos=north_pos); _scale_bar(ax)
-    _reserve_legend_margin(ax, loc="lower right", custom_pos=legend_pos)
-    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right", pos=legend_pos)
+    _style_ax(ax); _scale_bar(ax)
     ax.set_title(title.strip() or "Compartment Division Map",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
@@ -1732,10 +1641,8 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
     fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white"); handles = []
 
-    # GROUP A,B,C: white fill, black outline
     if poly_gdf is not None and not poly_gdf.empty:
         if "Comp_ID" in poly_gdf.columns:
-            # compartments: distinguishable colors
             for i, (_, row) in enumerate(poly_gdf.iterrows()):
                 g = row.geometry
                 if g is None or g.is_empty: continue
@@ -1748,7 +1655,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
                 handles.append(mpatches.Patch(facecolor=col, edgecolor="#111111",
                                               linewidth=1.0, label=lbl))
         else:
-            # Group A,B,C: white fill, black outline
             poly_gdf.plot(ax=ax, facecolor="#ffffff", edgecolor="#000000", linewidth=2.0)
             ha_lbl = f"Area = {area_ha:.3f} ha" if area_ha else "Forest Boundary"
             from matplotlib.lines import Line2D as _L2D
@@ -1756,11 +1662,9 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
             if area_ha:
                 handles.append(mpatches.Patch(facecolor="#ffffff", edgecolor="#000000", label=f"Area = {area_ha:.3f} ha"))
 
-    # Lines: black
     if line_gdf is not None and not line_gdf.empty:
         line_gdf.plot(ax=ax, color="#000000", linewidth=1.2)
 
-    # Points: red
     if pts_gdf is not None and not pts_gdf.empty:
         pts_gdf.plot(ax=ax, color="#ff0000", markersize=16, zorder=8, marker="o")
         has_comp = (poly_gdf is not None and not poly_gdf.empty
@@ -1791,9 +1695,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
         elif "Forest" in poly_gdf.columns:
             _label_feat(ax, poly_gdf, "Forest", fs=9, color="#1565C0")
 
-    _style_ax(ax); _north_arrow(ax, pos=north_pos); _scale_bar(ax)
-    _reserve_legend_margin(ax, loc="lower right", custom_pos=legend_pos)
-    _add_legend(ax, handles, legend_title=legend_title or "Legend", loc="lower right", pos=legend_pos)
+    _style_ax(ax); _scale_bar(ax)
     head = title.strip() if title.strip() else (
         f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
@@ -1804,7 +1706,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                   per_group_summaries=None, title="", legend_title="Slope Classes"):
-    cc={1:"#2e8b57",2:"#90ee90",3:"#ffd700"}
+    cc={1:"#008000",2:"#FFD700",3:"#DC143C"}
     cl={1:"0-19 degree",2:"19-31 degree",3:">31 degree"}
     hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
     nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
@@ -1821,13 +1723,7 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
     if hg and bgdf is not None and not bgdf.empty:
         gc=next((c for c in bgdf.columns if c.lower()!="geometry"),None)
         if gc: _label_feat(ax1,bgdf,gc)
-    _style_ax(ax1); _north_arrow(ax1); _scale_bar(ax1)
-    handles=[mpatches.Patch(facecolor=c,edgecolor="#444",linewidth=0.5,label=cl[cid])
-             for cid,c in cc.items()]
-    from matplotlib.lines import Line2D as _L2Dp
-    handles.append(_L2Dp([0],[0],color="black",linewidth=1.8,label="Forest Boundary"))
-    _reserve_legend_margin(ax1, loc="lower right")
-    _add_legend(ax1, handles, legend_title=legend_title or "Slope Classes", loc="lower right")
+    _style_ax(ax1); _scale_bar(ax1)
     mt=title.strip() if title.strip() else "Slope Classification Map"
     if hg: mt+=f" — {len(per_group_summaries)} Groups"
     ax1.set_title(mt,fontsize=11,fontweight="bold",pad=7)
@@ -2141,9 +2037,7 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     if ha_txt:
         handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=ha_txt))
 
-    _style_ax(ax); _north_arrow(ax); _scale_bar(ax)
-    _reserve_legend_margin(ax, loc="lower right")
-    _add_legend(ax, handles, legend_title="Legend", loc="lower right")
+    _style_ax(ax); _scale_bar(ax)
     ax.set_title(title.strip() or "Forest Survey Points",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
