@@ -26,6 +26,8 @@
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js">
     </script>
+    <!-- Added html2canvas for composite image capture -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         /* ── LIGHT MODE ── */
@@ -1234,7 +1236,8 @@
             padding: 7px 10px 8px;
             font-family: 'Inter', system-ui, sans-serif;
             width: 180px;   /* base width */
-            height: 150px;  /* base height */
+            height: auto !important; /* Automatically fits content */
+            min-height: 40px;
             overflow: hidden;
         }
         .ov-legend-title {
@@ -2617,8 +2620,9 @@
                             <div class="fg">
                                 <label>Legend Height</label>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <input type="range" id="legend-height-slider" min="60" max="250" value="150" step="2" oninput="updateLegendSize()">
-                                    <span class="resize-val" id="legend-height-val">150</span>
+                                    <!-- 0 = auto-fit content -->
+                                    <input type="range" id="legend-height-slider" min="0" max="250" value="0" step="2" oninput="updateLegendSize()">
+                                    <span class="resize-val" id="legend-height-val">Auto</span>
                                 </div>
                             </div>
                             <div class="fg">
@@ -3774,19 +3778,40 @@
         }
 
         function viewFullMap() {
-            const src = document.getElementById('out-img')?.src;
-            if (!src || src.endsWith('undefined')) return;
             const modal = document.getElementById('map-modal');
             const mimg = document.getElementById('modal-img');
             const mdl = document.getElementById('modal-dl-btn');
-            mimg.src = src;
-            if (mdl) mdl.href = src;
+            const target = document.getElementById('canvas-wrap-static');
+
+            // Clear previous image and show loading indicator
+            mimg.src = '';
             modal.style.display = 'flex';
-            modal.style.opacity = '0';
-            requestAnimationFrame(() => {
-                modal.style.transition = 'opacity .3s';
-                modal.style.opacity = '1';
-                setTimeout(() => modal.style.transition = '', 320);
+
+            // Capture the entire canvas area (map + overlays) using html2canvas
+            html2canvas(target, {
+                scale: 1.5,
+                useCORS: true,
+                allowTaint: false,
+                backgroundColor: null
+            }).then(canvas => {
+                const dataUrl = canvas.toDataURL('image/png');
+                mimg.src = dataUrl;
+                // Update download link
+                if (mdl) {
+                    mdl.href = dataUrl;
+                    mdl.download = 'elfak_map_edited.png';
+                }
+            }).catch(err => {
+                console.error('Composite capture failed, falling back to raw map:', err);
+                // Fallback: just show the raw map image
+                const src = document.getElementById('out-img')?.src;
+                if (src && !src.endsWith('undefined')) {
+                    mimg.src = src;
+                    if (mdl) {
+                        mdl.href = src;
+                        mdl.download = 'elfak_map_raw.png';
+                    }
+                }
             });
         }
 
@@ -4071,7 +4096,7 @@
             const title = document.getElementById('ov-legend-title');
             if (title) state['legend-title'] = title.textContent;
             state['legend-width'] = document.getElementById('legend-width-slider')?.value || '180';
-            state['legend-height'] = document.getElementById('legend-height-slider')?.value || '150';
+            state['legend-height'] = document.getElementById('legend-height-slider')?.value || '0';
             state['legend-scale'] = document.getElementById('legend-scale-slider')?.value || '100';
             state['north-size'] = document.getElementById('north-size-slider')?.value || '42';
             try { localStorage.setItem('ov-state-' + currentRunId, JSON.stringify(state)); } catch (e) {}
@@ -4171,7 +4196,7 @@
             if (lw) { lw.value = '180';
                 updateLegendSize(); }
             const lh = document.getElementById('legend-height-slider');
-            if (lh) { lh.value = '150';
+            if (lh) { lh.value = '0';
                 updateLegendSize(); }
             const ls = document.getElementById('legend-scale-slider');
             if (ls) { ls.value = '100';
@@ -4196,18 +4221,22 @@
 
             const width = parseInt(wSlider.value);
             const height = parseInt(hSlider.value);
+
             legend.style.width = width + 'px';
-            legend.style.height = height + 'px';
+            if (height === 0) {
+                legend.style.height = 'auto';
+                if (hVal) hVal.textContent = 'Auto';
+            } else {
+                legend.style.height = height + 'px';
+                if (hVal) hVal.textContent = height;
+            }
 
             const baseW = 180;
             const baseH = 150;
             const scaleX = width / baseW;
-            const scaleY = height / baseH;
-            const scale = Math.min(scaleX, scaleY);
+            const scaleY = height === 0 ? scaleX : height / baseH;
+            const scale = height === 0 ? scaleX : Math.min(scaleX, scaleY);
             inner.style.transform = `scale(${scale})`;
-            // Optionally center the content: set transform-origin: top left, and adjust margins if needed.
-            // We'll keep transform-origin: top left so the content aligns to top-left.
-            // The inner wrapper's size is the base size, and we scale it.
 
             const avgScale = Math.round(scale * 100);
             if (sSlider) sSlider.value = Math.min(200, Math.max(30, avgScale));
