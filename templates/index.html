@@ -1220,7 +1220,7 @@
         .ov-legend {
             min-width: 118px;
             min-height: 80px;
-            max-width: 350px;
+            max-width: 450px;
             right: 4%;
             bottom: 5%;
             padding: 7px 10px 8px;
@@ -2573,7 +2573,7 @@
                         <div id="overlay-layer" class="overlay-layer">
                             <div id="ov-legend" class="ov-box ov-legend">
                                 <div class="ov-drag-grip" title="Drag to move legend">⠿</div>
-                                <div class="ov-legend-title" id="ov-legend-title">Legend</div>
+                                <div class="ov-legend-title" id="ov-legend-title" contenteditable="true" spellcheck="false" style="outline:none;cursor:text;">Legend</div>
                                 <div class="ov-legend-body" id="ov-legend-body"></div>
                             </div>
                             <div id="ov-north" class="ov-box ov-north" title="Drag to move north arrow">
@@ -2597,21 +2597,21 @@
                             <div class="fg">
                                 <label>Legend Width</label>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <input type="range" id="legend-width-slider" min="100" max="350" value="180" step="2" oninput="updateLegendSize()">
+                                    <input type="range" id="legend-width-slider" min="60" max="450" value="180" step="2" oninput="updateLegendSize()">
                                     <span class="resize-val" id="legend-width-val">180</span>
                                 </div>
                             </div>
                             <div class="fg">
                                 <label>Legend Height</label>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <input type="range" id="legend-height-slider" min="80" max="350" value="150" step="2" oninput="updateLegendSize()">
+                                    <input type="range" id="legend-height-slider" min="60" max="400" value="150" step="2" oninput="updateLegendSize()">
                                     <span class="resize-val" id="legend-height-val">150</span>
                                 </div>
                             </div>
                             <div class="fg">
                                 <label>North Arrow Size</label>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <input type="range" id="north-size-slider" min="26" max="72" value="42" step="2" oninput="updateNorthSize()">
+                                    <input type="range" id="north-size-slider" min="20" max="90" value="42" step="2" oninput="updateNorthSize()">
                                     <span class="resize-val" id="north-size-val">42</span>
                                 </div>
                             </div>
@@ -3820,9 +3820,9 @@
             body.innerHTML = '';
 
             const SLOPE_ROWS = [
-                { color: '#008000', label: '0-19° Gentle' },
-                { color: '#FFD700', label: '19-31° Moderate' },
-                { color: '#DC143C', label: '>31° Steep' },
+                { color: '#2e8b57', label: '0-19° Gentle' },
+                { color: '#ffd700', label: '19-31° Moderate' },
+                { color: '#ef4444', label: '>31° Steep' },
             ];
             const COMP_COLORS = ['#2196F3', '#FF9800', '#4CAF50', '#9C27B0', '#F48FB1',
                 '#607D8B', '#CDDC39', '#00BCD4', '#FF5722', '#795548',
@@ -3872,6 +3872,7 @@
                     rows.push({ color: '#ef4444', label: 'Survey Points', type: 'circle' });
                 }
             } else {
+                // Groups A, B, C: white fill, black outline, red points, black lines
                 titleEl.textContent = 'Legend';
                 rows.push({ color: '#ffffff', edge: '#000000', label: 'Forest Polygon', type: 'polygon' });
                 rows.push({ color: '#000000', label: 'Boundary Line', type: 'line' });
