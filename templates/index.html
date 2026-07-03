@@ -1218,8 +1218,8 @@
 
         /* Legend box */
         .ov-legend {
-            min-width: 118px;
-            min-height: 80px;
+            min-width: 60px;
+            min-height: 60px;
             max-width: 450px;
             right: 4%;
             bottom: 5%;
@@ -2597,15 +2597,22 @@
                             <div class="fg">
                                 <label>Legend Width</label>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <input type="range" id="legend-width-slider" min="60" max="450" value="180" step="2" oninput="updateLegendSize()">
+                                    <input type="range" id="legend-width-slider" min="60" max="280" value="180" step="2" oninput="updateLegendSize()">
                                     <span class="resize-val" id="legend-width-val">180</span>
                                 </div>
                             </div>
                             <div class="fg">
                                 <label>Legend Height</label>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <input type="range" id="legend-height-slider" min="60" max="400" value="150" step="2" oninput="updateLegendSize()">
+                                    <input type="range" id="legend-height-slider" min="60" max="250" value="150" step="2" oninput="updateLegendSize()">
                                     <span class="resize-val" id="legend-height-val">150</span>
+                                </div>
+                            </div>
+                            <div class="fg">
+                                <label>Legend Scale (%)</label>
+                                <div style="display:flex;align-items:center;gap:6px">
+                                    <input type="range" id="legend-scale-slider" min="30" max="200" value="100" step="1" oninput="updateLegendScale()">
+                                    <span class="resize-val" id="legend-scale-val">100</span>
                                 </div>
                             </div>
                             <div class="fg">
@@ -4052,6 +4059,7 @@
             if (title) state['legend-title'] = title.textContent;
             state['legend-width'] = document.getElementById('legend-width-slider')?.value || '180';
             state['legend-height'] = document.getElementById('legend-height-slider')?.value || '150';
+            state['legend-scale'] = document.getElementById('legend-scale-slider')?.value || '100';
             state['north-size'] = document.getElementById('north-size-slider')?.value || '42';
             try { localStorage.setItem('ov-state-' + currentRunId, JSON.stringify(state)); } catch (e) {}
         }
@@ -4091,6 +4099,11 @@
                 if (slider) { slider.value = state['legend-height'];
                     updateLegendSize(); }
             }
+            if (state['legend-scale']) {
+                const slider = document.getElementById('legend-scale-slider');
+                if (slider) { slider.value = state['legend-scale'];
+                    updateLegendScale(); }
+            }
             if (state['north-size']) {
                 const slider = document.getElementById('north-size-slider');
                 if (slider) { slider.value = state['north-size'];
@@ -4112,6 +4125,11 @@
                 const slider = document.getElementById('legend-height-slider');
                 if (slider) { slider.value = state['legend-height'];
                     updateLegendSize(); }
+            }
+            if (state['legend-scale']) {
+                const slider = document.getElementById('legend-scale-slider');
+                if (slider) { slider.value = state['legend-scale'];
+                    updateLegendScale(); }
             }
             if (state['north-size']) {
                 const slider = document.getElementById('north-size-slider');
@@ -4142,6 +4160,9 @@
             const lh = document.getElementById('legend-height-slider');
             if (lh) { lh.value = '150';
                 updateLegendSize(); }
+            const ls = document.getElementById('legend-scale-slider');
+            if (ls) { ls.value = '100';
+                updateLegendScale(); }
             const ns = document.getElementById('north-size-slider');
             if (ns) { ns.value = '42';
                 updateNorthSize(); }
@@ -4154,21 +4175,70 @@
             const hSlider = document.getElementById('legend-height-slider');
             const wVal = document.getElementById('legend-width-val');
             const hVal = document.getElementById('legend-height-val');
+            const sSlider = document.getElementById('legend-scale-slider');
+            const sVal = document.getElementById('legend-scale-val');
             const legend = document.getElementById('ov-legend');
             if (!wSlider || !hSlider || !legend) return;
+
             const width = parseInt(wSlider.value);
             const height = parseInt(hSlider.value);
             legend.style.width = width + 'px';
             legend.style.height = height + 'px';
             if (wVal) wVal.textContent = width;
             if (hVal) hVal.textContent = height;
+
+            // Update the Scale slider based on the average of width and height ratios
+            const baseW = 180;
+            const baseH = 150;
+            const scaleW = width / baseW;
+            const scaleH = height / baseH;
+            const avgScale = Math.round(((scaleW + scaleH) / 2) * 100);
+            if (sSlider) sSlider.value = Math.min(200, Math.max(30, avgScale));
+            if (sVal) sVal.textContent = Math.min(200, Math.max(30, avgScale));
+
             if (currentRunId) {
                 let state;
-                try { state = JSON.parse(localStorage.getItem('ov-state-' + currentRunId) || 'null'); } catch { state =
-                    {}; }
+                try { state = JSON.parse(localStorage.getItem('ov-state-' + currentRunId) || 'null'); } catch { state = {}; }
                 if (!state) state = {};
                 state['legend-width'] = String(width);
                 state['legend-height'] = String(height);
+                state['legend-scale'] = String(avgScale);
+                try { localStorage.setItem('ov-state-' + currentRunId, JSON.stringify(state)); } catch (e) {}
+            }
+        }
+
+        function updateLegendScale() {
+            const sSlider = document.getElementById('legend-scale-slider');
+            const sVal = document.getElementById('legend-scale-val');
+            const wSlider = document.getElementById('legend-width-slider');
+            const hSlider = document.getElementById('legend-height-slider');
+            const wVal = document.getElementById('legend-width-val');
+            const hVal = document.getElementById('legend-height-val');
+            const legend = document.getElementById('ov-legend');
+            if (!sSlider || !legend) return;
+
+            const scale = parseInt(sSlider.value) / 100;
+            const baseW = 180;
+            const baseH = 150;
+            const w = Math.round(baseW * scale);
+            const h = Math.round(baseH * scale);
+
+            wSlider.value = w;
+            hSlider.value = h;
+            wVal.textContent = w;
+            hVal.textContent = h;
+            sVal.textContent = Math.round(scale * 100);
+
+            legend.style.width = w + 'px';
+            legend.style.height = h + 'px';
+
+            if (currentRunId) {
+                let state;
+                try { state = JSON.parse(localStorage.getItem('ov-state-' + currentRunId) || 'null'); } catch { state = {}; }
+                if (!state) state = {};
+                state['legend-width'] = String(w);
+                state['legend-height'] = String(h);
+                state['legend-scale'] = String(Math.round(scale * 100));
                 try { localStorage.setItem('ov-state-' + currentRunId, JSON.stringify(state)); } catch (e) {}
             }
         }
@@ -4184,8 +4254,7 @@
             if (valDisplay) valDisplay.textContent = size;
             if (currentRunId) {
                 let state;
-                try { state = JSON.parse(localStorage.getItem('ov-state-' + currentRunId) || 'null'); } catch { state =
-                    {}; }
+                try { state = JSON.parse(localStorage.getItem('ov-state-' + currentRunId) || 'null'); } catch { state = {}; }
                 if (!state) state = {};
                 state['north-size'] = String(size);
                 try { localStorage.setItem('ov-state-' + currentRunId, JSON.stringify(state)); } catch (e) {}
