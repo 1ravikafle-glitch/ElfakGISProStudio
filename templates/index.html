@@ -1174,21 +1174,20 @@
         .overlay-layer.visible {
             display: block;
         }
+        /* When NOT in edit mode, treat overlay boxes as static images */
         .overlay-layer:not(.editing) .ov-box {
+            pointer-events: none;
             cursor: default;
-        }
-        .overlay-layer:not(.editing) .ov-drag-grip {
-            display: none;
+            outline: none !important;
         }
         .overlay-layer.editing .ov-box {
+            pointer-events: auto;
             outline: 2px dashed rgba(16, 185, 129, .55);
             outline-offset: 2px;
         }
 
         .ov-box {
             position: absolute;
-            pointer-events: auto;
-            cursor: grab;
             touch-action: none;
             user-select: none;
             -webkit-user-select: none;
@@ -1218,14 +1217,25 @@
 
         /* Legend box */
         .ov-legend {
-            min-width: 60px;
-            min-height: 60px;
-            max-width: 450px;
             right: 4%;
             bottom: 5%;
+            padding: 0;
+            background: transparent;
+            border: none;
+            box-shadow: none;
+        }
+        .ov-legend-inner {
+            /* This wrapper scales like an image */
+            transform-origin: top left;
+            background: rgba(255, 255, 255, .97);
+            border: 1.3px solid #555;
+            border-radius: 6px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .18);
             padding: 7px 10px 8px;
             font-family: 'Inter', system-ui, sans-serif;
-            overflow: auto;
+            width: 180px;   /* base width */
+            height: 150px;  /* base height */
+            overflow: hidden;
         }
         .ov-legend-title {
             font-size: 10.5px;
@@ -1276,6 +1286,7 @@
             line-height: 1;
             cursor: grab;
             padding: 2px;
+            z-index: 10;
         }
 
         /* North arrow */
@@ -2573,8 +2584,10 @@
                         <div id="overlay-layer" class="overlay-layer">
                             <div id="ov-legend" class="ov-box ov-legend">
                                 <div class="ov-drag-grip" title="Drag to move legend">⠿</div>
-                                <div class="ov-legend-title" id="ov-legend-title" contenteditable="true" spellcheck="false" style="outline:none;cursor:text;">Legend</div>
-                                <div class="ov-legend-body" id="ov-legend-body"></div>
+                                <div class="ov-legend-inner">
+                                    <div class="ov-legend-title" id="ov-legend-title" contenteditable="true" spellcheck="false" style="outline:none;cursor:text;">Legend</div>
+                                    <div class="ov-legend-body" id="ov-legend-body"></div>
+                                </div>
                             </div>
                             <div id="ov-north" class="ov-box ov-north" title="Drag to move north arrow">
                                 <svg viewBox="0 0 40 56" class="ov-north-svg">
@@ -4178,21 +4191,25 @@
             const sSlider = document.getElementById('legend-scale-slider');
             const sVal = document.getElementById('legend-scale-val');
             const legend = document.getElementById('ov-legend');
-            if (!wSlider || !hSlider || !legend) return;
+            const inner = legend.querySelector('.ov-legend-inner');
+            if (!wSlider || !hSlider || !legend || !inner) return;
 
             const width = parseInt(wSlider.value);
             const height = parseInt(hSlider.value);
             legend.style.width = width + 'px';
             legend.style.height = height + 'px';
-            if (wVal) wVal.textContent = width;
-            if (hVal) hVal.textContent = height;
 
-            // Update the Scale slider based on the average of width and height ratios
             const baseW = 180;
             const baseH = 150;
-            const scaleW = width / baseW;
-            const scaleH = height / baseH;
-            const avgScale = Math.round(((scaleW + scaleH) / 2) * 100);
+            const scaleX = width / baseW;
+            const scaleY = height / baseH;
+            const scale = Math.min(scaleX, scaleY);
+            inner.style.transform = `scale(${scale})`;
+            // Optionally center the content: set transform-origin: top left, and adjust margins if needed.
+            // We'll keep transform-origin: top left so the content aligns to top-left.
+            // The inner wrapper's size is the base size, and we scale it.
+
+            const avgScale = Math.round(scale * 100);
             if (sSlider) sSlider.value = Math.min(200, Math.max(30, avgScale));
             if (sVal) sVal.textContent = Math.min(200, Math.max(30, avgScale));
 
@@ -4215,7 +4232,8 @@
             const wVal = document.getElementById('legend-width-val');
             const hVal = document.getElementById('legend-height-val');
             const legend = document.getElementById('ov-legend');
-            if (!sSlider || !legend) return;
+            const inner = legend.querySelector('.ov-legend-inner');
+            if (!sSlider || !legend || !inner) return;
 
             const scale = parseInt(sSlider.value) / 100;
             const baseW = 180;
@@ -4231,6 +4249,7 @@
 
             legend.style.width = w + 'px';
             legend.style.height = h + 'px';
+            inner.style.transform = `scale(${scale})`;
 
             if (currentRunId) {
                 let state;
