@@ -28,11 +28,6 @@
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        /* ══════════════════════════════════════════════════════════════════════
-           ELFAK GIS ENGINE PRO — ULTIMATE UI SYSTEM
-           Awwwards-level · Apple-quality · 60fps · GPU-accelerated
-           ══════════════════════════════════════════════════════════════════════ */
-
         /* ── LIGHT MODE ── */
         :root {
             --bg-1: #e4f2ec;
@@ -1179,6 +1174,16 @@
         .overlay-layer.visible {
             display: block;
         }
+        .overlay-layer:not(.editing) .ov-box {
+            cursor: default;
+        }
+        .overlay-layer:not(.editing) .ov-drag-grip {
+            display: none;
+        }
+        .overlay-layer.editing .ov-box {
+            outline: 2px dashed rgba(16, 185, 129, .55);
+            outline-offset: 2px;
+        }
 
         .ov-box {
             position: absolute;
@@ -1204,7 +1209,6 @@
             z-index: 7;
             border-color: var(--mint);
         }
-
         .ov-box.ov-selected {
             outline: 3px solid #10b981 !important;
             outline-offset: 3px;
@@ -3807,69 +3811,110 @@
             if (!body) return;
             body.innerHTML = '';
 
+            // ---- Group A, B, C: white fill, black outline ----
+            const SIMPLE_POLY_COLOR = '#ffffff';
+            const SIMPLE_POLY_EDGE = '#000000';
+            const LINE_COLOR = '#000000';
+            const POINT_COLOR = '#ff0000';
+
+            // ---- Group F: slope colors ----
             const SLOPE_ROWS = [
-                { color: '#2e8b57', label: '0-19 degree' },
-                { color: '#90ee90', label: '19-31 degree' },
-                { color: '#ffd700', label: '>31 degree' },
+                { color: '#2e8b57', label: '0-19° Gentle' },
+                { color: '#90ee90', label: '19-31° Moderate' },
+                { color: '#ffd700', label: '>31° Steep' },
             ];
+
+            // ---- Group G: point type colors ----
+            const POINT_TYPE_COLORS = {
+                'Vertex': '#2196F3',
+                'Boundary': '#FF9800',
+                'Divider': '#9C27B0'
+            };
+
+            // ---- Compartment colors (distinguishable) ----
             const COMP_COLORS = ['#2196F3', '#FF9800', '#4CAF50', '#9C27B0', '#F48FB1',
-                '#607D8B', '#CDDC39', '#00BCD4', '#FF5722', '#795548'
+                '#607D8B', '#CDDC39', '#00BCD4', '#FF5722', '#795548',
+                '#E91E63', '#009688', '#FFC107', '#3F51B5', '#8BC34A'
             ];
 
             let rows = [];
 
+            // ---- DETECT MODULE & BUILD LEGEND ----
             if (module === 'F') {
+                // SLOPE: green, light green, yellow
                 titleEl.textContent = 'Legend';
-                rows = SLOPE_ROWS;
-                rows.push({ color: 'black', label: 'Forest Boundary', line: true });
+                rows = SLOPE_ROWS.map(r => ({
+                    color: r.color,
+                    label: r.label,
+                    type: 'polygon'
+                }));
+                rows.push({ color: '#000000', label: 'Forest Boundary', type: 'line' });
                 rows.unshift({ header: true, label: 'Slope Classes' });
             } else if (module === 'G') {
+                // SURVEY POINTS: vertex, boundary, divider
                 titleEl.textContent = 'Legend';
                 rows = [
-                    { color: '#2196F3', label: 'Vertex Points', circle: true },
-                    { color: '#FF9800', label: 'Boundary Points', circle: true },
-                    { color: '#9C27B0', label: 'Divider Points', circle: true },
+                    { color: POINT_TYPE_COLORS['Vertex'], label: 'Vertex Points', type: 'circle' },
+                    { color: POINT_TYPE_COLORS['Boundary'], label: 'Boundary Points', type: 'circle' },
+                    { color: POINT_TYPE_COLORS['Divider'], label: 'Divider Points', type: 'circle' },
                 ];
-            } else if (geojson && geojson.features) {
+                // Also show compartment boundaries if present
+                if (geojson && geojson.features && geojson.features.some(f => f.geometry &&
+                        f.geometry.type !== 'Point' && f.geometry.type !== 'MultiPoint')) {
+                    rows.push({ color: '#1565C0', label: 'Compartment Boundary', type: 'line' });
+                }
+            } else if (module === 'E' || module === 'D') {
+                // COMPARTMENTS: distinguishable colors
                 titleEl.textContent = 'Legend';
-                const hasClass = geojson.features.some(f => f.properties?.Class);
-                const hasCompID = geojson.features.some(f => f.properties?.Comp_ID);
-                const hasForest = geojson.features.some(f => f.properties?.Forest);
-                const hasPoints = geojson.features.some(f =>
-                    f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint');
-
-                if (hasClass) {
-                    rows = SLOPE_ROWS;
-                    rows.push({ color: 'black', label: 'Forest Boundary', line: true });
-                } else if (hasCompID || hasForest) {
-                    const col = hasCompID ? 'Comp_ID' : 'Forest';
-                    const seen = new Map();
-                    let ci = 0;
+                const seen = new Map();
+                let ci = 0;
+                if (geojson && geojson.features) {
                     geojson.features.forEach(f => {
-                        const v = f.properties?.[col];
-                        if (v && !seen.has(v)) { seen.set(v, COMP_COLORS[ci++ % COMP_COLORS.length]); }
+                        const cid = f.properties?.Comp_ID || f.properties?.Forest || '';
+                        if (cid && !seen.has(cid)) {
+                            seen.set(cid, COMP_COLORS[ci++ % COMP_COLORS.length]);
+                        }
                     });
-                    seen.forEach((color, label) => rows.push({ color, label }));
-                    rows.push({ color: 'black', label: 'Forest Boundary', line: true });
+                }
+                if (seen.size > 0) {
+                    seen.forEach((color, label) => {
+                        rows.push({ color, label, type: 'polygon' });
+                    });
                 } else {
-                    rows = [{ color: '#1565C0', label: 'Forest Boundary', line: true }];
+                    // Fallback: show a generic polygon
+                    rows.push({ color: COMP_COLORS[0], label: 'Compartment', type: 'polygon' });
                 }
-                if (hasPoints) {
-                    const ptCol = geojson.features.find(f => f.properties?.Point_Type)?.properties?.Point_Type;
-                    if (ptCol) {
-                        rows.push({ color: '#ef4444', label: 'Survey Points', circle: true });
-                    }
+                // Add boundary line
+                rows.push({ color: '#000000', label: 'Boundary', type: 'line' });
+                // Add points if present
+                if (geojson && geojson.features && geojson.features.some(f =>
+                        f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'))) {
+                    rows.push({ color: POINT_COLOR, label: 'Survey Points', type: 'circle' });
                 }
-                const ah = geojson.features.reduce((s, f) => s + (f.properties?.Area_ha || 0), 0);
-                if (ah > 0) rows.push({ separator: true, label: `Area = ${ah.toFixed(3)} ha` });
             } else {
+                // GROUP A, B, C: white fill, black outline, red points, black lines
                 titleEl.textContent = 'Legend';
-                rows = [{ color: '#1565C0', label: 'Forest Boundary', line: true }];
+                // Polygon: white fill with black border
+                rows.push({ color: SIMPLE_POLY_COLOR, edge: SIMPLE_POLY_EDGE, label: 'Forest Polygon', type: 'polygon' });
+                // Line: black
+                rows.push({ color: LINE_COLOR, label: 'Boundary Line', type: 'line' });
+                // Point: red
+                if (geojson && geojson.features && geojson.features.some(f =>
+                        f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'))) {
+                    rows.push({ color: POINT_COLOR, label: 'Survey Points', type: 'circle' });
+                }
+                // Area info if present
+                const ah = geojson?.features?.reduce((s, f) => s + (f.properties?.Area_ha || 0), 0) || 0;
+                if (ah > 0) {
+                    rows.push({ separator: true, label: `Area = ${ah.toFixed(3)} ha` });
+                }
             }
 
+            // ---- Render rows ----
             rows.forEach(r => {
                 const row = document.createElement('div');
                 row.className = 'ov-legend-row';
+
                 if (r.header) {
                     row.style.cssText = 'font-weight:700;font-size:9px;color:#444;margin-bottom:2px';
                     row.innerHTML =
@@ -3879,12 +3924,27 @@
                     row.innerHTML =
                         `<span class="ov-legend-label" contenteditable="true" spellcheck="false" style="outline:none;cursor:text;font-style:italic;color:#555;font-size:9px;font-family:var(--sans)">${r.label}</span>`;
                 } else {
+                    // Swatch
                     const sw = document.createElement('div');
-                    sw.className = 'ov-legend-swatch' + (r.circle ? ' circle' : '') + (r.line ? ' line' : '');
-                    sw.style.background = r.color;
+                    sw.className = 'ov-legend-swatch';
+                    if (r.type === 'circle') {
+                        sw.classList.add('circle');
+                    } else if (r.type === 'line') {
+                        sw.classList.add('line');
+                    } else {
+                        // polygon: fill color + optional edge
+                    }
+                    sw.style.background = r.color || '#ffffff';
+                    if (r.edge) {
+                        sw.style.border = '1px solid ' + r.edge;
+                    } else {
+                        sw.style.border = '1px solid rgba(0,0,0,.35)';
+                    }
+
+                    // Label
                     const lb = document.createElement('span');
                     lb.className = 'ov-legend-label';
-                    lb.textContent = r.label;
+                    lb.textContent = r.label || '';
                     lb.contentEditable = 'true';
                     lb.spellcheck = false;
                     lb.style.cssText =
@@ -3893,6 +3953,7 @@
                     lb.addEventListener('focus', () => {
                         if (_selectedOvEl) _setSelected(null);
                     });
+
                     row.appendChild(sw);
                     row.appendChild(lb);
                 }
@@ -4116,7 +4177,6 @@
             const width = parseInt(slider.value);
             legend.style.width = width + 'px';
             if (valDisplay) valDisplay.textContent = width;
-            // Save state if we have a run
             if (currentRunId) {
                 let state;
                 try { state = JSON.parse(localStorage.getItem('ov-state-' + currentRunId) || 'null'); } catch { state =
