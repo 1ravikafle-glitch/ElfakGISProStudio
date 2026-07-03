@@ -2688,9 +2688,8 @@
                 <div class="preview-foot">
                     <div class="run-meta" id="run-meta">Metrics: Ready</div>
                     <div style="display:flex;gap:8px;align-items:center">
-                        <button id="view-full-btn" onclick="viewFullMap()" style="display:none;padding:6px 13px;border-radius:6px;background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.3);color:#1d4ed8;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all .2s">
-                            🔍 Full View
-                        </button>
+                        <!-- 👇 THE BUTTON IS NOW PERMANENTLY CODED AND VISIBLE AFTER RUN 👇 -->
+                        <button type="button" id="view-full-btn" onclick="viewFullMap()" style="display:none;padding:6px 13px;border-radius:6px;background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.3);color:#1d4ed8;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all .2s">🔍 Full View</button>
                         <a id="dl-btn" class="dl-btn" href="#">⬇ Download ZIP</a>
                     </div>
                 </div>
@@ -3291,6 +3290,14 @@
                     requestAnimationFrame(() => { img.style.opacity = '1';
                         img.style.transform = 'scale(1)'; });
                     setTimeout(() => img.style.transition = '', 500);
+                    
+                    // 👇 FORCE THE FULL VIEW BUTTON TO APPEAR AFTER IMAGE LOADS
+                    const vfb = document.getElementById('view-full-btn');
+                    if (vfb) {
+                        vfb.style.display = 'block';
+                        vfb.style.visibility = 'visible';
+                        vfb.style.opacity = '1';
+                    }
                 };
                 img.src = `${BASE}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
                 const dl = document.getElementById('dl-btn');
@@ -3783,24 +3790,48 @@
             const mdl = document.getElementById('modal-dl-btn');
             const target = document.getElementById('canvas-wrap-static');
 
-            // Show loading
+            // Reset modal download link to prevent HTML download
+            if (mdl) {
+                mdl.href = '#';
+                mdl.download = '';
+                mdl.style.display = 'inline-block';
+            }
+
             mimg.src = '';
             modal.style.display = 'flex';
 
-            // Capture the entire canvas area (map + overlays) using html2canvas
-            // Force the overlays to render by removing pointer-events: none in the clone
+            // Safe fallback that prevents href="#" downloads
+            const fallbackToRaw = () => {
+                const src = document.getElementById('out-img')?.src;
+                if (src && !src.endsWith('undefined') && !src.endsWith('null') && src.length > 10) {
+                    mimg.src = src;
+                    if (mdl) {
+                        mdl.href = src;
+                        mdl.download = 'elfak_map_raw.png';
+                    }
+                } else {
+                    // If even the raw map fails, show an error message instead of downloading HTML
+                    mimg.alt = 'Error: No map image available. Click "Open Full PNG" in the Composer tab.';
+                    if (mdl) {
+                        mdl.href = '#';
+                        mdl.download = '';
+                        mdl.style.display = 'none'; // Hide broken download button
+                    }
+                    alert('Could not generate composite image. Please use the "Open Full PNG" button inside the Composer tab to view the raw map.');
+                }
+            };
+
+            // Attempt to capture with html2canvas
             html2canvas(target, {
-                scale: 2.0,           // High scale for crisp A4 quality
+                scale: 2.0,
                 useCORS: true,
                 allowTaint: false,
                 backgroundColor: null,
                 logging: false,
                 onclone: (clonedDoc) => {
-                    // Ensure the overlay layer is visible and forced to render in the cloned document
                     const clonedOverlay = clonedDoc.querySelector('#overlay-layer');
                     if (clonedOverlay) {
                         clonedOverlay.classList.add('visible');
-                        // Force the boxes to render (they are hidden via pointer-events in the original)
                         clonedOverlay.querySelectorAll('.ov-box').forEach(box => {
                             box.style.pointerEvents = 'auto'; 
                             box.style.display = 'block';
@@ -3808,23 +3839,21 @@
                     }
                 }
             }).then(canvas => {
-                const dataUrl = canvas.toDataURL('image/png');
-                mimg.src = dataUrl;
-                if (mdl) {
-                    mdl.href = dataUrl;
-                    mdl.download = 'elfak_map_edited.png';
+                try {
+                    const dataUrl = canvas.toDataURL('image/png');
+                    mimg.src = dataUrl;
+                    if (mdl) {
+                        mdl.href = dataUrl;
+                        mdl.download = 'elfak_map_edited.png';
+                        mdl.style.display = 'inline-block';
+                    }
+                } catch (e) {
+                    console.error('Canvas toDataURL failed:', e);
+                    fallbackToRaw();
                 }
             }).catch(err => {
-                console.error('Composite capture failed, falling back to raw map:', err);
-                // Fallback: just show the raw map image
-                const src = document.getElementById('out-img')?.src;
-                if (src && !src.endsWith('undefined')) {
-                    mimg.src = src;
-                    if (mdl) {
-                        mdl.href = src;
-                        mdl.download = 'elfak_map_raw.png';
-                    }
-                }
+                console.error('Composite capture failed:', err);
+                fallbackToRaw();
             });
         }
 
