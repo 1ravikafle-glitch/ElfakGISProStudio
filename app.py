@@ -51,7 +51,8 @@ DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
-A4W, A4H, DPI = 8.27, 11.69, 200
+# ── UPDATED DPI AND MARGINS ──
+A4W, A4H, DPI = 8.27, 11.69, 1080   # inches, portrait A4, 1080 DPI
 
 _PROG: dict = {}
 _PROG_LOCK = threading.Lock()
@@ -1632,7 +1633,7 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
     _style_ax(ax); _scale_bar(ax)
     ax.set_title(title.strip() or "Compartment Division Map",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
+    fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
     fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
                 pad_inches=0.15); plt.close(fig)
 
@@ -1701,7 +1702,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
     head = title.strip() if title.strip() else (
         f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
+    fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
     fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
                 pad_inches=0.15); plt.close(fig)
 
@@ -1714,7 +1715,7 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
     hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
     nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
     fig=plt.figure(figsize=(A4W,A4H),dpi=DPI,facecolor="white")
-    gs=gridspec.GridSpec(2,1,height_ratios=[1,tr],hspace=0.20,left=0.10,right=0.96,top=0.94,bottom=0.04)
+    gs=gridspec.GridSpec(2,1,height_ratios=[1,tr],hspace=0.20,left=0.08,right=0.96,top=0.97,bottom=0.08)
     ax1=fig.add_subplot(gs[0]); ax2=fig.add_subplot(gs[1])
     if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
         for cid,color in cc.items():
@@ -2043,7 +2044,7 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     _style_ax(ax); _scale_bar(ax)
     ax.set_title(title.strip() or "Forest Survey Points",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    fig.subplots_adjust(left=0.08, right=0.96, top=0.95, bottom=0.06)
+    fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
     fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
                 pad_inches=0.15); plt.close(fig)
 
