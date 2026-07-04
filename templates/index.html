@@ -1167,7 +1167,7 @@
             transition: opacity .4s var(--ease), transform .4s var(--ease);
         }
 
-        /* ── FLOATING OVERLAY LAYER — legend + north arrow ABOVE the static PNG ── */
+        /* ── FLOATING OVERLAY LAYER ── */
         .overlay-layer {
             position: absolute;
             inset: 0;
@@ -1178,7 +1178,6 @@
         .overlay-layer.visible {
             display: block;
         }
-        /* When NOT in edit mode, treat overlay boxes as static images */
         .overlay-layer:not(.editing) .ov-box {
             pointer-events: none;
             cursor: default;
@@ -1219,7 +1218,6 @@
             z-index: 8;
         }
 
-        /* Legend box */
         .ov-legend {
             right: 4%;
             bottom: 5%;
@@ -1293,7 +1291,6 @@
             z-index: 10;
         }
 
-        /* North arrow */
         .ov-north {
             width: 42px;
             height: 58px;
@@ -1312,12 +1309,6 @@
             width: 100%;
             height: 100%;
             display: block;
-        }
-
-        .ov-legend-empty {
-            font-size: 9px;
-            color: #888;
-            font-style: italic;
         }
 
         .layout-toolbar {
@@ -1491,7 +1482,6 @@
             font-weight: 700;
         }
 
-        /* ── RESIZE CONTROLS ── */
         .resize-controls {
             display: flex;
             gap: 12px;
@@ -1545,7 +1535,6 @@
             text-align: right;
         }
 
-        /* ── LOGIN SCREEN ── */
         #login-overlay {
             display: none;
             position: fixed;
@@ -1698,7 +1687,6 @@
             transform: scale(1.05);
         }
 
-        /* ── HISTORY DRAWER ── */
         #hist-drawer {
             position: fixed;
             right: -350px;
@@ -1854,7 +1842,6 @@
             display: none !important
         }
 
-        /* ── RESPONSIVE DESIGN ── */
         .mobile-nav-btn {
             display: none;
             flex-direction: column;
@@ -2597,7 +2584,7 @@
                         <img id="out-img" alt="Map Output">
                         <div class="empty-msg" id="empty-msg">🌲 Run a pipeline to see your A4 map here.<br><br>
                             Supports Groups A–G<br>PNG · SHP · CSV · Excel</div>
-                        <!-- Floating overlay layer — only draggable legend + north arrow -->
+                        <!-- Floating overlay layer -->
                         <div id="overlay-layer" class="overlay-layer">
                             <div id="ov-legend" class="ov-box ov-legend">
                                 <div class="ov-drag-grip" title="Drag to move legend">⠿</div>
@@ -2616,13 +2603,12 @@
                         </div>
                     </div>
 
-                    <!-- Layout toolbar with resize controls -->
+                    <!-- Layout toolbar -->
                     <div class="layout-toolbar" id="layout-toolbar">
                         <button class="etool" id="layout-edit-btn" onclick="toggleLayoutEdit()">✥ Edit Layout</button>
                         <button class="etool" id="layout-reset-btn" onclick="resetLayoutPositions()" style="display:none">↺ Reset Position</button>
                         <span class="layout-hint" id="layout-hint" style="display:none">Drag the legend or compass — positions save automatically</span>
 
-                        <!-- Resize controls -->
                         <div class="resize-controls" id="resize-controls">
                             <div class="fg">
                                 <label>Legend Width</label>
@@ -2634,7 +2620,6 @@
                             <div class="fg">
                                 <label>Legend Height</label>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <!-- 0 = auto-fit content -->
                                     <input type="range" id="legend-height-slider" min="0" max="250" value="0" step="2" oninput="updateLegendSize()">
                                     <span class="resize-val" id="legend-height-val">Auto</span>
                                 </div>
@@ -2706,6 +2691,7 @@
                         <a id="dl-btn" class="dl-btn" href="#">⬇ Download ZIP</a>
                     </div>
                 </div>
+
                 <!-- Full-map modal -->
                 <div id="map-modal" style="display:none;position:fixed;inset:0;z-index:9500;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);align-items:center;justify-content:center;flex-direction:column;gap:12px" onclick="this.style.display='none'">
                     <div style="position:relative;max-width:95vw;max-height:92vh;overflow:auto" onclick="event.stopPropagation()">
@@ -2775,9 +2761,21 @@
             return [];
         }
 
+        // ── Helper: get fractional position of an overlay element ──────
+        function getRelativePosition(el) {
+            const wrap = document.getElementById('canvas-wrap-static');
+            if (!wrap) return null;
+            const rect = wrap.getBoundingClientRect();
+            const elRect = el.getBoundingClientRect();
+            return [
+                (elRect.left + elRect.width / 2 - rect.left) / rect.width,
+                (elRect.top + elRect.height / 2 - rect.top) / rect.height
+            ];
+        }
+
         let _dark = localStorage.getItem('elfak-theme') === 'dark';
 
-        function _applyTheme(dark, animate = false) {
+        function _applyTheme(dark, animate) {
             _dark = dark;
             const html = document.documentElement;
             const flash = document.getElementById('theme-flash');
@@ -2903,11 +2901,6 @@
                 if (map[key]) sel.value = map[key];
                 else if (key !== 'Order' && key !== 'Compartment' && cols.length > 0) sel.value = cols[0];
             });
-        }
-
-        async function parseCSVCols(file) {
-            // Keep for backward compatibility, but delegate to parseFileColumns
-            return parseFileColumns(file);
         }
 
         function parseDbfCols(buf) {
@@ -3102,7 +3095,7 @@
             document.getElementById('f-hint').textContent = hints[m] || hints.A;
         }
 
-        function setProgress(lbl, msg, pct, isErr = false) {
+        function setProgress(lbl, msg, pct, isErr) {
             const pl = document.getElementById('prog-lbl'),
                 pm = document.getElementById('prog-msg');
             const pf = document.getElementById('prog-fill');
@@ -3118,23 +3111,53 @@
             }
         }
 
+        // ─── UPDATED startSSE WITH ETA ────────────────────────────────────
         function startSSE(runId) {
+            const startTime = Date.now();
+            let estimatedRemaining = null;
+
             const es = new EventSource(`${BASE}/progress/${runId}`);
-            let _lastMsg = '';
+
             es.onmessage = e => {
                 try {
                     const d = JSON.parse(e.data);
-                    const isErr = d.msg && d.msg.startsWith('ERROR');
-                    const isDone = d.pct >= 100;
-                    const lbl = isDone ? 'Complete ✓' : isErr ? 'Error' : 'Processing…';
-                    if (d.msg !== _lastMsg) { _lastMsg = d.msg;
-                        setProgress(lbl, d.msg, d.pct || 0, isErr); } else { setProgress(lbl, d.msg, d.pct || 0, isErr); }
-                    if (isDone) { es.close();
-                        setTimeout(() => { setProgress('Ready', '', 0); }, 8000); }
-                    if (isErr) es.close();
-                } catch {}
+                    const pct = d.pct;
+                    const msg = d.msg;
+
+                    if (pct !== undefined && pct !== null) {
+                        const now = Date.now();
+                        const elapsed = (now - startTime) / 1000;
+
+                        if (pct > 0 && pct < 100) {
+                            const rate = pct / elapsed;
+                            const remaining = (100 - pct) / rate;
+                            estimatedRemaining = Math.round(remaining);
+                        } else if (pct >= 100) {
+                            estimatedRemaining = 0;
+                        }
+
+                        const lbl = pct >= 100 ? 'Complete ✓' : 'Processing…';
+                        const pctDisplay = Math.round(pct);
+                        const timeMsg = (estimatedRemaining !== null && estimatedRemaining > 0)
+                            ? ` ~${estimatedRemaining}s left`
+                            : (pct >= 100 ? '' : ' …');
+                        setProgress(lbl, msg + timeMsg, pctDisplay, false);
+                    }
+
+                    if (pct >= 100) {
+                        es.close();
+                        setTimeout(() => { setProgress('Ready', '', 0); }, 8000);
+                    }
+
+                } catch (err) {
+                    console.warn('SSE parse error:', err);
+                }
             };
-            es.onerror = () => es.close();
+
+            es.onerror = () => {
+                console.warn('SSE connection closed or errored');
+            };
+
             return es;
         }
 
@@ -3879,17 +3902,27 @@
             });
         }
 
+        // ─── UPDATED doCompose – sends legend_pos and north_pos ──────────
         async function doCompose(extraPayload) {
-            if (!currentRunId) { alert('Run a pipeline first.'); return; }
+            if (!currentRunId) { alert('Run a pipeline first.'); return false; }
             const statusEl = document.getElementById('comp-status');
             if (statusEl) statusEl.textContent = 'Re-rendering…';
+
+            const legendEl = document.getElementById('ov-legend');
+            const northEl = document.getElementById('ov-north');
+            const legendPos = legendEl ? getRelativePosition(legendEl) : null;
+            const northPos = northEl ? getRelativePosition(northEl) : null;
+
+            const payload = Object.assign({
+                title: document.getElementById('comp-title').value || document.getElementById('g-title').value || '',
+                legend_title: document.getElementById('comp-legend').value || 'Legend',
+                label_col: document.getElementById('comp-label').value || document.getElementById('g-label').value || '',
+                module: document.getElementById('comp-module').value || activeModule,
+                legend_pos: legendPos,
+                north_pos: northPos,
+            }, extraPayload || {});
+
             try {
-                const payload = Object.assign({
-                    title: document.getElementById('comp-title').value,
-                    legend_title: document.getElementById('comp-legend').value,
-                    label_col: document.getElementById('comp-label').value,
-                    module: document.getElementById('comp-module').value
-                }, extraPayload || {});
                 const d = await fetchJSON(`${BASE}/compose/${currentRunId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -3916,7 +3949,25 @@
             }
         }
 
-        /* ── FLOATING OVERLAY SYSTEM ── */
+        // ─── OVERRIDE Download ZIP – re‑render with overlay first ──────
+        const dlBtn = document.getElementById('dl-btn');
+        if (dlBtn) {
+            // Remove any existing listeners (clone replacement)
+            const newBtn = dlBtn.cloneNode(true);
+            dlBtn.parentNode.replaceChild(newBtn, dlBtn);
+            newBtn.addEventListener('click', async function(e) {
+                e.preventDefault();
+                if (!currentRunId) { alert('No run available.'); return; }
+                const ok = await doCompose({});
+                if (ok) {
+                    window.location.href = `${BASE}/download/${currentRunId}`;
+                } else {
+                    alert('Failed to re‑render map before download. Please try again.');
+                }
+            });
+        }
+
+        // ─── OVERLAY SYSTEM ──────────────────────────────────────────────
         let _layoutEditActive = false;
         let _ovDragState = null;
         let _selectedOvEl = null;
@@ -4387,41 +4438,6 @@
                 }
             }
         });
-
-        const _origDoCompose = doCompose;
-        doCompose = async function(extraPayload) {
-            const result = await _origDoCompose(extraPayload);
-            if (result && currentRunId) {
-                setTimeout(() => {
-                    const layer = document.getElementById('overlay-layer');
-                    if (layer) {
-                        layer.classList.add('visible');
-                        _buildOverlayLegend(activeModule, currentGeoJSON);
-                        _ovRestoreState();
-                        _applyResizeFromStorage();
-                        if (!_layoutEditActive) layer.classList.remove('editing');
-                    }
-                }, 400);
-            }
-            return result;
-        };
-
-        const _origLoadRunPrev = loadRunPrev;
-        loadRunPrev = function(rid) {
-            _origLoadRunPrev(rid);
-            setTimeout(() => {
-                if (currentRunId) {
-                    const layer = document.getElementById('overlay-layer');
-                    if (layer) {
-                        layer.classList.add('visible');
-                        _buildOverlayLegend(activeModule, currentGeoJSON);
-                        _ovRestoreState();
-                        _applyResizeFromStorage();
-                        if (!_layoutEditActive) layer.classList.remove('editing');
-                    }
-                }
-            }, 500);
-        };
 
         function toggleMobileNav() {
             const panel = document.getElementById('left-nav-panel');
