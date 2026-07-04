@@ -5,12 +5,22 @@ from functools import wraps
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-import matplotlib; matplotlib.use("Agg")
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mticker
+
+# Try to import heavy libraries; if they fail, the app will still start but return JSON errors.
+try:
+    import rasterio
+    from rasterio.mask import mask as rio_mask
+    from rasterio.features import shapes as rio_shapes
+    import scipy.ndimage as ndi
+    _HAS_RASTERIO = True
+except ImportError:
+    _HAS_RASTERIO = False
 
 from flask import (Flask, request, jsonify, send_file, send_from_directory,
                    render_template, session, Response, stream_with_context, abort, g)
@@ -51,7 +61,6 @@ DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
-# ── UPDATED DPI AND MARGINS ──
 A4W, A4H, DPI = 8.27, 11.69, 1080   # inches, portrait A4, 1080 DPI
 
 _PROG: dict = {}
@@ -1244,14 +1253,9 @@ def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
 def group_f(boundary_file, dem_file, crs, out, mapping=None,
             boundary_is_zip=False, forest_name="FOREST",
             f_mode="A", comp_col_name=None, field_area_ha=None, run_id=None):
-    try:
-        import rasterio
-        from rasterio.mask import mask as rio_mask
-        from rasterio.features import shapes as rio_shapes
-        import scipy.ndimage as ndi
-    except ImportError:
-        raise ValueError("rasterio and scipy are required for Group F. "
-                         "Install with: pip install rasterio scipy")
+    if not _HAS_RASTERIO:
+        raise ValueError("rasterio and scipy are not installed on the server. "
+                         "Install them using: pip install rasterio scipy")
 
     os.makedirs(out, exist_ok=True)
     pfx = _safe_dn(forest_name)
@@ -1765,7 +1769,7 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
         tbl=ax2.table(cellText=td,colLabels=cols,cellLoc="center",loc="center",bbox=[0,0,1,1])
         tbl.auto_set_font_size(False); tbl.set_fontsize(6.5 if hg else 8.5)
         tbl.auto_set_column_width(list(range(len(cols))))
-        rc={1:"#d5f5e3",2:"#fef9e7",3:"#fadbd8",0:"#f8f9fa",-1:"#ddeeff"}
+        rc={1:"#d5f5e3",2:"#c8f7c5",3:"#fef9e7",4:"#fadbd8",0:"#f8f9fa",-1:"#ddeeff"}
         for (r2,c2),cell in tbl.get_celld().items():
             cell.set_edgecolor("#ccc")
             if r2==0: cell.set_facecolor("#1a5276"); cell.set_text_props(color="white",fontweight="bold")
