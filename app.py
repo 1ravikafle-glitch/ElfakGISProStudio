@@ -1638,7 +1638,7 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
     ax.set_title(title.strip() or "Compartment Division Map",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+    fig.savefig(path, dpi=DPI, facecolor="white",
                 pad_inches=0.15); plt.close(fig)
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
@@ -1707,7 +1707,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
         f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+    fig.savefig(path, dpi=DPI, facecolor="white",
                 pad_inches=0.15); plt.close(fig)
 
 
@@ -1777,7 +1777,7 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                 cid2=rcm.get(r2-1,0)
                 cell.set_facecolor(rc.get(cid2,"#f8f9fa"))
                 if cid2==-1 or (cid2==0 and r2-1>=len(summary_rows)): cell.set_text_props(fontweight="bold")
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+    fig.savefig(path, dpi=DPI, facecolor="white",
                 pad_inches=0.15); plt.close(fig)
 
 def _kml_pm(gdf,sid,nc=None):
@@ -2049,7 +2049,7 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     ax.set_title(title.strip() or "Forest Survey Points",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-    fig.savefig(path, dpi=DPI, bbox_inches="tight", facecolor="white",
+    fig.savefig(path, dpi=DPI, facecolor="white",
                 pad_inches=0.15); plt.close(fig)
 
 def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None):
