@@ -61,7 +61,7 @@ DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
-A4W, A4H, DPI = 8.27, 11.69, 1080   # inches, portrait A4, 1080 DPI
+A4W, A4H, DPI = 8.27, 11.69, 480   # inches, portrait A4, 1080 DPI
 
 _PROG: dict = {}
 _PROG_LOCK = threading.Lock()
