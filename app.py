@@ -1,11 +1,12 @@
-import os, uuid, zipfile, shutil, json, re, io, traceback, math
-import threading, time, hashlib, html, secrets, logging
+import os, uuid, zipfile, shutil, json, re, io, traceback, math, time, gc
+import threading, hashlib, html, secrets, logging
 from collections import defaultdict
 from functools import wraps
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import matplotlib.patches as mpatches
@@ -61,19 +62,25 @@ DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
-# ─── A4 PORTRAIT, DPI 480 ──────────────────────────────────────────────
-A4W, A4H, DPI = 8.27, 11.69, 480   # inches, portrait A4, 480 DPI
+# ─── LANDSCAPE FIGURE SETTINGS (10×7.5″, 200 DPI) ─────────────────────
+# Adjust FIG_W, FIG_H, DPI to match your desired output size/aspect.
+FIG_W, FIG_H, DPI = 10.0, 7.5, 200   # ~4:3 landscape, 2000×1500 px
 
+# ─── PROGRESS TRACKING (with timestamps for ETA) ──────────────────────
 _PROG: dict = {}
 _PROG_LOCK = threading.Lock()
 
 def _prog(rid, msg, pct=None):
-    o = {"msg": str(msg)[:500]}
-    if pct is not None: o["pct"] = max(0, min(100, int(pct)))
+    o = {
+        "msg": str(msg)[:500],
+        "pct": max(0, min(100, int(pct))) if pct is not None else None,
+        "ts": time.time()
+    }
     with _PROG_LOCK:
         if rid not in _PROG: _PROG[rid] = []
         _PROG[rid].append(json.dumps(o))
         _PROG[rid] = _PROG[rid][-500:]
+    time.sleep(0.01)
 
 def _cleanup_old_prog():
     while True:
@@ -316,9 +323,11 @@ def _security_headers(resp):
     if request.path.startswith(("/login", "/me", "/history", "/progress")):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         resp.headers["Pragma"]        = "no-cache"
+    resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
-_PIPELINE_SEM = threading.Semaphore(int(os.environ.get("MAX_PIPELINES", "20")))
+# ─── REDUCED PIPELINE CONCURRENCY (memory safety) ──────────────────────
+_PIPELINE_SEM = threading.Semaphore(int(os.environ.get("MAX_PIPELINES", "4")))
 _ACTIVE_PIPELINES = 0
 _AP_LOCK = threading.Lock()
 
@@ -347,7 +356,7 @@ def _with_pipeline_sem(fn):
 @_rate_limit(limit=10, window=60)
 def server_status():
     return jsonify({"status":"ok","active_pipelines":_ACTIVE_PIPELINES,
-                    "max_pipelines":int(os.environ.get("MAX_PIPELINES","20")),
+                    "max_pipelines":int(os.environ.get("MAX_PIPELINES","4")),
                     "registered_users":len(_lu())})
 
 @app.route("/robots.txt")
@@ -615,9 +624,39 @@ def _enforce_poly_gdf(gdf):
     result = result.reset_index(drop=True)
     return result
 
+# ─── RE-IMPLEMENTED LEGEND AND NORTH ARROW ──────────────────────────────
 def _north_arrow(ax, pos=None):
-    # Hardcoded north arrow removed
-    pass
+    """Draw a north arrow at a given position (fractional coordinates)."""
+    if pos is None:
+        pos = (0.92, 0.92)  # default: upper right
+    x, y = pos[0], pos[1]
+    # Arrow polygon
+    from matplotlib.patches import Polygon
+    arrow = Polygon([[x, y-0.04], [x-0.02, y-0.01], [x+0.02, y-0.01]],
+                    closed=True, facecolor='black', edgecolor='black',
+                    transform=ax.transAxes, zorder=20)
+    ax.add_patch(arrow)
+    # "N" label above the arrow
+    ax.text(x, y+0.02, 'N', transform=ax.transAxes,
+            fontsize=14, fontweight='bold', ha='center', va='bottom',
+            path_effects=[pe.Stroke(linewidth=2, foreground='white'), pe.Normal()],
+            zorder=21)
+
+def _add_legend(ax, handles, legend_title="Legend", loc="lower right", pos=None):
+    """Add a legend at a specific position (fractional coordinates)."""
+    if not handles:
+        return
+    if pos is not None:
+        # Place legend at custom position (bbox_to_anchor)
+        leg = ax.legend(handles=handles, title=legend_title,
+                        loc='upper left', bbox_to_anchor=(pos[0], pos[1]),
+                        frameon=True, facecolor='white', edgecolor='black',
+                        fontsize=8, title_fontsize=9, zorder=20)
+    else:
+        leg = ax.legend(handles=handles, title=legend_title,
+                        loc=loc, frameon=True, facecolor='white',
+                        edgecolor='black', fontsize=8, title_fontsize=9, zorder=20)
+    leg.set_zorder(20)
 
 def _scale_bar(ax):
     x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
@@ -642,7 +681,7 @@ def _scale_bar(ax):
     ax.text(bx+bar_m,    by - bh*0.6, _fmt(bar_m),      ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
 
     # Scale text (RF) above the bar
-    ax_w_paper_m = 0.76 * A4W * 0.0254
+    ax_w_paper_m = 0.76 * FIG_W * 0.0254
     rf = aw / ax_w_paper_m if ax_w_paper_m > 0 else 0
     if rf > 0:
         rf_mag = 10**_m.floor(_m.log10(max(rf, 1)))
@@ -651,14 +690,6 @@ def _scale_bar(ax):
         ax.text(bx + bar_m/2, by + bh*2.2, rf_str,
                 ha="center", va="bottom", fontsize=7,
                 fontweight="bold", color="black", zorder=16)
-
-def _reserve_legend_margin(ax, loc="lower right", frac=0.22, custom_pos=None):
-    # Hardcoded legend margin removed
-    pass
-
-def _add_legend(ax, handles, legend_title="Legend", loc="lower right", pos=None):
-    # Hardcoded legend removed
-    pass
 
 def _graticule(ax):
     ax.tick_params(axis="both", which="major",
@@ -1321,7 +1352,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         with rasterio.open(dem_path) as _src:
             ra, rt = rio_mask(
                 _src, [rect_poly.__geo_interface__],
-                crop=True, filled=True, nodata=nd, all_touched=False   # <-- changed
+                crop=True, filled=True, nodata=nd, all_touched=False
             )
         rdm = ra[0].astype(np.float32)
         rdm[rdm == nd] = np.nan
@@ -1562,7 +1593,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         with rasterio.open(sp_path) as _src:
             fc2, ft2 = rio_mask(
                 _src, [main_poly.__geo_interface__],
-                crop=True, filled=True, nodata=SN, all_touched=False   # <-- changed
+                crop=True, filled=True, nodata=SN, all_touched=False
             )
         fc2  = fc2[0].astype(np.float32)
         cp2_ = rp.copy(); cp2_.update(height=fc2.shape[0], width=fc2.shape[1], transform=ft2)
@@ -1614,12 +1645,12 @@ _COMP_COLORS_RICH = [
     "#E91E63","#009688","#FFC107","#3F51B5","#8BC34A"
 ]
 
-# ─── PREVIEW FUNCTIONS WITH A4 FIX, POINT LABEL SUPPORT ──────────────────
+# ─── PREVIEW FUNCTIONS WITH LEGEND, NORTH ARROW, LANDSCAPE SIZE ──────────
 
 def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID",
                           legend_pos=None, north_pos=None,
                           point_label_col=None):
-    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
+    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white")
     handles = []
 
@@ -1648,16 +1679,22 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
     ax.set_title(title.strip() or "Compartment Division Map",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-    fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15)   # no bbox_inches
+
+    # Add legend and north arrow if handles exist
+    if handles:
+        _add_legend(ax, handles, legend_title=legend_title, pos=legend_pos)
+    _north_arrow(ax, pos=north_pos)
+
+    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
     plt.close(fig)
+    gc.collect()
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
             label_col=None, label_pts_gdf=None, area_ha=None, title="",
             legend_title="Legend", user_label_col=None,
             legend_pos=None, north_pos=None,
             point_label_col=None):
-    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
+    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white"); handles = []
 
     if poly_gdf is not None and not poly_gdf.empty:
@@ -1675,7 +1712,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
                                               linewidth=1.0, label=lbl))
         else:
             poly_gdf.plot(ax=ax, facecolor="#ffffff", edgecolor="#000000", linewidth=2.0)
-            ha_lbl = f"Area = {area_ha:.3f} ha" if area_ha else "Forest Boundary"
             from matplotlib.lines import Line2D as _L2D
             handles.append(_L2D([0],[0], color="#000000", linewidth=2.5, label="Forest Boundary"))
             if area_ha:
@@ -1694,7 +1730,7 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
                             markerfacecolor="#ff0000",
                             markersize=7, label=pt_lbl, linewidth=0))
 
-    # ─── POINT LABELS: use point_label_col with priority ───────────────
+    # ─── POINT LABELS ──────────────────────────────────────────────────────
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
     lc_use = point_label_col or user_label_col or label_col
     if lc_use and lbl_src is not None and not lbl_src.empty and lc_use in lbl_src.columns:
@@ -1720,38 +1756,57 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
         f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-    fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15)   # no bbox_inches
+
+    # ─── LEGEND AND NORTH ARROW ──────────────────────────────────────────
+    if handles:
+        _add_legend(ax, handles, legend_title=legend_title, pos=legend_pos)
+    _north_arrow(ax, pos=north_pos)
+
+    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
     plt.close(fig)
+    gc.collect()
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
-                  per_group_summaries=None, title="", legend_title="Slope Classes"):
-    # Green, Yellow, Red
+                  per_group_summaries=None, title="", legend_title="Slope Classes",
+                  legend_pos=None, north_pos=None):
     cc={1:"#2e8b57", 2:"#ffd700", 3:"#ef4444"}
     cl={1:"0-19 degree", 2:"19-31 degree", 3:">31 degree"}
     hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
     nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
-    fig=plt.figure(figsize=(A4W,A4H),dpi=DPI,facecolor="white")
+    fig=plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI, facecolor="white")
     gs=gridspec.GridSpec(2,1,height_ratios=[1,tr],hspace=0.20,left=0.08,right=0.96,top=0.97,bottom=0.08)
     ax1=fig.add_subplot(gs[0]); ax2=fig.add_subplot(gs[1])
+    handles = []
+
     if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
         for cid,color in cc.items():
             sub=vec_gdf[vec_gdf["Class"]==cid]
-            if not sub.empty: sub.plot(ax=ax1,facecolor=color,edgecolor="#2c2c2c",linewidth=0.4,alpha=0.92,zorder=3)
+            if not sub.empty:
+                sub.plot(ax=ax1, facecolor=color, edgecolor="#2c2c2c", linewidth=0.4, alpha=0.92, zorder=3)
+                handles.append(mpatches.Patch(facecolor=color, edgecolor="#2c2c2c", label=cl[cid]))
     if bgdf is not None and not bgdf.empty:
-        try: bgdf.boundary.plot(ax=ax1,color="black",linewidth=1.8,zorder=5)
+        try: bgdf.boundary.plot(ax=ax1, color="black", linewidth=1.8, zorder=5)
         except: pass
     if hg and bgdf is not None and not bgdf.empty:
         gc=next((c for c in bgdf.columns if c.lower()!="geometry"),None)
-        if gc: _label_feat(ax1,bgdf,gc)
+        if gc: _label_feat(ax1, bgdf, gc)
+
     _style_ax(ax1); _scale_bar(ax1)
     mt=title.strip() if title.strip() else "Slope Classification Map"
     if hg: mt+=f" — {len(per_group_summaries)} Groups"
-    ax1.set_title(mt,fontsize=11,fontweight="bold",pad=7)
-    ax2.axis("off"); ax2.set_title("Slope Area Summary",fontsize=9,fontweight="bold",pad=4)
+    ax1.set_title(mt, fontsize=11, fontweight="bold", pad=7)
+    ax2.axis("off"); ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
+
+    # ─── LEGEND AND NORTH ARROW ON MAP AXIS ──────────────────────────────
+    if handles:
+        _add_legend(ax1, handles, legend_title=legend_title, pos=legend_pos)
+    _north_arrow(ax1, pos=north_pos)
+
     if not summary_rows:
-        fig.savefig(path,dpi=DPI,facecolor="white",pad_inches=0.15)
-        plt.close(fig); return
+        fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
+        plt.close(fig); gc.collect(); return
+
+    # ─── TABLE ────────────────────────────────────────────────────────────
     hr=any(r.get("Recal_ha") is not None for r in summary_rows)
     if f_mode=="A":
         th=sum(r["Area_ha"] for r in summary_rows)
@@ -1791,9 +1846,10 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                 cid2=rcm.get(r2-1,0)
                 cell.set_facecolor(rc.get(cid2,"#f8f9fa"))
                 if cid2==-1 or (cid2==0 and r2-1>=len(summary_rows)): cell.set_text_props(fontweight="bold")
-    fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15)   # no bbox_inches
+
+    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
     plt.close(fig)
+    gc.collect()
 
 def _kml_pm(gdf,sid,nc=None):
     lines=[]
@@ -1845,7 +1901,6 @@ def generate_kmz(poly_gdf,line_gdf,pts_gdf,out_dir,run_id):
     kmz=os.path.join(out_dir,"output.kmz")
     with zf.ZipFile(kmz,"w",zf.ZIP_DEFLATED) as z: z.writestr("doc.kml",kml.encode("utf-8"))
     return {"url":f"/outputs/{run_id}/output.kmz","lat":round(cy,6),"lon":round(cx,6),"alt":alt}
-
 
 def _g_read_shp(file_storage, target_shp=None):
     fname = file_storage.filename.lower()
@@ -2020,8 +2075,9 @@ def _g_export(records, epsg, out_dir, prefix="ForestPoints"):
     shp_gdf = shp_gdf_valid
     return df, shp_gdf
 
-def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=None):
-    fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
+def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=None,
+               legend_pos=None, north_pos=None):
+    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white")
     handles = []
 
@@ -2064,9 +2120,15 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     ax.set_title(title.strip() or "Forest Survey Points",
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-    fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15)   # no bbox_inches
+
+    # ─── LEGEND AND NORTH ARROW ──────────────────────────────────────────
+    if handles:
+        _add_legend(ax, handles, legend_title="Legend", pos=legend_pos)
+    _north_arrow(ax, pos=north_pos)
+
+    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
     plt.close(fig)
+    gc.collect()
 
 def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None):
     _prog(run_id, "Reading shapefile…", 5)
@@ -2128,9 +2190,9 @@ def progress_stream(run_id):
     try: run_id = _safe_runid(run_id)
     except: pass
     def gen():
-        sent     = 0
-        deadline = time.time() + 600
-        while time.time() < deadline:
+        sent = 0
+        last_heartbeat = time.time()
+        while True:
             with _PROG_LOCK:
                 msgs = list(_PROG.get(run_id, []))
             new = msgs[sent:]
@@ -2141,18 +2203,21 @@ def progress_stream(run_id):
                 try:
                     if json.loads(msgs[-1]).get("pct", 0) >= 100:
                         return
-                except: pass
+                except:
+                    pass
             else:
-                yield f": heartbeat\n\n"
-            time.sleep(0.25)
-
+                now = time.time()
+                if now - last_heartbeat > 3:
+                    yield f": heartbeat\n\n"
+                    last_heartbeat = now
+            time.sleep(0.1)
     return Response(
         stream_with_context(gen()),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control":     "no-cache, no-store",
+            "Cache-Control": "no-cache, no-store",
             "X-Accel-Buffering": "no",
-            "Connection":        "keep-alive",
+            "Connection": "keep-alive",
             "Transfer-Encoding": "chunked",
         }
     )
@@ -2164,7 +2229,6 @@ def get_geojson(run_id):
     folder = _safe_path(OUTPUT, run_id)
     if not os.path.exists(folder):
         return jsonify({"type": "FeatureCollection", "features": []}), 200
-    # Ensure point and line shapefiles are included so points show in the legend
     shps = []
     for r, _, fs in os.walk(folder):
         for f in fs:
@@ -2172,7 +2236,6 @@ def get_geojson(run_id):
             fl = f.lower()
             if "polygon" in fl or "forestpoints" in fl or "rtp" in fl or "point" in fl or "line" in fl:
                 shps.append(os.path.join(r, f))
-
     if not shps:
         shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
                 for f in fs if f.endswith(".shp")]
@@ -2193,72 +2256,96 @@ def get_geojson(run_id):
     combined = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs="EPSG:4326")
     return Response(combined.to_json(), mimetype="application/json")
 
-@app.route("/compose/<run_id>",methods=["POST"])
-@_rate_limit(limit=20,window=60)
+@app.route("/compose/<run_id>", methods=["POST"])
+@_rate_limit(limit=20, window=60)
 def compose_map(run_id):
     run_id = _safe_runid(run_id)
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(folder):
+        return jsonify({"error": "Run not found"}), 404
     try:
-        data=request.get_json(silent=True) or {}
-        title=data.get("title",""); lt=data.get("legend_title","Legend"); lc=data.get("label_col","")
+        data = request.get_json(silent=True) or {}
+        title = data.get("title", "")
+        lt = data.get("legend_title", "Legend")
+        lc = data.get("label_col", "")
+        # ─── Get positions from frontend ──────────────────────────────
         legend_pos = data.get("legend_pos")
-        north_pos  = data.get("north_pos")
-        legend_pos = tuple(legend_pos) if isinstance(legend_pos,(list,tuple)) and len(legend_pos)==2 else None
-        north_pos  = tuple(north_pos)  if isinstance(north_pos, (list,tuple)) and len(north_pos)==2  else None
+        north_pos = data.get("north_pos")
+        if legend_pos and isinstance(legend_pos, list) and len(legend_pos) == 2:
+            legend_pos = tuple(legend_pos)
+        if north_pos and isinstance(north_pos, list) and len(north_pos) == 2:
+            north_pos = tuple(north_pos)
 
-        shps=[os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith("_polygon.shp")]
-        if not shps: return jsonify({"error":"No shapefiles found."}),400
-        gdfs=[]; crs0=None
+        shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                for f in fs if f.endswith("_polygon.shp")]
+        if not shps:
+            return jsonify({"error": "No shapefiles found."}), 400
+        gdfs = []; crs0 = None
         for shp in shps:
-            try: g=gpd.read_file(shp); crs0=crs0 or g.crs; gdfs.append(g)
-            except: pass
-        if not gdfs: return jsonify({"error":"Could not read shapefiles."}),400
-        pg=gpd.GeoDataFrame(pd.concat(gdfs,ignore_index=True),crs=crs0)
-        pp=os.path.join(folder,"output.png")
+            try:
+                g = gpd.read_file(shp)
+                crs0 = crs0 or g.crs
+                gdfs.append(g)
+            except:
+                pass
+        if not gdfs:
+            return jsonify({"error": "Could not read shapefiles."}), 400
+        pg = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=crs0)
+        pp = os.path.join(folder, "output.png")
         if "Comp_ID" in pg.columns:
-            preview_compartments(pg,pp,title=title,legend_title=lt,label_col=lc or "Comp_ID",
-                                  legend_pos=legend_pos, north_pos=north_pos)
+            preview_compartments(pg, pp, title=title, legend_title=lt,
+                                 label_col=lc or "Comp_ID",
+                                 legend_pos=legend_pos, north_pos=north_pos)
         else:
-            ah=float(pg["Area_ha"].sum()) if "Area_ha" in pg.columns else None
-            preview(pg,None,None,pp,title=title,legend_title=lt,area_ha=ah,user_label_col=lc or None,
+            ah = float(pg["Area_ha"].sum()) if "Area_ha" in pg.columns else None
+            preview(pg, None, None, pp, title=title, legend_title=lt,
+                    area_ha=ah, user_label_col=lc or None,
                     legend_pos=legend_pos, north_pos=north_pos)
-        return jsonify({"ok":True,"png":f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
-    except Exception as e: return jsonify({"error":f"Compose error: {e}"}),500
+        return jsonify({"ok": True, "png": f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
+    except Exception as e:
+        return jsonify({"error": f"Compose error: {e}"}), 500
 
-@app.route("/save_edit/<run_id>",methods=["POST"])
-@_rate_limit(limit=20,window=60)
+@app.route("/save_edit/<run_id>", methods=["POST"])
+@_rate_limit(limit=20, window=60)
 def save_edit(run_id):
     run_id = _safe_runid(run_id)
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(folder):
+        return jsonify({"error": "Run not found"}), 404
     try:
-        data=request.get_json(silent=True) or {}
-        geojson=data.get("geojson")
-        if not geojson: return jsonify({"error":"No GeoJSON provided."}),400
-        gdf_new=gpd.GeoDataFrame.from_features(geojson.get("features",[]),crs="EPSG:4326")
-        shps=[os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith("_polygon.shp")]
-        orig_crs="EPSG:32644"
+        data = request.get_json(silent=True) or {}
+        geojson = data.get("geojson")
+        if not geojson:
+            return jsonify({"error": "No GeoJSON provided."}), 400
+        gdf_new = gpd.GeoDataFrame.from_features(geojson.get("features", []), crs="EPSG:4326")
+        shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                for f in fs if f.endswith("_polygon.shp")]
+        orig_crs = "EPSG:32644"
         if shps:
             try:
-                g0=gpd.read_file(shps[0])
-                if g0.crs: orig_crs=str(g0.crs)
-            except: pass
-        gdf_new=gdf_new.to_crs(orig_crs)
-        gdf_new["geometry"]=[_close_poly(_repair(g)) if g else None for g in gdf_new.geometry]
-        gdf_new=gdf_new[gdf_new.geometry.notna()]
+                g0 = gpd.read_file(shps[0])
+                if g0.crs:
+                    orig_crs = str(g0.crs)
+            except:
+                pass
+        gdf_new = gdf_new.to_crs(orig_crs)
+        gdf_new["geometry"] = [_close_poly(_repair(g)) if g else None for g in gdf_new.geometry]
+        gdf_new = gdf_new[gdf_new.geometry.notna()]
         if "Area_ha" not in gdf_new.columns:
-            gdf_new["Area_ha"]=[round(g.area/10000,4) if g else 0 for g in gdf_new.geometry]
-        gdf_new.to_file(os.path.join(folder,"edited_polygon.shp"))
-        pp=os.path.join(folder,"output.png"); title=data.get("title","Edited Map"); lt=data.get("legend_title","Legend")
+            gdf_new["Area_ha"] = [round(g.area/10000, 4) if g else 0 for g in gdf_new.geometry]
+        gdf_new.to_file(os.path.join(folder, "edited_polygon.shp"))
+        pp = os.path.join(folder, "output.png")
+        title = data.get("title", "Edited Map")
+        lt = data.get("legend_title", "Legend")
         if "Comp_ID" in gdf_new.columns:
-            preview_compartments(gdf_new,pp,title=title,legend_title=lt)
+            preview_compartments(gdf_new, pp, title=title, legend_title=lt)
         else:
-            ah=float(gdf_new["Area_ha"].sum()) if "Area_ha" in gdf_new.columns else None
-            preview(gdf_new,None,None,pp,title=title,legend_title=lt,area_ha=ah)
+            ah = float(gdf_new["Area_ha"].sum()) if "Area_ha" in gdf_new.columns else None
+            preview(gdf_new, None, None, pp, title=title, legend_title=lt, area_ha=ah)
         zip_folder(folder)
-        return jsonify({"ok":True,"png":f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
-    except Exception as e: return jsonify({"error":f"Edit error: {e}\n{traceback.format_exc()}"}),500
+        return jsonify({"ok": True, "png": f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
+    except Exception as e:
+        return jsonify({"error": f"Edit error: {e}\n{traceback.format_exc()}"}), 500
 
 @app.route("/login", methods=["POST"])
 @_rate_limit(limit=20, window=60)
@@ -2298,12 +2385,12 @@ def login():
     log.info(f"{'Register' if is_new else 'Login'}: {username!r} from {ip}")
 
     return jsonify({
-        "ok":          True,
-        "username":    username,
-        "runs":        user.get("runs", [])[-20:],
-        "is_new":      is_new,
+        "ok": True,
+        "username": username,
+        "runs": user.get("runs", [])[-20:],
+        "is_new": is_new,
         "is_returning": not is_new,
-        "message":     "Welcome!" if is_new else f"Welcome back, {username}!"
+        "message": "Welcome!" if is_new else f"Welcome back, {username}!"
     })
 
 @app.route("/logout", methods=["POST"])
@@ -2320,7 +2407,8 @@ def logout():
 @_login_required
 def me():
     u = _require_login()
-    users = _lu(); user = users.get(u, {})
+    users = _lu()
+    user = users.get(u, {})
     return jsonify({"username": u, "runs": user.get("runs", [])[-20:]})
 
 @app.route("/history")
@@ -2328,7 +2416,8 @@ def me():
 @_login_required
 def history():
     u = _require_login()
-    users = _lu(); user = users.get(u, {})
+    users = _lu()
+    user = users.get(u, {})
     return jsonify({"runs": user.get("runs", [])})
 
 @app.route("/upload", methods=["POST"])
@@ -2341,111 +2430,149 @@ def upload():
         if "file" not in request.files:
             return jsonify({"error": "No file uploaded.", "run_id": run_id}), 400
         file = request.files["file"]
-        try: _safe_filename(file.filename)
-        except ValueError as e: return jsonify({"error": str(e), "run_id": run_id}), 400
-        module = request.form.get("module","A")
+        try:
+            _safe_filename(file.filename)
+        except ValueError as e:
+            return jsonify({"error": str(e), "run_id": run_id}), 400
+        module = request.form.get("module", "A")
         # ─── Reject ZIP for A, B, D ──────────────────────────────────────
         if module in ("A", "B", "D") and file.filename.lower().endswith(".zip"):
             return jsonify({"error": "ZIP files are not allowed for this module. Please upload a CSV or Excel file.", "run_id": run_id}), 400
-        # ──────────────────────────────────────────────────────────────────
-        mode=request.form.get("mode","A"); zone=request.form.get("zone","44")
-        title=request.form.get("title","").strip()
-        legend_title=request.form.get("legend_title","Legend").strip() or "Legend"
-        label_col=request.form.get("label_col","").strip()
-        try: mapping=json.loads(request.form.get("mapping","{}"))
-        except: mapping={}
-        w=float(request.form.get("w",50)); h=float(request.form.get("h",50))
-        rows=int(request.form.get("rows",10)); cols=int(request.form.get("cols",10))
-        forest=request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
-        username=_require_login() or "guest"
-        out=os.path.join(OUTPUT,run_id); os.makedirs(out,exist_ok=True)
-        crs=get_crs(zone); _prog(run_id,f"Starting module {module}…",2)
-        lc_out=None; lp_gdf=None; area_ha_disp=None
 
-        if module=="B":
-            _prog(run_id,"Reading…",8); df=read_input(file)
-            poly,line,pts=group_b(df,crs,out,mapping); lc_out=label_col or "Forest"
-        elif module=="C":
-            _prog(run_id,"Processing…",10)
-            poly,line,pts=group_c(file,crs,w,h,rows,cols,out,mode,mapping)
-            lc_out="SN"; lp_gdf=pts
-        elif module=="D":
-            _prog(run_id,"Reading…",8); df=read_input(file)
-            d_mode=request.form.get("d_mode","A")
-            poly,line,pts=group_d(df,crs,out,mapping,mode=d_mode); lc_out=label_col or "Forest"
-        elif module=="E":
-            e_mode=request.form.get("e_mode","A")
-            nc=max(2,min(15,int(request.form.get("n_compartments",4))))
-            at=float(request.form.get("area_tol_ha","0.3") or "0.3")
-            method=request.form.get("e_method","bisect")
-            is_zip=file.filename.lower().endswith(".zip")
-            fcn=request.form.get("forest_col_name") or None
-            if mapping and "forest" not in mapping: mapping["forest"]=forest
-            _prog(run_id,"Loading input…",8)
-            src_data=file if is_zip else read_input(file)
-            poly,line,pts=group_e(src_data,crs,out,mapping,e_mode=e_mode,n_compartments=nc,
-                                  is_zip=is_zip,fcol=fcn,area_tol_ha=at,method=method,run_id=run_id)
-            _prog(run_id,"Rendering preview…",88)
-            preview_compartments(poly,os.path.join(out,"output.png"),title=title,
-                                 legend_title=legend_title,label_col=label_col or "Comp_ID")
-            kmz_url=None
-            try: kmz_url=generate_kmz(poly,line,pts,out,run_id)
-            except: pass
-            _append_run(username,run_id,"E"); _prog(run_id,"Complete.",100)
-            return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
-        elif module=="F":
-            dem_cache_key = request.form.get("dem_cache_key","").strip()
-            dem_catalog_path = request.form.get("dem_catalog_path","").strip()
+        mode = request.form.get("mode", "A")
+        zone = request.form.get("zone", "44")
+        title = request.form.get("title", "").strip()
+        legend_title = request.form.get("legend_title", "Legend").strip() or "Legend"
+        label_col = request.form.get("label_col", "").strip()
+        try:
+            mapping = json.loads(request.form.get("mapping", "{}"))
+        except:
+            mapping = {}
+        w = float(request.form.get("w", 50))
+        h = float(request.form.get("h", 50))
+        rows = int(request.form.get("rows", 10))
+        cols = int(request.form.get("cols", 10))
+        forest = request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
+        username = _require_login() or "guest"
+        out = os.path.join(OUTPUT, run_id)
+        os.makedirs(out, exist_ok=True)
+        crs = get_crs(zone)
+        _prog(run_id, f"Starting module {module}…", 2)
+        lc_out = None
+        lp_gdf = None
+        area_ha_disp = None
+
+        if module == "B":
+            _prog(run_id, "Reading…", 8)
+            df = read_input(file)
+            poly, line, pts = group_b(df, crs, out, mapping)
+            lc_out = label_col or "Forest"
+        elif module == "C":
+            _prog(run_id, "Processing…", 10)
+            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
+            lc_out = "SN"
+            lp_gdf = pts
+        elif module == "D":
+            _prog(run_id, "Reading…", 8)
+            df = read_input(file)
+            d_mode = request.form.get("d_mode", "A")
+            poly, line, pts = group_d(df, crs, out, mapping, mode=d_mode)
+            lc_out = label_col or "Forest"
+        elif module == "E":
+            e_mode = request.form.get("e_mode", "A")
+            nc = max(2, min(15, int(request.form.get("n_compartments", 4))))
+            at = float(request.form.get("area_tol_ha", "0.3") or "0.3")
+            method = request.form.get("e_method", "bisect")
+            is_zip = file.filename.lower().endswith(".zip")
+            fcn = request.form.get("forest_col_name") or None
+            if mapping and "forest" not in mapping:
+                mapping["forest"] = forest
+            _prog(run_id, "Loading input…", 8)
+            src_data = file if is_zip else read_input(file)
+            poly, line, pts = group_e(src_data, crs, out, mapping,
+                                      e_mode=e_mode, n_compartments=nc,
+                                      is_zip=is_zip, fcol=fcn,
+                                      area_tol_ha=at, method=method, run_id=run_id)
+            _prog(run_id, "Rendering preview…", 88)
+            preview_compartments(poly, os.path.join(out, "output.png"),
+                                 title=title, legend_title=legend_title,
+                                 label_col=label_col or "Comp_ID")
+            kmz_url = None
+            try:
+                kmz_url = generate_kmz(poly, line, pts, out, run_id)
+            except:
+                pass
+            _append_run(username, run_id, "E")
+            _prog(run_id, "Complete.", 100)
+            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
+        elif module == "F":
+            dem_cache_key = request.form.get("dem_cache_key", "").strip()
+            dem_catalog_path = request.form.get("dem_catalog_path", "").strip()
 
             class _FileDEM:
                 def __init__(self, p):
-                    self.filename = os.path.basename(p); self._p = p
+                    self.filename = os.path.basename(p)
+                    self._p = p
                 def save(self, dest):
                     shutil.copy2(self._p, dest)
                 def read(self, size=-1):
-                    with open(self._p,"rb") as f: return f.read(size)
+                    with open(self._p, "rb") as f:
+                        return f.read(size)
 
             if dem_cache_key:
-                candidates = [f for f in os.listdir(DEM_CACHE_DIR)
-                              if f.startswith(dem_cache_key)]
+                candidates = [f for f in os.listdir(DEM_CACHE_DIR) if f.startswith(dem_cache_key)]
                 if not candidates:
-                    return jsonify({"error":"Cached DEM not found. Please select again.","run_id":run_id}),400
+                    return jsonify({"error": "Cached DEM not found. Please select again.", "run_id": run_id}), 400
                 dem_f = _FileDEM(os.path.join(DEM_CACHE_DIR, candidates[0]))
             elif dem_catalog_path:
                 cat_full = _safe_path(DEM_CATALOG_DIR, dem_catalog_path)
                 if not os.path.exists(cat_full):
-                    return jsonify({"error":f"DEM catalog file not found: {dem_catalog_path}","run_id":run_id}),400
+                    return jsonify({"error": f"DEM catalog file not found: {dem_catalog_path}", "run_id": run_id}), 400
                 dem_f = _FileDEM(cat_full)
             else:
                 dem_f = request.files.get("dem_file")
                 if not dem_f:
-                    return jsonify({"error":"No DEM selected. Choose from the catalog dropdown or upload a .tif file.","run_id":run_id}),400
-            f_forest=request.form.get("f_forest") or forest
-            f_mode=request.form.get("f_mode","A"); cc=request.form.get("comp_col") or None
-            bzip=file.filename.lower().endswith(".zip"); fa=None
-            fas=request.form.get("field_area_ha","").strip()
+                    return jsonify({"error": "No DEM selected. Choose from the catalog dropdown or upload a .tif file.", "run_id": run_id}), 400
+            f_forest = request.form.get("f_forest") or forest
+            f_mode = request.form.get("f_mode", "A")
+            cc = request.form.get("comp_col") or None
+            bzip = file.filename.lower().endswith(".zip")
+            fa = None
+            fas = request.form.get("field_area_ha", "").strip()
             if fas:
-                try: fa=float(fas)
-                except: pass
-            sr,vgdf,bgdf,fmo,pgs=group_f(file,dem_f,crs,out,mapping,boundary_is_zip=bzip,
-                                          forest_name=f_forest,f_mode=f_mode,comp_col_name=cc,
-                                          field_area_ha=fa,run_id=run_id)
-            _prog(run_id,"Rendering preview…",92)
-            preview_slope(vgdf,bgdf,sr,os.path.join(out,"output.png"),
-                          f_mode=fmo,per_group_summaries=pgs,title=title,legend_title=legend_title)
-            poly=vgdf if (vgdf is not None and not vgdf.empty) else gpd.GeoDataFrame()
-            line=gpd.GeoDataFrame(); pts=gpd.GeoDataFrame()
-            kmz_url=None
-            try: kmz_url=generate_kmz(poly,line,pts,out,run_id)
-            except: pass
-            _append_run(username,run_id,"F"); _prog(run_id,"Complete.",100)
-            return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
+                try:
+                    fa = float(fas)
+                except:
+                    pass
+            sr, vgdf, bgdf, fmo, pgs = group_f(file, dem_f, crs, out, mapping,
+                                                boundary_is_zip=bzip,
+                                                forest_name=f_forest,
+                                                f_mode=f_mode,
+                                                comp_col_name=cc,
+                                                field_area_ha=fa,
+                                                run_id=run_id)
+            _prog(run_id, "Rendering preview…", 92)
+            preview_slope(vgdf, bgdf, sr, os.path.join(out, "output.png"),
+                          f_mode=fmo, per_group_summaries=pgs,
+                          title=title, legend_title=legend_title)
+            poly = vgdf if (vgdf is not None and not vgdf.empty) else gpd.GeoDataFrame()
+            line = gpd.GeoDataFrame()
+            pts = gpd.GeoDataFrame()
+            kmz_url = None
+            try:
+                kmz_url = generate_kmz(poly, line, pts, out, run_id)
+            except:
+                pass
+            _append_run(username, run_id, "F")
+            _prog(run_id, "Complete.", 100)
+            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
         else:
-            _prog(run_id,"Reading…",8); df=read_input(file)
-            poly,line,pts=group_a(df,forest,crs,out,mapping)
+            _prog(run_id, "Reading…", 8)
+            df = read_input(file)
+            poly, line, pts = group_a(df, forest, crs, out, mapping)
             if not poly.empty and "Area_ha" in poly.columns:
-                area_ha_disp=float(poly["Area_ha"].sum())
-            lc_out=label_col or "Forest"
+                area_ha_disp = float(poly["Area_ha"].sum())
+            lc_out = label_col or "Forest"
 
         # ─── Point label auto-detection ────────────────────────────────
         point_label_col = None
@@ -2457,25 +2584,27 @@ def upload():
             if point_label_col is None:
                 point_label_col = label_col or None
 
-        _prog(run_id,"Rendering A4 preview…",88)
-        preview(poly,line,pts,os.path.join(out,"output.png"),
-                pc="blue",lc="black",ptc="red",
-                label_col=lc_out,label_pts_gdf=lp_gdf,
-                area_ha=area_ha_disp,title=title,legend_title=legend_title,
+        _prog(run_id, "Rendering preview…", 88)
+        preview(poly, line, pts, os.path.join(out, "output.png"),
+                pc="blue", lc="black", ptc="red",
+                label_col=lc_out, label_pts_gdf=lp_gdf,
+                area_ha=area_ha_disp, title=title, legend_title=legend_title,
                 user_label_col=label_col or None,
-                point_label_col=point_label_col)   # pass the detected column
-        kmz_url=None
-        try: kmz_url=generate_kmz(poly,line,pts,out,run_id)
-        except: pass
-        _append_run(username,run_id,module); _prog(run_id,"Complete.",100)
-        return jsonify({"run_id":run_id,"download":f"/download/{run_id}","kmz_url":kmz_url})
+                point_label_col=point_label_col)
+        kmz_url = None
+        try:
+            kmz_url = generate_kmz(poly, line, pts, out, run_id)
+        except:
+            pass
+        _append_run(username, run_id, module)
+        _prog(run_id, "Complete.", 100)
+        return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
     except ValueError as e:
-        _prog(run_id,f"ERROR: {e}",0)
-        return jsonify({"error":str(e),"run_id":run_id}),400
+        _prog(run_id, f"ERROR: {e}", 0)
+        return jsonify({"error": str(e), "run_id": run_id}), 400
     except Exception as e:
-        _prog(run_id,f"ERROR: {e}",0)
-        return jsonify({"error":f"Unexpected error: {e}","run_id":run_id}),500
-
+        _prog(run_id, f"ERROR: {e}", 0)
+        return jsonify({"error": f"Unexpected error: {e}", "run_id": run_id}), 500
 
 @app.route("/dem_catalog")
 @_rate_limit(limit=30, window=60)
@@ -2493,8 +2622,8 @@ def dem_catalog():
     for zone, api_url in github_api_urls:
         try:
             hdrs = {
-                "User-Agent":  "elfak-gis-app",
-                "Accept":      "application/vnd.github+json",
+                "User-Agent": "elfak-gis-app",
+                "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
             }
             if GITHUB_TOKEN:
@@ -2503,31 +2632,31 @@ def dem_catalog():
             with _ur.urlopen(req, timeout=8) as resp:
                 items = _json.loads(resp.read())
             for item in items:
-                name = item.get("name","")
-                if not name.lower().endswith((".tif",".tiff")): continue
-                size_mb = round(item.get("size",0)/(1024*1024), 1)
+                name = item.get("name", "")
+                if not name.lower().endswith((".tif", ".tiff")):
+                    continue
+                size_mb = round(item.get("size", 0) / (1024*1024), 1)
                 files.append({
-                    "name":     name,
-                    "zone":     zone,
-                    "path":     f"{zone}/{name}",
-                    "size_mb":  size_mb,
-                    "url":      item.get("url", api_url + "/" + name),
+                    "name": name,
+                    "zone": zone,
+                    "path": f"{zone}/{name}",
+                    "size_mb": size_mb,
+                    "url": item.get("url", api_url + "/" + name),
                 })
         except Exception as e:
             log.warning(f"GitHub API {zone} failed: {e}")
             local = os.path.join(DEM_CATALOG_DIR, zone)
             if os.path.isdir(local):
                 for f in os.listdir(local):
-                    if f.lower().endswith((".tif",".tiff")):
+                    if f.lower().endswith((".tif", ".tiff")):
                         fp = os.path.join(local, f)
                         files.append({
-                            "name":    f,
-                            "zone":    zone,
-                            "path":    f"{zone}/{f}",
-                            "size_mb": round(os.path.getsize(fp)/(1024*1024),1),
-                            "url":     "",
+                            "name": f,
+                            "zone": zone,
+                            "path": f"{zone}/{f}",
+                            "size_mb": round(os.path.getsize(fp)/(1024*1024), 1),
+                            "url": "",
                         })
-
     files.sort(key=lambda x: (x["zone"], x["name"]))
     return jsonify({"files": files, "source": "github"})
 
@@ -2543,10 +2672,12 @@ def _github_candidate_urls(url, path):
             candidates.append(
                 f"https://raw.githubusercontent.com/{owner_repo}/{branch}/dem_catalog/{enc_path}"
             )
-    seen = set(); out = []
+    seen = set()
+    out = []
     for c in candidates:
         if c not in seen:
-            seen.add(c); out.append(c)
+            seen.add(c)
+            out.append(c)
     return out
 
 @app.route("/dem_fetch", methods=["POST"])
@@ -2556,7 +2687,7 @@ def dem_fetch():
     import urllib.error as _ue
 
     data = request.get_json(silent=True) or {}
-    url  = data.get("url", "").strip()
+    url = data.get("url", "").strip()
     path = data.get("path", "").strip()
 
     if not url and not path:
@@ -2567,8 +2698,8 @@ def dem_fetch():
                     url.startswith("https://api.github.com/")):
         return jsonify({"error": "DEM URL must be from GitHub."}), 400
 
-    safe_name  = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(path or url))[:120]
-    cache_key  = hashlib.sha256((url or path).encode()).hexdigest()[:16]
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(path or url))[:120]
+    cache_key = hashlib.sha256((url or path).encode()).hexdigest()[:16]
     local_path = os.path.join(DEM_CACHE_DIR, f"{cache_key}_{safe_name}")
 
     if os.path.exists(local_path) and os.path.getsize(local_path) > 1000:
@@ -2594,20 +2725,23 @@ def dem_fetch():
                 total = 0
                 while True:
                     chunk = resp.read(1024*1024)
-                    if not chunk: break
-                    fout.write(chunk); total += len(chunk)
+                    if not chunk:
+                        break
+                    fout.write(chunk)
+                    total += len(chunk)
             if total > 500:
-                size_mb = round(os.path.getsize(local_path)/(1024*1024), 1)
+                size_mb = round(os.path.getsize(local_path) / (1024*1024), 1)
                 log.info(f"DEM downloaded via authenticated API: {safe_name} ({size_mb}MB)")
                 return jsonify({"ok": True, "cache_key": cache_key, "local": local_path,
                                 "size_mb": size_mb, "cached": False, "source_url": api_url})
             os.remove(local_path)
         except Exception as e:
             log.warning(f"Authenticated GitHub fetch failed: {e}")
-            if os.path.exists(local_path): os.remove(local_path)
+            if os.path.exists(local_path):
+                os.remove(local_path)
 
     last_error = None
-    attempted  = []
+    attempted = []
     for candidate_url in candidates:
         attempted.append(candidate_url)
         log.info(f"Trying DEM download: {candidate_url}")
@@ -2617,8 +2751,10 @@ def dem_fetch():
                 total = 0
                 while True:
                     chunk = resp.read(1024 * 1024)
-                    if not chunk: break
-                    fout.write(chunk); total += len(chunk)
+                    if not chunk:
+                        break
+                    fout.write(chunk)
+                    total += len(chunk)
             if total < 500:
                 os.remove(local_path)
                 last_error = f"Response too small ({total} bytes) — likely a GitHub error page, not a real file."
@@ -2629,11 +2765,13 @@ def dem_fetch():
                             "size_mb": size_mb, "cached": False, "source_url": candidate_url})
         except _ue.HTTPError as e:
             last_error = f"HTTP {e.code} at {candidate_url}"
-            if os.path.exists(local_path): os.remove(local_path)
+            if os.path.exists(local_path):
+                os.remove(local_path)
             continue
         except Exception as e:
             last_error = f"{type(e).__name__}: {e} at {candidate_url}"
-            if os.path.exists(local_path): os.remove(local_path)
+            if os.path.exists(local_path):
+                os.remove(local_path)
             continue
 
     log.error(f"DEM download failed after {len(attempted)} attempt(s): {last_error}")
@@ -2671,31 +2809,36 @@ def zip_inspect():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        try: shutil.rmtree(tmp)
-        except: pass
+        try:
+            shutil.rmtree(tmp)
+        except:
+            pass
 
 @app.route("/run_g", methods=["POST"])
 @_rate_limit(limit=12, window=60)
 @_with_pipeline_sem
 def run_g():
-    run_id = str(uuid.uuid4()); _PROG[run_id] = []
+    run_id = str(uuid.uuid4())
+    _PROG[run_id] = []
     try:
         if "file" not in request.files:
             return jsonify({"error": "No shapefile uploaded.", "run_id": run_id}), 400
-        file       = request.files["file"]
-        zone       = request.form.get("zone", "44")
-        comp_col   = request.form.get("comp_col", "").strip() or None
-        title      = request.form.get("title", "Forest Survey Points").strip()
+        file = request.files["file"]
+        zone = request.form.get("zone", "44")
+        comp_col = request.form.get("comp_col", "").strip() or None
+        title = request.form.get("title", "Forest Survey Points").strip()
         try:
             spacing = float(request.form.get("spacing", "20"))
-            if spacing <= 0: raise ValueError
+            if spacing <= 0:
+                raise ValueError
         except:
             return jsonify({"error": "Invalid spacing value.", "run_id": run_id}), 400
 
         username = _require_login() or "guest"
-        out = os.path.join(OUTPUT, run_id); os.makedirs(out, exist_ok=True)
+        out = os.path.join(OUTPUT, run_id)
+        os.makedirs(out, exist_ok=True)
 
-        target_shp = request.form.get("target_shp","").strip() or None
+        target_shp = request.form.get("target_shp", "").strip() or None
         df, shp_gdf, poly_gdf, summary = group_g(file, zone, comp_col, spacing, out, run_id,
                                                    target_shp=target_shp)
 
@@ -2712,10 +2855,10 @@ def run_g():
                     f"{summary['total']} pts | {summary['compartments']} compartments")
         _prog(run_id, "Complete.", 100)
         return jsonify({
-            "run_id":   run_id,
+            "run_id": run_id,
             "download": f"/download/{run_id}",
-            "kmz_url":  kmz_url,
-            "summary":  summary
+            "kmz_url": kmz_url,
+            "summary": summary
         })
     except ValueError as e:
         _prog(run_id, f"ERROR: {e}", 0)
@@ -2726,20 +2869,25 @@ def run_g():
 
 @app.route("/outputs/<run_id>/<path:filename>")
 @_rate_limit(limit=120, window=60)
-def serve_output(run_id,filename):
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(os.path.join(folder,filename)): return jsonify({"error":"File not found"}),404
-    return send_from_directory(folder,filename)
+def serve_output(run_id, filename):
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(os.path.join(folder, filename)):
+        return jsonify({"error": "File not found"}), 404
+    return send_from_directory(folder, filename)
 
-def zip_folder(folder): return shutil.make_archive(folder,"zip",folder)
+def zip_folder(folder):
+    return shutil.make_archive(folder, "zip", folder)
 
 @app.route("/download/<run_id>")
 def download(run_id):
-    folder=os.path.join(OUTPUT,run_id)
-    if not os.path.exists(folder): return jsonify({"error":"Run not found"}),404
-    return send_file(zip_folder(folder),as_attachment=True)
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(folder):
+        return jsonify({"error": "Run not found"}), 404
+    return send_file(zip_folder(folder), as_attachment=True)
 
 @app.route("/")
-def home(): return render_template("index.html")
+def home():
+    return render_template("index.html")
 
-if __name__=="__main__": app.run(debug=True,threaded=True)
+if __name__ == "__main__":
+    app.run(debug=True, threaded=True)
