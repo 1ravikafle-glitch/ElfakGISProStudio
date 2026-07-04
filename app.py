@@ -63,7 +63,6 @@ for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
 # ─── LANDSCAPE FIGURE SETTINGS (10×7.5″, 200 DPI) ─────────────────────
-# Adjust FIG_W, FIG_H, DPI to match your desired output size/aspect.
 FIG_W, FIG_H, DPI = 10.0, 7.5, 200   # ~4:3 landscape, 2000×1500 px
 
 # ─── PROGRESS TRACKING (with timestamps for ETA) ──────────────────────
@@ -651,12 +650,12 @@ def _add_legend(ax, handles, legend_title="Legend", loc="lower right", pos=None)
         leg = ax.legend(handles=handles, title=legend_title,
                         loc='upper left', bbox_to_anchor=(pos[0], pos[1]),
                         frameon=True, facecolor='white', edgecolor='black',
-                        fontsize=8, title_fontsize=9, zorder=20)
+                        fontsize=8, title_fontsize=9)
     else:
         leg = ax.legend(handles=handles, title=legend_title,
                         loc=loc, frameon=True, facecolor='white',
-                        edgecolor='black', fontsize=8, title_fontsize=9, zorder=20)
-    leg.set_zorder(20)
+                        edgecolor='black', fontsize=8, title_fontsize=9)
+    leg.set_zorder(20)   # <-- FIX: set zorder after creation
 
 def _scale_bar(ax):
     x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
@@ -1680,7 +1679,6 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
 
-    # Add legend and north arrow if handles exist
     if handles:
         _add_legend(ax, handles, legend_title=legend_title, pos=legend_pos)
     _north_arrow(ax, pos=north_pos)
@@ -1757,7 +1755,6 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
 
-    # ─── LEGEND AND NORTH ARROW ──────────────────────────────────────────
     if handles:
         _add_legend(ax, handles, legend_title=legend_title, pos=legend_pos)
     _north_arrow(ax, pos=north_pos)
@@ -1797,7 +1794,6 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
     ax1.set_title(mt, fontsize=11, fontweight="bold", pad=7)
     ax2.axis("off"); ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
 
-    # ─── LEGEND AND NORTH ARROW ON MAP AXIS ──────────────────────────────
     if handles:
         _add_legend(ax1, handles, legend_title=legend_title, pos=legend_pos)
     _north_arrow(ax1, pos=north_pos)
@@ -2121,7 +2117,6 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
 
-    # ─── LEGEND AND NORTH ARROW ──────────────────────────────────────────
     if handles:
         _add_legend(ax, handles, legend_title="Legend", pos=legend_pos)
     _north_arrow(ax, pos=north_pos)
@@ -2268,7 +2263,6 @@ def compose_map(run_id):
         title = data.get("title", "")
         lt = data.get("legend_title", "Legend")
         lc = data.get("label_col", "")
-        # ─── Get positions from frontend ──────────────────────────────
         legend_pos = data.get("legend_pos")
         north_pos = data.get("north_pos")
         if legend_pos and isinstance(legend_pos, list) and len(legend_pos) == 2:
