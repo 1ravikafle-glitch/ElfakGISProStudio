@@ -61,7 +61,8 @@ DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
-A4W, A4H, DPI = 8.27, 11.69, 480   # inches, portrait A4, 1080 DPI
+# ─── A4 PORTRAIT, DPI 480 ──────────────────────────────────────────────
+A4W, A4H, DPI = 8.27, 11.69, 480   # inches, portrait A4, 480 DPI
 
 _PROG: dict = {}
 _PROG_LOCK = threading.Lock()
@@ -1293,6 +1294,12 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if bpoly is None or bpoly.is_empty:
         raise ValueError("Boundary polygon is empty after loading — check input file.")
 
+    # ─── AUTOMATIC RECALIBRATION TO BOUNDARY AREA ──────────────────────────
+    boundary_area_ha = bpoly.area / 10000
+    if field_area_ha is None or field_area_ha <= 0:
+        field_area_ha = boundary_area_ha
+    # ────────────────────────────────────────────────────────────────────────
+
     with rasterio.open(dem_path) as _src:
         from shapely.geometry import box as _box
         dem_bounds_poly = _box(*_src.bounds)
@@ -1314,7 +1321,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         with rasterio.open(dem_path) as _src:
             ra, rt = rio_mask(
                 _src, [rect_poly.__geo_interface__],
-                crop=True, filled=True, nodata=nd, all_touched=True
+                crop=True, filled=True, nodata=nd, all_touched=False   # <-- changed
             )
         rdm = ra[0].astype(np.float32)
         rdm[rdm == nd] = np.nan
@@ -1520,16 +1527,16 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             "Check that the boundary polygon overlaps the DEM and is in the correct CRS."
         )
 
+    # ─── RECALIBRATE AND OVERWRITE Area_ha ──────────────────────────────
     if field_area_ha and field_area_ha > 0:
-        tc  = sum(r["Area_ha"] for r in all_sum)
-        fac = field_area_ha / max(tc, 1e-6)
-        for r in all_sum:
-            r["Recal_ha"]    = round(r["Area_ha"] * fac, 4)
-            r["Cal_Factor"]  = round(fac, 6)
-    else:
-        for r in all_sum:
-            r["Recal_ha"]    = None
-            r["Cal_Factor"]  = None
+        tc = sum(r["Area_ha"] for r in all_sum)
+        if tc > 1e-9:
+            fac = field_area_ha / tc
+            for r in all_sum:
+                r["Area_ha"] = round(r["Area_ha"] * fac, 4)
+                r["Recal_ha"] = r["Area_ha"]
+                r["Cal_Factor"] = round(fac, 6)
+    # ──────────────────────────────────────────────────────────────────────
 
     if run_id: _prog(run_id, "Step 7 — Saving shapefiles and Excel…", 88)
     vcrs = str(dem_crs)
@@ -1555,7 +1562,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         with rasterio.open(sp_path) as _src:
             fc2, ft2 = rio_mask(
                 _src, [main_poly.__geo_interface__],
-                crop=True, filled=True, nodata=SN, all_touched=True
+                crop=True, filled=True, nodata=SN, all_touched=False   # <-- changed
             )
         fc2  = fc2[0].astype(np.float32)
         cp2_ = rp.copy(); cp2_.update(height=fc2.shape[0], width=fc2.shape[1], transform=ft2)
@@ -1607,8 +1614,11 @@ _COMP_COLORS_RICH = [
     "#E91E63","#009688","#FFC107","#3F51B5","#8BC34A"
 ]
 
+# ─── PREVIEW FUNCTIONS WITH A4 FIX, POINT LABEL SUPPORT ──────────────────
+
 def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID",
-                          legend_pos=None, north_pos=None):
+                          legend_pos=None, north_pos=None,
+                          point_label_col=None):
     fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white")
     handles = []
@@ -1639,12 +1649,14 @@ def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
     fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15); plt.close(fig)
+                pad_inches=0.15)   # no bbox_inches
+    plt.close(fig)
 
 def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
             label_col=None, label_pts_gdf=None, area_ha=None, title="",
             legend_title="Legend", user_label_col=None,
-            legend_pos=None, north_pos=None):
+            legend_pos=None, north_pos=None,
+            point_label_col=None):
     fig, ax = plt.subplots(figsize=(A4W, A4H), dpi=DPI)
     fig.patch.set_facecolor("white"); ax.set_facecolor("white"); handles = []
 
@@ -1682,8 +1694,9 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
                             markerfacecolor="#ff0000",
                             markersize=7, label=pt_lbl, linewidth=0))
 
+    # ─── POINT LABELS: use point_label_col with priority ───────────────
     lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
-    lc_use  = user_label_col or label_col
+    lc_use = point_label_col or user_label_col or label_col
     if lc_use and lbl_src is not None and not lbl_src.empty and lc_use in lbl_src.columns:
         for _, row in lbl_src.iterrows():
             try:
@@ -1708,8 +1721,8 @@ def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
     ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
     fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15); plt.close(fig)
-
+                pad_inches=0.15)   # no bbox_inches
+    plt.close(fig)
 
 def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                   per_group_summaries=None, title="", legend_title="Slope Classes"):
@@ -1737,7 +1750,8 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
     ax1.set_title(mt,fontsize=11,fontweight="bold",pad=7)
     ax2.axis("off"); ax2.set_title("Slope Area Summary",fontsize=9,fontweight="bold",pad=4)
     if not summary_rows:
-        fig.savefig(path,dpi=DPI,bbox_inches="tight",facecolor="white"); plt.close(fig); return
+        fig.savefig(path,dpi=DPI,facecolor="white",pad_inches=0.15)
+        plt.close(fig); return
     hr=any(r.get("Recal_ha") is not None for r in summary_rows)
     if f_mode=="A":
         th=sum(r["Area_ha"] for r in summary_rows)
@@ -1778,7 +1792,8 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
                 cell.set_facecolor(rc.get(cid2,"#f8f9fa"))
                 if cid2==-1 or (cid2==0 and r2-1>=len(summary_rows)): cell.set_text_props(fontweight="bold")
     fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15); plt.close(fig)
+                pad_inches=0.15)   # no bbox_inches
+    plt.close(fig)
 
 def _kml_pm(gdf,sid,nc=None):
     lines=[]
@@ -2050,7 +2065,8 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
                  fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
     fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
     fig.savefig(path, dpi=DPI, facecolor="white",
-                pad_inches=0.15); plt.close(fig)
+                pad_inches=0.15)   # no bbox_inches
+    plt.close(fig)
 
 def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None):
     _prog(run_id, "Reading shapefile…", 5)
@@ -2103,6 +2119,8 @@ def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, tar
         "compartments": int(len(gdf)),
     }
     return df, shp_gdf, gdf, summary
+
+# ─── ROUTES ──────────────────────────────────────────────────────────────
 
 @app.route("/progress/<run_id>")
 @_rate_limit(limit=120, window=60)
@@ -2326,6 +2344,10 @@ def upload():
         try: _safe_filename(file.filename)
         except ValueError as e: return jsonify({"error": str(e), "run_id": run_id}), 400
         module = request.form.get("module","A")
+        # ─── Reject ZIP for A, B, D ──────────────────────────────────────
+        if module in ("A", "B", "D") and file.filename.lower().endswith(".zip"):
+            return jsonify({"error": "ZIP files are not allowed for this module. Please upload a CSV or Excel file.", "run_id": run_id}), 400
+        # ──────────────────────────────────────────────────────────────────
         mode=request.form.get("mode","A"); zone=request.form.get("zone","44")
         title=request.form.get("title","").strip()
         legend_title=request.form.get("legend_title","Legend").strip() or "Legend"
@@ -2425,12 +2447,23 @@ def upload():
                 area_ha_disp=float(poly["Area_ha"].sum())
             lc_out=label_col or "Forest"
 
+        # ─── Point label auto-detection ────────────────────────────────
+        point_label_col = None
+        if pts is not None and not pts.empty:
+            for cand in ["SN", "Order", "Point_ID", "ID", "point_id"]:
+                if cand in pts.columns:
+                    point_label_col = cand
+                    break
+            if point_label_col is None:
+                point_label_col = label_col or None
+
         _prog(run_id,"Rendering A4 preview…",88)
         preview(poly,line,pts,os.path.join(out,"output.png"),
                 pc="blue",lc="black",ptc="red",
                 label_col=lc_out,label_pts_gdf=lp_gdf,
                 area_ha=area_ha_disp,title=title,legend_title=legend_title,
-                user_label_col=label_col or None)
+                user_label_col=label_col or None,
+                point_label_col=point_label_col)   # pass the detected column
         kmz_url=None
         try: kmz_url=generate_kmz(poly,line,pts,out,run_id)
         except: pass
