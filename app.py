@@ -1,19 +1,23 @@
 import os, uuid, zipfile, shutil, json, re, io, traceback, math, time, gc
 import threading, hashlib, html, secrets, logging
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from functools import wraps
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 import matplotlib.patches as mpatches
+import matplotlib.patheffects as pe
 import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mticker
+from matplotlib.transforms import Bbox
+from shapely.geometry import Polygon, Point, LineString, MultiPolygon, box
+from shapely.ops import unary_union
+from shapely import affinity
 
-# Try to import heavy libraries; if they fail, the app will still start but return JSON errors.
 try:
     import rasterio
     from rasterio.mask import mask as rio_mask
@@ -25,11 +29,10 @@ except ImportError:
 
 from flask import (Flask, request, jsonify, send_file, send_from_directory,
                    render_template, session, Response, stream_with_context, abort, g)
-from shapely.geometry import (Polygon, Point, LineString, MultiPolygon,
-                               MultiPoint, GeometryCollection)
-from shapely.ops import unary_union, voronoi_diagram
-from shapely.geometry import box as _sbox
-from shapely import affinity
+
+# ----------------------------------------------------------------------
+# Configuration & Constants
+# ----------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,10 +65,48 @@ DEM_CACHE_DIR = os.path.join(UPLOAD, "dem_cache")
 for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
-# ─── LANDSCAPE FIGURE SETTINGS (10×7.5″, 200 DPI) ─────────────────────
-FIG_W, FIG_H, DPI = 10.0, 7.5, 200   # ~4:3 landscape, 2000×1500 px
+FIG_W, FIG_H, DPI = 10.0, 7.5, 200   # landscape A4-like
+EPS = 1e-6
+DEFAULT_PADDING = 0.02  # 2% of figure size
 
-# ─── PROGRESS TRACKING (with timestamps for ETA) ──────────────────────
+# ----------------------------------------------------------------------
+# Helper: Human-readable Run ID
+# ----------------------------------------------------------------------
+
+def _generate_run_id(base_name, max_len=40):
+    """
+    Create a human-readable run ID from a base name, with timestamp and random suffix.
+    Returns: e.g. "Salghari_CF_20250101_143022_8x9k"
+    """
+    # Sanitize: keep alnum, underscore, hyphen
+    clean = re.sub(r'[^A-Za-z0-9_-]', '_', base_name)
+    # Remove repeated underscores
+    clean = re.sub(r'_+', '_', clean)
+    # Trim to avoid overly long names (leave room for timestamp + suffix)
+    max_base = max_len - 20  # reserve 20 chars for timestamp + suffix
+    if len(clean) > max_base:
+        clean = clean[:max_base]
+    # Remove trailing underscores
+    clean = clean.rstrip('_')
+    if not clean:
+        clean = "forest"
+    # timestamp
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # short random suffix (4 chars)
+    suffix = secrets.token_hex(2)  # 4 hex chars
+    return f"{clean}_{ts}_{suffix}"
+
+def _safe_runid(rid):
+    rid = str(rid).strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', rid):
+        log.warning(f"Invalid run_id rejected: {rid!r}")
+        abort(400, "Invalid run ID.")
+    return rid
+
+# ----------------------------------------------------------------------
+# User Management, Progress, Rate Limiting
+# ----------------------------------------------------------------------
+
 _PROG: dict = {}
 _PROG_LOCK = threading.Lock()
 
@@ -244,16 +285,6 @@ def _safe_filename(fname):
         raise ValueError(f"File type '{ext}' not allowed. Allowed: {sorted(_ALLOWED_EXTS)}")
     return fname
 
-def _safe_runid(rid):
-    rid = str(rid).strip().lower()
-    if not re.fullmatch(
-        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
-        rid
-    ):
-        log.warning(f"Invalid run_id rejected: {rid!r}")
-        abort(400, "Invalid run ID.")
-    return rid
-
 def _safe_path(base, rel):
     base = os.path.realpath(os.path.abspath(base))
     full = os.path.realpath(os.path.abspath(os.path.join(base, str(rel))))
@@ -325,7 +356,7 @@ def _security_headers(resp):
     resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
-# ─── REDUCED PIPELINE CONCURRENCY (memory safety) ──────────────────────
+# ─── PIPELINE SEMAPHORE ──────────────────────────────────────────────────
 _PIPELINE_SEM = threading.Semaphore(int(os.environ.get("MAX_PIPELINES", "4")))
 _ACTIVE_PIPELINES = 0
 _AP_LOCK = threading.Lock()
@@ -351,128 +382,9 @@ def _with_pipeline_sem(fn):
             with _AP_LOCK: _ACTIVE_PIPELINES = max(0, _ACTIVE_PIPELINES - 1)
     return wrapper
 
-@app.route("/server_status")
-@_rate_limit(limit=10, window=60)
-def server_status():
-    return jsonify({"status":"ok","active_pipelines":_ACTIVE_PIPELINES,
-                    "max_pipelines":int(os.environ.get("MAX_PIPELINES","4")),
-                    "registered_users":len(_lu())})
-
-@app.route("/robots.txt")
-def robots_txt():
-    return Response("""User-agent: *
-Allow: /
-Allow: /about
-Allow: /sitemap.xml
-Disallow: /upload
-Disallow: /run_g
-Disallow: /outputs/
-Disallow: /download/
-Disallow: /progress/
-Disallow: /geojson/
-Sitemap: https://elfakgisprostudio.onrender.com/sitemap.xml
-""", mimetype="text/plain")
-
-@app.route("/sitemap.xml")
-def sitemap_xml():
-    return Response("""<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://elfakgisprostudio.onrender.com/</loc>
-       <priority>1.0</priority><changefreq>weekly</changefreq></url>
-  <url><loc>https://elfakgisprostudio.onrender.com/about</loc>
-       <priority>0.9</priority><changefreq>monthly</changefreq></url>
-</urlset>""", mimetype="application/xml")
-
-@app.route("/about")
-def about_page():
-    return Response("""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Elfak GIS Pro Studio — Professional Forest GIS Application</title>
-<meta name="description" content="Elfak GIS Pro Studio (elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio) is a professional web-based GIS application for forest boundary mapping, slope analysis, compartment subdivision, survey point generation and multi-forest analysis. Built for Nepal forestry professionals.">
-<meta name="keywords" content="elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio, elfak gis, elfak gis pro, forest gis nepal, forest boundary mapping, slope analysis nepal, compartment mapping, survey points gis, forestry nepal gis, GIS tool nepal">
-<meta name="robots" content="index, follow">
-<meta property="og:title" content="Elfak GIS Pro Studio — Forest GIS Application">
-<meta property="og:description" content="Professional web GIS for Nepal forestry: boundary mapping, slope analysis, compartment subdivision, survey points. Free to use at elfakgisprostudio.onrender.com">
-<meta property="og:url" content="https://elfakgisprostudio.onrender.com/">
-<meta property="og:type" content="website">
-<link rel="canonical" href="https://elfakgisprostudio.onrender.com/">
-<link rel="alternate" href="https://elfakgisprostudio.onrender.com/" hreflang="en">
-<style>
-  body{font-family:system-ui,sans-serif;max-width:900px;margin:0 auto;padding:20px 24px;
-       color:#1a2e22;background:#f0f8f3;line-height:1.7}
-  h1{color:#059669;font-size:2em;margin-bottom:8px}
-  h2{color:#065f46;border-bottom:2px solid #34d399;padding-bottom:6px;margin-top:32px}
-  .badge{display:inline-block;background:#d1fae5;color:#065f46;padding:3px 10px;
-         border-radius:20px;font-size:13px;font-weight:600;margin:3px}
-  .cta{display:inline-block;background:linear-gradient(135deg,#34d399,#059669);
-       color:white;padding:12px 28px;border-radius:8px;text-decoration:none;
-       font-weight:700;font-size:16px;margin-top:20px;box-shadow:0 4px 14px rgba(16,185,129,.35)}
-  .feature{background:white;border-radius:10px;padding:16px 20px;margin:12px 0;
-            border-left:4px solid #10b981;box-shadow:0 2px 8px rgba(0,0,0,.06)}
-  footer{margin-top:48px;padding-top:16px;border-top:1px solid #b7eacf;
-         color:#6b9880;font-size:13px}
-</style>
-<script type="application/ld+json">
-{"@context":"https://schema.org","@type":"WebApplication",
- "name":"Elfak GIS Pro Studio",
- "alternateName":["elfakgis","elfakgispro","elfakgisstudio","elfakgisprostudio"],
- "url":"https://elfakgisprostudio.onrender.com/",
- "description":"Professional web-based GIS application for forest boundary mapping, slope analysis, compartment subdivision and survey point generation for Nepal forestry professionals.",
- "applicationCategory":"GIS Software",
- "operatingSystem":"Web Browser",
- "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
- "author":{"@type":"Organization","name":"Elfak GIS"}}
-</script>
-</head>
-<body>
-<h1>🌲 Elfak GIS Pro Studio</h1>
-<p><strong>Professional Forest GIS Application</strong> for boundary mapping, slope analysis, compartment subdivision, and survey point generation.</p>
-<p>
-  <span class="badge">elfakgis</span>
-  <span class="badge">elfakgispro</span>
-  <span class="badge">elfakgisstudio</span>
-  <span class="badge">elfakgisprostudio</span>
-  <span class="badge">Forest GIS Nepal</span>
-</p>
-<a href="/" class="cta">🚀 Open Application</a>
-
-<h2>What is Elfak GIS Pro Studio?</h2>
-<p>Elfak GIS Pro Studio is a free, web-based Geographic Information System designed for forestry professionals in Nepal and the broader Himalayan region. It provides a complete workflow from raw survey data to professional-quality GIS outputs — all without requiring QGIS, ArcGIS, or any desktop installation.</p>
-
-<h2>Features</h2>
-<div class="feature"><strong>A — Boundary Whole</strong>: Generate forest boundary polygon from GPS survey points (Excel/CSV). Produces shapefile, line, and point layers with area calculation.</div>
-<div class="feature"><strong>B — Segmented Forest</strong>: Multi-forest boundary generation with separate shapefile per forest/compartment.</div>
-<div class="feature"><strong>C — Sample Plot Generator</strong>: Systematic grid-based sample plot placement inside forest boundaries for forest inventory.</div>
-<div class="feature"><strong>D — Multi-Forest Complex</strong>: Batch process multiple forests with nested compartment structure.</div>
-<div class="feature"><strong>E — Polygon Subdivider</strong>: Automatically divide a forest polygon into N equal-area compartments (2–15) with configurable area tolerance.</div>
-<div class="feature"><strong>F — Slope Analysis</strong>: DEM-based slope classification (0–19°, 19–31°, 31–45°, >45°) with raster-to-polygon conversion, per-compartment area tables, and professional A4 map output.</div>
-<div class="feature"><strong>G — Survey Point Generator</strong>: Generate boundary, vertex, and divider survey points from compartment shapefiles. Exports SHP, CSV, and Excel.</div>
-
-<h2>Technical Specifications</h2>
-<ul>
-<li>Coordinate systems: UTM Zone 43N, 44N, 45N, 46N (EPSG:32643–32646)</li>
-<li>Input formats: Excel (.xlsx), CSV, Shapefile (.shp), ZIP of shapefiles</li>
-<li>Output formats: Shapefile (.shp), GeoJSON, KMZ, PNG map, Excel, CSV</li>
-<li>Map output: A4 size, 200 DPI, professional cartography</li>
-<li>DEM analysis: Slope reclassification, raster-to-polygon, area statistics</li>
-<li>Supports 100+ simultaneous users with per-user data isolation</li>
-</ul>
-
-<h2>Who Uses Elfak GIS Pro Studio?</h2>
-<p>Forest rangers, community forestry groups, district forest offices, forest inventory teams, and GIS professionals in Nepal, Bhutan, and similar forested regions who need professional GIS output without expensive desktop software.</p>
-
-<h2>Open the Application</h2>
-<p><a href="/" class="cta">🌲 Launch Elfak GIS Pro Studio</a></p>
-
-<footer>
-  <p>Elfak GIS Pro Studio · <a href="https://elfakgisprostudio.onrender.com/">elfakgisprostudio.onrender.com</a></p>
-  <p>Keywords: elfakgis · elfakgispro · elfakgisstudio · elfakgisprostudio · forest gis nepal · slope analysis · compartment mapping · survey points · forestry gis</p>
-</footer>
-</body>
-</html>""", mimetype="text/html")
+# ----------------------------------------------------------------------
+# Helper: Column detection, reading, CRS, geometry
+# ----------------------------------------------------------------------
 
 def _norm(s): return "".join(c for c in str(s).lower() if c.isalnum())
 _XA={"x","xcoord","xcoordinate","xcord","east","easting","eastings","lon","long","longitude","lng","pointx","coordx","utme","utmx"}
@@ -506,6 +418,7 @@ def read_input(file):
 def get_crs(zone): return f"EPSG:326{zone}"
 def _safe_dn(s): return str(s).strip().replace("/","_").replace("\\","_").replace(":","_")
 
+# Geometry helpers
 def safe_polygon(coords):
     p = Polygon(coords); return p if p.is_valid else p.buffer(0)
 def _repair(g):
@@ -623,112 +536,497 @@ def _enforce_poly_gdf(gdf):
     result = result.reset_index(drop=True)
     return result
 
-# ─── RE-IMPLEMENTED LEGEND AND NORTH ARROW ──────────────────────────────
-def _north_arrow(ax, pos=None):
-    """Draw a north arrow at a given position (fractional coordinates)."""
-    if pos is None:
-        pos = (0.92, 0.92)  # default: upper right
-    x, y = pos[0], pos[1]
-    # Arrow polygon
+# ----------------------------------------------------------------------
+# LAYOUT ENGINE (FreeSpaceManager, compute_safe_rect, label engine)
+# ----------------------------------------------------------------------
+
+class FreeSpaceManager:
+    """Manages free rectangles in normalized figure coordinates (0..1)."""
+    def __init__(self, page=(0.0, 0.0, 1.0, 1.0)):
+        self.rects = [page]
+
+    def _merge(self):
+        while True:
+            merged = False
+            new_rects = []
+            skip = set()
+            n = len(self.rects)
+            for i in range(n):
+                if i in skip:
+                    continue
+                r1 = self.rects[i]
+                for j in range(i+1, n):
+                    if j in skip:
+                        continue
+                    r2 = self.rects[j]
+                    x0a, y0a, x1a, y1a = r1
+                    x0b, y0b, x1b, y1b = r2
+
+                    if abs(y0a - y0b) < EPS and abs(y1a - y1b) < EPS:
+                        if abs(x0a - x1b) < EPS:
+                            merged_rect = (x0b, y0a, x1a, y1a)
+                            skip.add(i); skip.add(j)
+                            new_rects.append(merged_rect)
+                            merged = True
+                            break
+                        elif abs(x0b - x1a) < EPS:
+                            merged_rect = (x0a, y0a, x1b, y1a)
+                            skip.add(i); skip.add(j)
+                            new_rects.append(merged_rect)
+                            merged = True
+                            break
+
+                    if abs(x0a - x0b) < EPS and abs(x1a - x1b) < EPS:
+                        if abs(y0a - y1b) < EPS:
+                            merged_rect = (x0a, y0b, x1a, y1a)
+                            skip.add(i); skip.add(j)
+                            new_rects.append(merged_rect)
+                            merged = True
+                            break
+                        elif abs(y0b - y1a) < EPS:
+                            merged_rect = (x0a, y0a, x1a, y1b)
+                            skip.add(i); skip.add(j)
+                            new_rects.append(merged_rect)
+                            merged = True
+                            break
+                    if merged:
+                        break
+                if merged:
+                    break
+
+            for i, r in enumerate(self.rects):
+                if i not in skip:
+                    new_rects.append(r)
+            new_rects = [r for r in new_rects if (r[2]-r[0])*(r[3]-r[1]) > EPS]
+            if not merged:
+                self.rects = new_rects
+                break
+            else:
+                self.rects = new_rects
+
+    def subtract(self, rect):
+        new_rects = []
+        for (fx0, fy0, fx1, fy1) in self.rects:
+            if rect[2] <= fx0 + EPS or rect[0] >= fx1 - EPS or \
+               rect[3] <= fy0 + EPS or rect[1] >= fy1 - EPS:
+                new_rects.append((fx0, fy0, fx1, fy1))
+                continue
+
+            if fy1 > rect[3] + EPS:
+                new_rects.append((fx0, rect[3], fx1, fy1))
+            if fy0 < rect[1] - EPS:
+                new_rects.append((fx0, fy0, fx1, rect[1]))
+            if fx0 < rect[0] - EPS:
+                y0 = max(fy0, rect[1])
+                y1 = min(fy1, rect[3])
+                if y0 < y1 - EPS:
+                    new_rects.append((fx0, y0, rect[0], y1))
+            if fx1 > rect[2] + EPS:
+                y0 = max(fy0, rect[1])
+                y1 = min(fy1, rect[3])
+                if y0 < y1 - EPS:
+                    new_rects.append((rect[2], y0, fx1, y1))
+
+        self.rects = new_rects
+        self._merge()
+
+    def get_best_rect(self, poly_aspect=None, center_weight=0.4):
+        if not self.rects:
+            return (0.0, 0.0, 1.0, 1.0)
+
+        def score(r):
+            x0, y0, x1, y1 = r
+            w = x1 - x0
+            h = y1 - y0
+            area = w * h
+            if area < EPS:
+                return -1e9
+            aspect = w / h if h > EPS else 1.0
+            thinness = min(aspect, 1.0/aspect) if aspect > 0 else 0.0
+            thin_penalty = 1.0 - (1.0 - thinness) * 0.5
+            cx = (x0 + x1) / 2
+            cy = (y0 + y1) / 2
+            dist = ((cx - 0.5)**2 + (cy - 0.5)**2)**0.5
+            center_score = 1.0 - dist * 2.0
+            if poly_aspect is not None and poly_aspect > 0:
+                aspect_penalty = min(abs(poly_aspect - aspect) / max(poly_aspect, aspect, EPS), 1.0)
+                aspect_score = 1.0 - aspect_penalty * 0.8
+            else:
+                aspect_score = 1.0
+            return area * thin_penalty * (0.6 * aspect_score + 0.4 * max(center_score, 0))
+
+        best = max(self.rects, key=score)
+        return (best[0], best[1], best[2]-best[0], best[3]-best[1])
+
+def get_default_layout_state():
+    return {
+        "ov-legend": {"left": 74, "top": 76, "width": 24, "height": 18, "visible": True, "padding": 0.025, "rotation": 0},
+        "ov-north":  {"left": 86, "top": 2,  "width": 10, "height": 15, "visible": True, "padding": 0.02,  "rotation": 0},
+        "ov-scale":  {"left": 2,  "top": 86, "width": 18, "height": 10, "visible": True, "padding": 0.02,  "rotation": 0},
+        "ov-title":  {"left": 25, "top": 2,  "width": 50, "height": 8,  "visible": True, "padding": 0.015, "rotation": 0},
+        "ov-area":   {"left": 74, "top": 12, "width": 20, "height": 6,  "visible": True, "padding": 0.015, "rotation": 0},
+    }
+
+def _rotated_bbox(rect, rotation_deg, center=None):
+    x, y, w, h = rect
+    if center is None:
+        cx, cy = x + w/2, y + h/2
+    else:
+        cx, cy = center
+    angle = math.radians(rotation_deg)
+    corners = [(-w/2, -h/2), (w/2, -h/2), (w/2, h/2), (-w/2, h/2)]
+    rot_corners = []
+    for dx, dy in corners:
+        rx = dx * math.cos(angle) - dy * math.sin(angle)
+        ry = dx * math.sin(angle) + dy * math.cos(angle)
+        rot_corners.append((cx + rx, cy + ry))
+    xs = [p[0] for p in rot_corners]
+    ys = [p[1] for p in rot_corners]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+def compute_safe_rect(layout_state, poly_aspect=None):
+    mgr = FreeSpaceManager()
+    for key, item in layout_state.items():
+        if not item.get('visible', True):
+            continue
+        left = item.get('left', 0) / 100.0
+        top = item.get('top', 0) / 100.0
+        width = item.get('width', 0) / 100.0
+        height = item.get('height', 0) / 100.0
+        bottom = 1.0 - top - height
+        pad = item.get('padding', DEFAULT_PADDING)
+        rot = item.get('rotation', 0)
+        base = (left - pad, bottom - pad, left + width + pad, top + height + pad)
+        if abs(rot) > EPS:
+            cx = (base[0] + base[2]) / 2
+            cy = (base[1] + base[3]) / 2
+            bbox = _rotated_bbox((base[0], base[1], base[2]-base[0], base[3]-base[1]), rot, (cx, cy))
+            bbox = (max(0, bbox[0]), max(0, bbox[1]), min(1, bbox[2]), min(1, bbox[3]))
+            if bbox[0] < bbox[2] and bbox[1] < bbox[3]:
+                mgr.subtract(bbox)
+        else:
+            mgr.subtract(base)
+    return mgr.get_best_rect(poly_aspect)
+
+# Label engine with coordinate-system correction
+def _place_labels(ax, gdf, label_col, excluded_overlay_rects, fig,
+                  fontsize=5.5, color='black', offset=8):
+    if gdf is None or gdf.empty or label_col not in gdf.columns:
+        return []
+
+    trans = ax.transData.inverted()
+    data_excluded = []
+    for rect in excluded_overlay_rects:
+        corners = [(rect[0], rect[1]), (rect[2], rect[1]), (rect[2], rect[3]), (rect[0], rect[3])]
+        data_corners = [trans.transform_point(p) for p in corners]
+        xs = [p[0] for p in data_corners]
+        ys = [p[1] for p in data_corners]
+        data_excluded.append((min(xs), min(ys), max(xs), max(ys)))
+
+    placed = []
+    for _, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        cx, cy = geom.centroid.x, geom.centroid.y
+
+        best_pos = None
+        best_score = None
+        offsets = [(0, offset), (offset, offset), (offset, 0), (offset, -offset),
+                   (0, -offset), (-offset, -offset), (-offset, 0), (-offset, offset)]
+        for scale in [1.0, 0.6, 0.3]:
+            for dx, dy in offsets:
+                px, py = cx + dx*scale, cy + dy*scale
+                label_text = str(row[label_col])
+                size = 0.2 * fontsize * len(label_text) * 0.05
+                rect = (px - size, py - size, px + size, py + size)
+
+                overlap = False
+                for ex in data_excluded:
+                    if not (rect[2] <= ex[0] or rect[0] >= ex[2] or rect[3] <= ex[1] or rect[1] >= ex[3]):
+                        overlap = True
+                        break
+                if overlap:
+                    continue
+
+                overlap_placed = False
+                for p in placed:
+                    if not (rect[2] <= p[0] or rect[0] >= p[2] or rect[3] <= p[1] or rect[1] >= p[3]):
+                        overlap_placed = True
+                        break
+                if overlap_placed:
+                    continue
+
+                dist = ((px - cx)**2 + (py - cy)**2)**0.5
+                if best_score is None or dist < best_score:
+                    best_score = dist
+                    best_pos = (px, py, rect)
+
+        if best_pos is None:
+            for scale in [1.0, 0.6, 0.3]:
+                for dx, dy in offsets:
+                    px, py = cx + dx*scale, cy + dy*scale
+                    overlap = False
+                    for ex in data_excluded:
+                        if ex[0] <= px <= ex[2] and ex[1] <= py <= ex[3]:
+                            overlap = True
+                            break
+                    if not overlap:
+                        best_pos = (px, py, (px-0.01, py-0.01, px+0.01, py+0.01))
+                        break
+                if best_pos:
+                    break
+            if best_pos is None:
+                best_pos = (cx, cy, (cx-0.01, cy-0.01, cx+0.01, cy+0.01))
+
+        px, py, rect = best_pos
+        placed.append(rect)
+        ax.annotate(str(row[label_col]),
+                    xy=(cx, cy),
+                    xytext=(px, py),
+                    textcoords="data",
+                    ha='left' if px > cx else 'right',
+                    va='bottom' if py > cy else 'top',
+                    fontsize=fontsize,
+                    fontweight='bold',
+                    color=color,
+                    path_effects=[pe.Stroke(linewidth=1.8, foreground='white'), pe.Normal()],
+                    zorder=9)
+    return placed
+
+# ----------------------------------------------------------------------
+# COMMON MAP PLOTTING HELPERS
+# ----------------------------------------------------------------------
+
+_COMP_COLORS_RICH = [
+    "#2196F3","#FF9800","#4CAF50","#9C27B0","#F48FB1",
+    "#607D8B","#CDDC39","#00BCD4","#FF5722","#795548",
+    "#E91E63","#009688","#FFC107","#3F51B5","#8BC34A"
+]
+
+def _get_bounds(gdf):
+    if gdf is None or gdf.empty:
+        return None
+    bounds = gdf.total_bounds
+    if bounds is None or any(np.isnan(b) for b in bounds):
+        return None
+    return bounds
+
+def _get_combined_bounds(gdfs):
+    all_bounds = []
+    for gdf in gdfs:
+        b = _get_bounds(gdf)
+        if b is not None:
+            all_bounds.append(b)
+    if not all_bounds:
+        return (0, 0, 1, 1)
+    minx = min(b[0] for b in all_bounds)
+    miny = min(b[1] for b in all_bounds)
+    maxx = max(b[2] for b in all_bounds)
+    maxy = max(b[3] for b in all_bounds)
+    return (minx, miny, maxx, maxy)
+
+def _fit_bounds_to_axes(ax, bounds, safe_rect, fig_w, fig_h):
+    minx, miny, maxx, maxy = bounds
+    data_w = maxx - minx
+    data_h = maxy - miny
+    if data_w < EPS and data_h < EPS:
+        data_w = data_h = 1.0
+
+    pos = ax.get_position()
+    ax_w = pos.width * fig_w
+    ax_h = pos.height * fig_h
+    ax_aspect = ax_w / ax_h if ax_h > EPS else 1.0
+
+    data_aspect = data_w / data_h if data_h > EPS else 1.0
+
+    extent = max(data_w, data_h)
+    margin = 0.05 * extent
+    margin = min(margin, 0.15 * extent)
+    margin = max(margin, 0.02 * (ax_w + ax_h) / 2)
+
+    data_w_m = data_w + 2 * margin
+    data_h_m = data_h + 2 * margin
+
+    if data_w_m / data_h_m > ax_aspect:
+        new_w = data_w_m
+        new_h = new_w / ax_aspect
+    else:
+        new_h = data_h_m
+        new_w = new_h * ax_aspect
+
+    center_x = (minx + maxx) / 2
+    center_y = (miny + maxy) / 2
+    half_w = new_w / 2
+    half_h = new_h / 2
+    ax.set_xlim(center_x - half_w, center_x + half_w)
+    ax.set_ylim(center_y - half_h, center_y + half_h)
+
+def _plot_polygons(ax, poly_gdf, label_col, excluded_overlay_rects, fig):
+    if poly_gdf is None or poly_gdf.empty:
+        return
+    if "Comp_ID" in poly_gdf.columns:
+        comps = poly_gdf["Comp_ID"].unique()
+        color_map = {comp: _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)] for i, comp in enumerate(comps)}
+        poly_gdf = poly_gdf.copy()
+        poly_gdf["display_color"] = poly_gdf["Comp_ID"].map(color_map)
+        poly_gdf.plot(ax=ax, column="display_color", categorical=True,
+                      edgecolor="#111111", linewidth=1.6)
+    else:
+        poly_gdf.plot(ax=ax, facecolor="#d4edda", edgecolor="#1a3a22", linewidth=1.5)
+
+    if label_col and label_col in poly_gdf.columns:
+        _place_labels(ax, poly_gdf, label_col, excluded_overlay_rects, fig,
+                      fontsize=8, color="#1565C0", offset=6)
+
+def _plot_points(ax, pts_gdf, point_label_col, excluded_overlay_rects, fig):
+    if pts_gdf is None or pts_gdf.empty:
+        return
+    pts_gdf.plot(ax=ax, color="#ff0000", markersize=16, zorder=8, marker="o")
+    if point_label_col and point_label_col in pts_gdf.columns:
+        _place_labels(ax, pts_gdf, point_label_col, excluded_overlay_rects, fig,
+                      fontsize=5.5, color="black", offset=4)
+
+def _plot_lines(ax, line_gdf):
+    if line_gdf is not None and not line_gdf.empty:
+        line_gdf.plot(ax=ax, color="#000000", linewidth=1.2)
+
+def _add_north_arrow(fig, pos=(0.90, 0.92)):
     from matplotlib.patches import Polygon
-    arrow = Polygon([[x, y-0.04], [x-0.02, y-0.01], [x+0.02, y-0.01]],
+    x, y = pos
+    ax = fig.add_axes([0,0,1,1], frameon=False)
+    ax.set_axis_off()
+    arrow = Polygon([[x, y-0.03], [x-0.015, y-0.01], [x+0.015, y-0.01]],
                     closed=True, facecolor='black', edgecolor='black',
                     transform=ax.transAxes, zorder=20)
     ax.add_patch(arrow)
-    # "N" label above the arrow
-    ax.text(x, y+0.02, 'N', transform=ax.transAxes,
-            fontsize=14, fontweight='bold', ha='center', va='bottom',
+    ax.text(x, y+0.015, 'N', transform=ax.transAxes,
+            fontsize=12, fontweight='bold', ha='center', va='bottom',
             path_effects=[pe.Stroke(linewidth=2, foreground='white'), pe.Normal()],
             zorder=21)
 
-def _add_legend(ax, handles, legend_title="Legend", loc="lower right", pos=None):
-    """Add a legend at a specific position (fractional coordinates)."""
-    if not handles:
-        return
-    if pos is not None:
-        # Place legend at custom position (bbox_to_anchor)
-        leg = ax.legend(handles=handles, title=legend_title,
-                        loc='upper left', bbox_to_anchor=(pos[0], pos[1]),
-                        frameon=True, facecolor='white', edgecolor='black',
-                        fontsize=8, title_fontsize=9)
-    else:
-        leg = ax.legend(handles=handles, title=legend_title,
-                        loc=loc, frameon=True, facecolor='white',
-                        edgecolor='black', fontsize=8, title_fontsize=9)
-    leg.set_zorder(20)   # <-- FIX: set zorder after creation
-
-def _scale_bar(ax):
-    x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
-    aw = x1-x0; ah = y1-y0
-    raw = aw * 0.22
-    if raw <= 0: return
-    import math as _m
-    mag = 10**_m.floor(_m.log10(max(raw, 1e-6)))
-    nice_vals = [1,2,2.5,5,10,20,25,50,100,200,250,500,1000,2000,5000,10000]
-    bar_m = min(nice_vals, key=lambda v: abs(v*mag - raw)) * mag
-    if bar_m < 10: bar_m = raw
-    segs = 3; seg_w = bar_m / segs
-    bx = x0 + aw*0.07; by = y0 + ah*0.040; bh = ah*0.016
+def _add_scale_bar(fig, pos=(0.50, 0.06), width_frac=0.18, height_frac=0.015):
+    x, y = pos
+    ax = fig.add_axes([0,0,1,1], frameon=False)
+    ax.set_axis_off()
+    segs = 3
+    seg_w = width_frac / segs
     for i in range(segs):
         fc = "black" if i % 2 == 0 else "white"
-        ax.add_patch(plt.Rectangle((bx + i*seg_w, by), seg_w, bh,
-                     linewidth=0.9, edgecolor="black", facecolor=fc,
-                     zorder=15, clip_on=False))
-    def _fmt(v): return f"{int(v)} m" if v < 1000 else f"{v/1000:.0f} km"
-    ax.text(bx,          by - bh*0.6, "0",              ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
-    ax.text(bx+bar_m/2,  by - bh*0.6, _fmt(bar_m/2),    ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
-    ax.text(bx+bar_m,    by - bh*0.6, _fmt(bar_m),      ha="center", va="top", fontsize=6, fontweight="bold", color="black", zorder=16)
+        rect = plt.Rectangle((x + i*seg_w, y), seg_w, height_frac,
+                             linewidth=0.8, edgecolor="black", facecolor=fc,
+                             transform=ax.transAxes, zorder=15, clip_on=False)
+        ax.add_patch(rect)
+    ax.text(x, y - 0.015, "0", ha='center', va='top', fontsize=7,
+            fontweight='bold', color='black', transform=ax.transAxes, zorder=16)
+    ax.text(x + width_frac/2, y - 0.015, "500 m", ha='center', va='top', fontsize=7,
+            fontweight='bold', color='black', transform=ax.transAxes, zorder=16)
+    ax.text(x + width_frac, y - 0.015, "1000 m", ha='center', va='top', fontsize=7,
+            fontweight='bold', color='black', transform=ax.transAxes, zorder=16)
 
-    # Scale text (RF) above the bar
-    ax_w_paper_m = 0.76 * FIG_W * 0.0254
-    rf = aw / ax_w_paper_m if ax_w_paper_m > 0 else 0
-    if rf > 0:
-        rf_mag = 10**_m.floor(_m.log10(max(rf, 1)))
-        rf_nice = round(rf / rf_mag) * rf_mag
-        rf_str  = f"1:{int(rf_nice):,}".replace(",", " ")
-        ax.text(bx + bar_m/2, by + bh*2.2, rf_str,
-                ha="center", va="bottom", fontsize=7,
-                fontweight="bold", color="black", zorder=16)
+def _draw_slope_table(ax, slope_areas):
+    """Draw a compact slope area table on the axes."""
+    table_data = []
+    for cls, info in SLOPE_CLASSES.items():
+        area = slope_areas.get(info['range'], 0)
+        table_data.append([info['range'], f"{area:.2f} ha"])
+    total = sum(slope_areas.values())
+    table_data.append(["Total", f"{total:.2f} ha"])
+    table = ax.table(cellText=table_data, colLabels=["Slope", "Area"],
+                     loc='lower left', bbox=[0.02, 0.02, 0.3, 0.15],
+                     cellLoc='center', colWidths=[0.15, 0.10])
+    table.auto_set_font_size(False)
+    table.set_fontsize(7)
+    for (row, col), cell in table.get_celld().items():
+        if row == 0:
+            cell.set_text_props(weight='bold', color='white')
+            cell.set_facecolor('#1a5276')
+        else:
+            cell.set_facecolor('#f8f9fa')
 
-def _graticule(ax):
-    ax.tick_params(axis="both", which="major",
-                   left=True, right=True, top=True, bottom=True,
-                   labelleft=True, labelright=True,
-                   labelbottom=True, labeltop=False,
-                   direction="out", length=5, width=0.8,
-                   labelsize=5.5, color="#333", pad=2)
-    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{int(v):,}"))
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{int(v):,}"))
-    ax.xaxis.set_tick_params(labelrotation=45)
-    ax.yaxis.set_tick_params(labelrotation=90)
-    for sp in ax.spines.values(): sp.set_linewidth(0.8); sp.set_color("#444")
-    ax.grid(False)
-    ax.set_xlabel(""); ax.set_ylabel("")
+SLOPE_CLASSES = {
+    1: {"range": "< 19°",   "color": "#2e8b57", "label": "Gentle"},
+    2: {"range": "19–31°",  "color": "#ffd700", "label": "Moderate"},
+    3: {"range": "> 31°",   "color": "#ef4444", "label": "Steep"},
+}
 
-def _style_ax(ax):
-    ax.set_aspect("equal")
+def render_map(path, poly_gdf=None, line_gdf=None, pts_gdf=None,
+               label_col=None, point_label_col=None,
+               safe_rect=None, layout_state=None,
+               title=None, slope_mode=False, summary_rows=None,
+               slope_areas=None):
+    if safe_rect is None:
+        safe_rect = (0.0, 0.0, 1.0, 1.0)
+
+    fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI)
+    fig.patch.set_facecolor("white")
+
+    excluded_rects = []
+    if layout_state:
+        for key, item in layout_state.items():
+            if not item.get('visible', True):
+                continue
+            left = item.get('left', 0) / 100.0
+            top = item.get('top', 0) / 100.0
+            width = item.get('width', 0) / 100.0
+            height = item.get('height', 0) / 100.0
+            bottom = 1.0 - top - height
+            pad = item.get('padding', DEFAULT_PADDING)
+            rot = item.get('rotation', 0)
+            base = (left - pad, bottom - pad, left + width + pad, top + height + pad)
+            if abs(rot) > EPS:
+                cx = (base[0] + base[2]) / 2
+                cy = (base[1] + base[3]) / 2
+                bbox = _rotated_bbox((base[0], base[1], base[2]-base[0], base[3]-base[1]), rot, (cx, cy))
+                bbox = (max(0, bbox[0]), max(0, bbox[1]), min(1, bbox[2]), min(1, bbox[3]))
+                if bbox[0] < bbox[2] and bbox[1] < bbox[3]:
+                    excluded_rects.append(bbox)
+            else:
+                excluded_rects.append(base)
+
+    if slope_mode:
+        height_ratios = [1, 0.18]
+        gs = gridspec.GridSpec(2, 1, height_ratios=height_ratios,
+                               left=safe_rect[0], right=safe_rect[0]+safe_rect[2],
+                               bottom=safe_rect[1], top=safe_rect[1]+safe_rect[3],
+                               hspace=0.15)
+        ax_map = fig.add_subplot(gs[0])
+        ax_tbl = fig.add_subplot(gs[1])
+        ax_tbl.axis('off')
+        ax = ax_map
+    else:
+        ax = fig.add_axes(safe_rect)
+
     ax.set_facecolor("white")
-    _graticule(ax)
-    for sp in ax.spines.values():
-        sp.set_linewidth(1.2)
-        sp.set_color("#222")
+    ax.axis('off')
 
-def _label_feat(ax, gdf, col, fs=8, color="black"):
-    if gdf is None or gdf.empty or col not in gdf.columns: return
-    for _, row in gdf.iterrows():
-        try:
-            g = row.geometry
-            if g is None or g.is_empty: continue
-            cx, cy = g.centroid.x, g.centroid.y
-            ax.annotate(str(row[col]), xy=(cx, cy), ha="center", va="center",
-                        fontsize=fs, fontweight="bold", color=color,
-                        path_effects=[pe.Stroke(linewidth=2.5, foreground="white"), pe.Normal()],
-                        zorder=12)
-        except: continue
+    _plot_polygons(ax, poly_gdf, label_col, excluded_rects, fig)
+    _plot_lines(ax, line_gdf)
+    _plot_points(ax, pts_gdf, point_label_col, excluded_rects, fig)
 
-_CCOLORS = ["#C8E6C9","#B3E5FC","#FFE0B2","#F8BBD0","#E1BEE7","#DCEDC8",
-            "#B2EBF2","#FFF9C4","#D7CCC8","#CFD8DC","#C5CAE9","#F0F4C3",
-            "#FFCCBC","#B2DFDB","#E8EAF6"]
+    gdfs = [poly_gdf, line_gdf, pts_gdf]
+    bounds = _get_combined_bounds(gdfs)
+    if bounds is not None:
+        _fit_bounds_to_axes(ax, bounds, safe_rect, FIG_W, FIG_H)
+
+    # North arrow and scale bar
+    _add_north_arrow(fig)
+    _add_scale_bar(fig)
+
+    # Slope table (if slope_mode and slope_areas provided)
+    if slope_mode and slope_areas:
+        _draw_slope_table(ax, slope_areas)
+
+    if title:
+        fig.suptitle(title, fontsize=14, weight='bold')
+
+    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0)
+    plt.close(fig)
+    gc.collect()
+
+# ----------------------------------------------------------------------
+# GROUP A – BOUNDARY WHOLE
+# ----------------------------------------------------------------------
 
 def group_a(df, forest, crs, out, mapping=None):
     df = normalize_order(df)
@@ -744,11 +1042,15 @@ def group_a(df, forest, crs, out, mapping=None):
     ah = round(poly.area/10000, 4); pfx = _safe_dn(forest)
     pg = gpd.GeoDataFrame([{"Forest":forest,"Area_ha":ah,"Perim_m":round(poly.length,2),"geometry":poly}],crs=crs)
     lg = gpd.GeoDataFrame([{"Forest":forest,"geometry":line}],crs=crs)
-    ptg= gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[xc],df[yc]), crs=crs)
+    ptg = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[xc],df[yc]), crs=crs)
     pg.to_file(os.path.join(out,f"{pfx}_polygon.shp"))
     lg.to_file(os.path.join(out,f"{pfx}_line.shp"))
     ptg.to_file(os.path.join(out,f"{pfx}_point.shp"))
     return pg, lg, ptg
+
+# ----------------------------------------------------------------------
+# GROUP B – SEGMENTED FOREST
+# ----------------------------------------------------------------------
 
 def group_b(df, crs, out, mapping=None):
     df = normalize_order(df)
@@ -776,6 +1078,10 @@ def group_b(df, crs, out, mapping=None):
     if not l.empty: l.to_file(os.path.join(out,"forest_line.shp"))
     if not pt.empty: pt.to_file(os.path.join(out,"forest_point.shp"))
     return p,l,pt
+
+# ----------------------------------------------------------------------
+# GROUP C – SAMPLE PLOT GENERATOR
+# ----------------------------------------------------------------------
 
 def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None, base_name="boundary"):
     polygons=[]
@@ -835,12 +1141,17 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None, base_name="bou
         pd.DataFrame(pts)[["SN","X","Y"]].to_excel(os.path.join(out,f"{base_name}_sampleplot.xlsx"),index=False)
     return p_gdf,l_gdf,pt_gdf
 
+# ----------------------------------------------------------------------
+# GROUP D – MULTI-FOREST COMPLEX
+# ----------------------------------------------------------------------
+
 def _save_fl(pr,lr,pts,d,crs):
     os.makedirs(d,exist_ok=True); pfx=os.path.basename(d)
     _pdf=_enforce_poly_gdf(gpd.GeoDataFrame([pr],crs=crs))
     if not _pdf.empty: _pdf.to_file(os.path.join(d,f"{pfx}_polygon.shp"))
     gpd.GeoDataFrame([lr],crs=crs).to_file(os.path.join(d,f"{pfx}_line.shp"))
     gpd.GeoDataFrame(pts,crs=crs).to_file(os.path.join(d,f"{pfx}_point.shp"))
+
 def group_d(df, crs, out, mapping=None, mode="A"):
     df=normalize_order(df)
     xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
@@ -875,6 +1186,10 @@ def group_d(df, crs, out, mapping=None, mode="A"):
             _save_fl(pr,lr,ptl,fd,crs); ap.append(pr); al.append(lr); apt.extend(ptl)
     if not ap: raise ValueError("No valid polygons built.")
     return gpd.GeoDataFrame(ap,crs=crs),gpd.GeoDataFrame(al,crs=crs),gpd.GeoDataFrame(apt,crs=crs)
+
+# ----------------------------------------------------------------------
+# GROUP E – POLYGON SUBDIVIDER
+# ----------------------------------------------------------------------
 
 def _elong(p):
     minx,miny,maxx,maxy=p.bounds; dx,dy=maxx-minx,maxy-miny
@@ -1247,6 +1562,10 @@ def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
     pt=gpd.GeoDataFrame(pd.concat(apts,ignore_index=True),crs=crs)
     return p,l,pt
 
+# ----------------------------------------------------------------------
+# GROUP F – SLOPE ANALYSIS
+# ----------------------------------------------------------------------
+
 def _bnd_from_df(df,mapping):
     df=normalize_order(df)
     xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
@@ -1259,38 +1578,23 @@ def _bnd_from_df(df,mapping):
     coords.append(coords[0]); return safe_polygon(coords)
 
 def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
-    """Extract and read boundary shapefile from a ZIP archive.
-    Returns: (union_geometry, gdf, shapefile_basename_without_extension)
-    """
     import io, zipfile
     import tempfile
-
-    # Read the ZIP into memory
-    try:
-        zip_bytes = zip_file.read()
-        if len(zip_bytes) < 100:
-            raise ValueError("Uploaded ZIP file is empty or too small.")
-    except Exception as e:
-        raise ValueError(f"Could not read uploaded ZIP file: {e}")
-
-    # Extract to a temporary directory
+    zip_bytes = zip_file.read()
+    if len(zip_bytes) < 100:
+        raise ValueError("Uploaded ZIP file is empty or too small.")
     tmp_dir = os.path.join(UPLOAD, "bnd_tmp_" + uuid.uuid4().hex[:8])
     os.makedirs(tmp_dir, exist_ok=True)
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             zf.extractall(tmp_dir)
-
-        # Find all .shp files
         shps = []
         for root, _, files in os.walk(tmp_dir):
             for f in files:
                 if f.lower().endswith(".shp"):
                     shps.append(os.path.join(root, f))
-
         if not shps:
             raise ValueError("No .shp file found inside the uploaded ZIP.")
-
-        # Choose the shapefile
         if target_shp:
             target_base = os.path.basename(target_shp)
             chosen = None
@@ -1302,29 +1606,18 @@ def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
                 raise ValueError(f"Specified shapefile '{target_shp}' not found in ZIP.")
         else:
             chosen = shps[0]
-
-        # Get basename without extension
         shp_basename = os.path.splitext(os.path.basename(chosen))[0]
-
-        # Read the shapefile
         gdf = gpd.read_file(chosen)
         if gdf.empty:
             raise ValueError("Boundary shapefile is empty.")
-
-        # Ensure CRS: if missing, assign the user-provided CRS
         if gdf.crs is None:
             gdf = gdf.set_crs(src_crs)
         else:
-            # Reproject to the DEM's CRS
             gdf = gdf.to_crs(dem_crs)
-
-        # Union all geometries into one polygon
         union = _repair(gdf.unary_union)
         if union is None or union.is_empty:
             raise ValueError("Boundary geometry is empty after union.")
-
         return union, gdf, shp_basename
-
     except Exception as e:
         raise ValueError(f"Failed to process boundary ZIP: {e}")
     finally:
@@ -1337,9 +1630,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             boundary_is_zip=False, forest_name="FOREST",
             f_mode="A", comp_col_name=None, field_area_ha=None, run_id=None):
     if not _HAS_RASTERIO:
-        raise ValueError("rasterio and scipy are not installed on the server. "
-                         "Install them using: pip install rasterio scipy")
-
+        raise ValueError("rasterio and scipy are not installed on the server.")
     os.makedirs(out, exist_ok=True)
     pfx = _safe_dn(forest_name)
     SN  = -9999.0
@@ -1362,10 +1653,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if boundary_is_zip:
         ts = (mapping or {}).get("target_shp")
         bpoly, bgdf, shp_basename = _bnd_from_zip(boundary_file, ts, crs, str(dem_crs))
-        # If user didn't override forest_name, use the shapefile basename
         if forest_name in (None, "", "FOREST"):
             forest_name = shp_basename
-            pfx = _safe_dn(forest_name)  # update prefix
+            pfx = _safe_dn(forest_name)
     else:
         try:
             df   = read_input(boundary_file)
@@ -1380,11 +1670,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if bpoly is None or bpoly.is_empty:
         raise ValueError("Boundary polygon is empty after loading — check input file.")
 
-    # ─── AUTOMATIC RECALIBRATION TO BOUNDARY AREA ──────────────────────────
     boundary_area_ha = bpoly.area / 10000
     if field_area_ha is None or field_area_ha <= 0:
         field_area_ha = boundary_area_ha
-    # ────────────────────────────────────────────────────────────────────────
 
     with rasterio.open(dem_path) as _src:
         from shapely.geometry import box as _box
@@ -1460,7 +1748,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if run_id: _prog(run_id, "Step 3 — Reclassifying slope into 3 classes…", 40)
     vm  = (slope != SN) & ~np.isnan(slope)
     cls = np.zeros_like(slope, dtype=np.uint8)
-    # Green, Yellow, Red
     cls[vm & (slope <  19)]          = 1
     cls[vm & (slope >= 19) & (slope <= 31)] = 2
     cls[vm & (slope >  31)]          = 3
@@ -1512,7 +1799,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
 
     if run_id: _prog(run_id, "Step 6 — Clipping dissolved polygons to boundary…", 70)
 
-    # Green, Yellow, Red
     class_defs = {
         1: ("0-19 degree",  "Gentle",   "#2e8b57"),
         2: ("19-31 degree", "Moderate", "#ffd700"),
@@ -1613,7 +1899,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             "Check that the boundary polygon overlaps the DEM and is in the correct CRS."
         )
 
-    # ─── RECALIBRATE AND OVERWRITE Area_ha ──────────────────────────────
     if field_area_ha and field_area_ha > 0:
         tc = sum(r["Area_ha"] for r in all_sum)
         if tc > 1e-9:
@@ -1622,7 +1907,6 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                 r["Area_ha"] = round(r["Area_ha"] * fac, 4)
                 r["Recal_ha"] = r["Area_ha"]
                 r["Cal_Factor"] = round(fac, 6)
-    # ──────────────────────────────────────────────────────────────────────
 
     if run_id: _prog(run_id, "Step 7 — Saving shapefiles and Excel…", 88)
     vcrs = str(dem_crs)
@@ -1694,267 +1978,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if run_id: _prog(run_id, "Group F complete.", 95)
     return all_sum, vgdf, bgdf, f_mode, per_grp
 
-_COMP_COLORS_RICH = [
-    "#2196F3","#FF9800","#4CAF50","#9C27B0","#F48FB1",
-    "#607D8B","#CDDC39","#00BCD4","#FF5722","#795548",
-    "#E91E63","#009688","#FFC107","#3F51B5","#8BC34A"
-]
-
-# ─── PREVIEW FUNCTIONS WITH LEGEND, NORTH ARROW, LANDSCAPE SIZE ──────────
-
-def preview_compartments(poly_gdf, path, title="", legend_title="Legend", label_col="Comp_ID",
-                          legend_pos=None, north_pos=None,
-                          point_label_col=None):
-    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=DPI)
-    fig.patch.set_facecolor("white"); ax.set_facecolor("white")
-    handles = []
-
-    lc_use = label_col if (label_col and label_col in poly_gdf.columns) else (
-             "Comp_ID" if "Comp_ID" in poly_gdf.columns else None)
-
-    for i, (_, row) in enumerate(poly_gdf.iterrows()):
-        geom = row.geometry
-        if geom is None or geom.is_empty: continue
-        if geom.geom_type == "Polygon":
-            ext = list(geom.exterior.coords)
-            if ext[0] != ext[-1]: ext.append(ext[0])
-            geom = _repair(Polygon(ext)) or Polygon(ext)
-        color = _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)]
-        cid = row.get(lc_use or "Comp_ID", f"Comp_{i+1:03d}") if lc_use or "Comp_ID" in row.index else f"Comp_{i+1:03d}"
-        ah  = row.get("Area_ha", "")
-        lbl = f"{cid} ({ah:.2f} ha)" if isinstance(ah, float) else str(cid)
-        gpd.GeoDataFrame([{"geometry": geom}], crs=poly_gdf.crs).plot(
-            ax=ax, facecolor=color, edgecolor="#111111", linewidth=1.6)
-        handles.append(mpatches.Patch(facecolor=color, edgecolor="#111111", linewidth=1.0, label=lbl))
-
-    if lc_use:
-        _label_feat(ax, poly_gdf, lc_use, fs=9, color="#111111")
-
-    _style_ax(ax); _scale_bar(ax)
-    ax.set_title(title.strip() or "Compartment Division Map",
-                 fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-
-    if handles:
-        _add_legend(ax, handles, legend_title=legend_title, pos=legend_pos)
-    _north_arrow(ax, pos=north_pos)
-
-    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
-    plt.close(fig)
-    gc.collect()
-
-def preview(poly_gdf, line_gdf, pts_gdf, path, pc="blue", lc="black", ptc="red",
-            label_col=None, label_pts_gdf=None, area_ha=None, title="",
-            legend_title="Legend", user_label_col=None,
-            legend_pos=None, north_pos=None,
-            point_label_col=None):
-    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=DPI)
-    fig.patch.set_facecolor("white"); ax.set_facecolor("white"); handles = []
-
-    if poly_gdf is not None and not poly_gdf.empty:
-        if "Comp_ID" in poly_gdf.columns:
-            for i, (_, row) in enumerate(poly_gdf.iterrows()):
-                g = row.geometry
-                if g is None or g.is_empty: continue
-                col = _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)]
-                cid = row.get("Comp_ID", f"Comp_{i+1:03d}")
-                ah  = row.get("Area_ha", "")
-                lbl = f"{cid} ({ah:.2f} ha)" if isinstance(ah, float) else str(cid)
-                gpd.GeoDataFrame([{"geometry": g}], crs=poly_gdf.crs).plot(
-                    ax=ax, facecolor=col, edgecolor="#111111", linewidth=1.6)
-                handles.append(mpatches.Patch(facecolor=col, edgecolor="#111111",
-                                              linewidth=1.0, label=lbl))
-        else:
-            poly_gdf.plot(ax=ax, facecolor="#ffffff", edgecolor="#000000", linewidth=2.0)
-            from matplotlib.lines import Line2D as _L2D
-            handles.append(_L2D([0],[0], color="#000000", linewidth=2.5, label="Forest Boundary"))
-            if area_ha:
-                handles.append(mpatches.Patch(facecolor="#ffffff", edgecolor="#000000", label=f"Area = {area_ha:.3f} ha"))
-
-    if line_gdf is not None and not line_gdf.empty:
-        line_gdf.plot(ax=ax, color="#000000", linewidth=1.2)
-
-    if pts_gdf is not None and not pts_gdf.empty:
-        pts_gdf.plot(ax=ax, color="#ff0000", markersize=16, zorder=8, marker="o")
-        has_comp = (poly_gdf is not None and not poly_gdf.empty
-                    and "Comp_ID" in poly_gdf.columns)
-        pt_lbl = "Sub-compartment Survey Points" if has_comp else "Survey Points"
-        from matplotlib.lines import Line2D as _L2D
-        handles.append(_L2D([0],[0], marker="o", color="w",
-                            markerfacecolor="#ff0000",
-                            markersize=7, label=pt_lbl, linewidth=0))
-
-    # ─── POINT LABELS ──────────────────────────────────────────────────────
-    lbl_src = label_pts_gdf if label_pts_gdf is not None else pts_gdf
-    lc_use = point_label_col or user_label_col or label_col
-    if lc_use and lbl_src is not None and not lbl_src.empty and lc_use in lbl_src.columns:
-        for _, row in lbl_src.iterrows():
-            try:
-                ax.annotate(str(row[lc_use]),
-                            xy=(row.geometry.x, row.geometry.y),
-                            xytext=(4, 5), textcoords="offset points",
-                            ha="left", va="bottom", fontsize=5.5, fontweight="bold",
-                            color="black",
-                            path_effects=[pe.Stroke(linewidth=1.8, foreground="white"),
-                                          pe.Normal()], zorder=9)
-            except: pass
-
-    if poly_gdf is not None and not poly_gdf.empty:
-        if "Comp_ID" in poly_gdf.columns:
-            _label_feat(ax, poly_gdf, "Comp_ID", fs=9, color="#1565C0")
-        elif "Forest" in poly_gdf.columns:
-            _label_feat(ax, poly_gdf, "Forest", fs=9, color="#1565C0")
-
-    _style_ax(ax); _scale_bar(ax)
-    head = title.strip() if title.strip() else (
-        f"Forest Area: {area_ha:.3f} ha" if area_ha else "Forest Boundary Map")
-    ax.set_title(head, fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-
-    if handles:
-        _add_legend(ax, handles, legend_title=legend_title, pos=legend_pos)
-    _north_arrow(ax, pos=north_pos)
-
-    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
-    plt.close(fig)
-    gc.collect()
-
-def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
-                  per_group_summaries=None, title="", legend_title="Slope Classes",
-                  legend_pos=None, north_pos=None):
-    cc={1:"#2e8b57", 2:"#ffd700", 3:"#ef4444"}
-    cl={1:"0-19 degree", 2:"19-31 degree", 3:">31 degree"}
-    hg=f_mode in ("B","E") and per_group_summaries and len(per_group_summaries)>1
-    nr=len(summary_rows); tr=max(0.20,min(0.48,0.06+nr*0.025))
-    fig=plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI, facecolor="white")
-    gs=gridspec.GridSpec(2,1,height_ratios=[1,tr],hspace=0.20,left=0.08,right=0.96,top=0.97,bottom=0.08)
-    ax1=fig.add_subplot(gs[0]); ax2=fig.add_subplot(gs[1])
-    handles = []
-
-    if vec_gdf is not None and not vec_gdf.empty and "Class" in vec_gdf.columns:
-        for cid,color in cc.items():
-            sub=vec_gdf[vec_gdf["Class"]==cid]
-            if not sub.empty:
-                sub.plot(ax=ax1, facecolor=color, edgecolor="#2c2c2c", linewidth=0.4, alpha=0.92, zorder=3)
-                handles.append(mpatches.Patch(facecolor=color, edgecolor="#2c2c2c", label=cl[cid]))
-    if bgdf is not None and not bgdf.empty:
-        try: bgdf.boundary.plot(ax=ax1, color="black", linewidth=1.8, zorder=5)
-        except: pass
-    if hg and bgdf is not None and not bgdf.empty:
-        group_col = next((c for c in bgdf.columns if c.lower()!="geometry"), None)
-        if group_col:
-            _label_feat(ax1, bgdf, group_col)
-
-    _style_ax(ax1); _scale_bar(ax1)
-    mt=title.strip() if title.strip() else "Slope Classification Map"
-    if hg: mt+=f" — {len(per_group_summaries)} Groups"
-    ax1.set_title(mt, fontsize=11, fontweight="bold", pad=7)
-    ax2.axis("off"); ax2.set_title("Slope Area Summary", fontsize=9, fontweight="bold", pad=4)
-
-    if handles:
-        _add_legend(ax1, handles, legend_title=legend_title, pos=legend_pos)
-    _north_arrow(ax1, pos=north_pos)
-
-    if not summary_rows:
-        fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
-        plt.close(fig)
-        gc.collect()
-        return
-
-    hr=any(r.get("Recal_ha") is not None for r in summary_rows)
-    if f_mode=="A":
-        th=sum(r["Area_ha"] for r in summary_rows)
-        cols=["Slope Range","Description","Area (ha)","% of Total"]
-        if hr: cols+=["Recal. (ha)","Factor"]
-        td=[]
-        for r in summary_rows:
-            rw=[r["Slope_Range"],r["Description"],f"{r['Area_ha']:.2f}",f"{r['Pct_Area']:.1f}%"]
-            if hr: rw+=[f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—","" if not r.get("Cal_Factor") else f"{r['Cal_Factor']:.4f}"]
-            td.append(rw)
-        tr2=["TOTAL","",f"{th:.2f}","100%"]
-        if hr: tr2+=[f"{sum(r['Recal_ha'] for r in summary_rows if r.get('Recal_ha')):.2f}",""]
-        td.append(tr2); rcm={i:summary_rows[i].get("Class",0) for i in range(len(summary_rows))}
-    else:
-        cols=["Group","Slope Range","Description","Area (ha)","% of Total"]
-        if hr: cols+=["Recal. (ha)"]
-        td=[]; rcm={}; ri=0
-        if per_group_summaries:
-            for lb,grs in per_group_summaries.items():
-                for r in grs:
-                    rw=[str(lb),r["Slope_Range"],r["Description"],f"{r['Area_ha']:.2f}",f"{r['Pct_Area']:.1f}%"]
-                    if hr: rw+=[f"{r['Recal_ha']:.2f}" if r.get("Recal_ha") else "—"]
-                    td.append(rw); rcm[ri]=r.get("Class",0); ri+=1
-                gt=sum(r["Area_ha"] for r in grs)
-                sr=[f"  ↳ {lb} Total","","",f"{gt:.2f}",""]
-                if hr: sr+=[f"{sum(r['Recal_ha'] for r in grs if r.get('Recal_ha')):.2f}"]
-                td.append(sr); rcm[ri]=-1; ri+=1
-    if td:
-        tbl=ax2.table(cellText=td,colLabels=cols,cellLoc="center",loc="center",bbox=[0,0,1,1])
-        tbl.auto_set_font_size(False); tbl.set_fontsize(6.5 if hg else 8.5)
-        tbl.auto_set_column_width(list(range(len(cols))))
-        rc={1:"#d5f5e3",2:"#c8f7c5",3:"#fef9e7",4:"#fadbd8",0:"#f8f9fa",-1:"#ddeeff"}
-        for (r2,c2),cell in tbl.get_celld().items():
-            cell.set_edgecolor("#ccc")
-            if r2==0: cell.set_facecolor("#1a5276"); cell.set_text_props(color="white",fontweight="bold")
-            else:
-                cid2=rcm.get(r2-1,0)
-                cell.set_facecolor(rc.get(cid2,"#f8f9fa"))
-                if cid2==-1 or (cid2==0 and r2-1>=len(summary_rows)): cell.set_text_props(fontweight="bold")
-
-    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
-    plt.close(fig)
-    gc.collect()
-
-def _kml_pm(gdf,sid,nc=None):
-    lines=[]
-    for i,row in gdf.iterrows():
-        g=row.geometry
-        if g is None or g.is_empty: continue
-        if nc and nc in row.index and row[nc]: label=str(row[nc])
-        elif "Comp_ID" in row.index and row["Comp_ID"]: label=str(row["Comp_ID"])
-        elif "Forest" in row.index and row["Forest"]: label=str(row["Forest"])
-        else: label=f"Feature {i+1}"
-        def cs(c): return " ".join(f"{x},{y},0" for x,y in c)
-        def pk(geom):
-            o=cs(list(geom.exterior.coords))
-            r=[f"<outerBoundaryIs><LinearRing><coordinates>{o}</coordinates></LinearRing></outerBoundaryIs>"]
-            for interior in geom.interiors:
-                inn=cs(list(interior.coords)); r.append(f"<innerBoundaryIs><LinearRing><coordinates>{inn}</coordinates></LinearRing></innerBoundaryIs>")
-            return f"<Polygon>{''.join(r)}</Polygon>"
-        if g.geom_type=="Polygon": gk=pk(g)
-        elif g.geom_type=="MultiPolygon": gk=f"<MultiGeometry>{''.join(pk(x) for x in g.geoms)}</MultiGeometry>"
-        elif g.geom_type=="LineString": gk=f"<LineString><coordinates>{cs(list(g.coords))}</coordinates></LineString>"
-        elif g.geom_type=="Point": gk=f"<Point><coordinates>{g.x},{g.y},0</coordinates></Point>"
-        else: continue
-        lines.append(f"<Placemark><name>{label}</name><styleUrl>#{sid}</styleUrl>{gk}</Placemark>")
-    return "\n".join(lines)
-
-def generate_kmz(poly_gdf,line_gdf,pts_gdf,out_dir,run_id):
-    import zipfile as zf
-    def w84(gdf):
-        if gdf is None or gdf.empty: return None
-        try: return gdf.to_crs("EPSG:4326") if gdf.crs else None
-        except: return None
-    pw=w84(poly_gdf); lw=w84(line_gdf); ptw=w84(pts_gdf)
-    ref=pw if pw is not None and not pw.empty else lw
-    if ref is not None and not ref.empty:
-        u=ref.unary_union; cx,cy=u.centroid.x,u.centroid.y
-        minx,miny,maxx,maxy=u.bounds; span=max(maxx-minx,maxy-miny)
-        alt=max(500,int(span*111000*2))
-    else: cx,cy,alt=0,0,10000
-    st="""<Style id="poly_style"><LineStyle><color>ff00ff00</color><width>2</width></LineStyle><PolyStyle><color>4400cc00</color></PolyStyle></Style>
-<Style id="line_style"><LineStyle><color>ff0000ff</color><width>2</width></LineStyle></Style>
-<Style id="point_style"><IconStyle><color>ff0000ff</color><scale>0.8</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>"""
-    folders=[]
-    if pw is not None and not pw.empty: folders.append(f"<Folder><name>Polygons</name>{_kml_pm(pw,'poly_style','Forest')}</Folder>")
-    if lw is not None and not lw.empty: folders.append(f"<Folder><name>Lines</name>{_kml_pm(lw,'line_style','Forest')}</Folder>")
-    if ptw is not None and not ptw.empty: folders.append(f"<Folder><name>Points</name>{_kml_pm(ptw,'point_style','SN')}</Folder>")
-    kml=f"""<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Elfak GIS</name>
-<LookAt><longitude>{cx}</longitude><latitude>{cy}</latitude><altitude>0</altitude><range>{alt}</range><tilt>0</tilt><heading>0</heading></LookAt>
-{st}{"".join(folders)}</Document></kml>"""
-    kmz=os.path.join(out_dir,"output.kmz")
-    with zf.ZipFile(kmz,"w",zf.ZIP_DEFLATED) as z: z.writestr("doc.kml",kml.encode("utf-8"))
-    return {"url":f"/outputs/{run_id}/output.kmz","lat":round(cy,6),"lon":round(cx,6),"alt":alt}
+# ----------------------------------------------------------------------
+# GROUP G – SURVEY POINT GENERATOR
+# ----------------------------------------------------------------------
 
 def _g_read_shp(file_storage, target_shp=None):
     fname = file_storage.filename.lower()
@@ -2129,71 +2155,18 @@ def _g_export(records, epsg, out_dir, prefix="ForestPoints"):
     shp_gdf = shp_gdf_valid
     return df, shp_gdf
 
-def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=None,
-               legend_pos=None, north_pos=None):
-    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=DPI)
-    fig.patch.set_facecolor("white"); ax.set_facecolor("white")
-    handles = []
+def _g_preview(shp_gdf, poly_gdf, path, safe_rect, layout_state=None):
+    render_map(path, poly_gdf=poly_gdf, pts_gdf=shp_gdf,
+               point_label_col="Point_ID",
+               safe_rect=safe_rect, layout_state=layout_state,
+               title="Forest Survey Points")
 
-    if poly_gdf is not None and not poly_gdf.empty:
-        try:
-            outer = poly_gdf.unary_union
-            gpd.GeoDataFrame([{"geometry": outer}], crs=poly_gdf.crs).plot(
-                ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=2.2, zorder=4)
-        except: pass
-        poly_gdf.plot(ax=ax, facecolor="none", edgecolor="#1565C0", linewidth=1.5, zorder=3)
-        handles.append(mpatches.Patch(facecolor="none", edgecolor="#1565C0",
-                                      linewidth=2.0, label="Forest Boundary"))
-
-    if shp_gdf is not None and not shp_gdf.empty:
-        shp_gdf.plot(ax=ax, color="red", markersize=14, zorder=8, marker="o")
-        handles.append(mpatches.Patch(facecolor="red", edgecolor="red", label="Sample Plots"))
-        if "Point_ID" in shp_gdf.columns:
-            for _, row in shp_gdf.iterrows():
-                try:
-                    num = row["Point_ID"].lstrip("P").lstrip("0") or "0"
-                    ax.annotate(num,
-                                xy=(row.geometry.x, row.geometry.y),
-                                xytext=(4, 5), textcoords="offset points",
-                                ha="left", va="bottom", fontsize=5.0,
-                                fontweight="bold", color="black",
-                                path_effects=[pe.Stroke(linewidth=1.6, foreground="white"),
-                                              pe.Normal()], zorder=9)
-                except: pass
-
-    if poly_gdf is not None and not poly_gdf.empty:
-        id_col = next((c for c in ("Comp_ID","Comp_No","Compartment","comp") if c in poly_gdf.columns), None)
-        if id_col:
-            _label_feat(ax, poly_gdf, id_col, fs=8.5, color="#1565C0")
-
-    ha_txt = f"Area = {area_ha:.3f}.ha" if area_ha else ""
-    if ha_txt:
-        handles.append(mpatches.Patch(facecolor="none", edgecolor="none", label=ha_txt))
-
-    _style_ax(ax); _scale_bar(ax)
-    ax.set_title(title.strip() or "Forest Survey Points",
-                 fontsize=12, fontweight="bold", color="#0d1f17", pad=10)
-    fig.subplots_adjust(left=0.08, right=0.96, top=0.97, bottom=0.08)
-
-    if handles:
-        _add_legend(ax, handles, legend_title="Legend", pos=legend_pos)
-    _north_arrow(ax, pos=north_pos)
-
-    fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
-    plt.close(fig)
-    gc.collect()
-
-# Helper to extract shapefile basename from ZIP without extracting to disk (in-memory)
 def _extract_shapefile_basename_from_zip(file_storage, target_shp=None):
-    """Read a ZIP in memory and return the basename (without extension) of the first .shp
-    or the one matching target_shp. Raises ValueError if no .shp is found."""
     import io, zipfile
     zip_bytes = file_storage.read()
     if len(zip_bytes) < 100:
         raise ValueError("ZIP file is empty or too small.")
-    # Reset stream so the same FileStorage can be used later
     file_storage.seek(0)
-
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         namelist = zf.namelist()
         shps = [n for n in namelist if n.lower().endswith('.shp')]
@@ -2260,19 +2233,440 @@ def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, tar
     }
     return df, shp_gdf, gdf, summary
 
-# ─── ROUTES ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+# GROUP H – SAMPLE POINT BASED GIS MAPS
+# ----------------------------------------------------------------------
+
+def _validate_zip_components(zip_path, required=[".shp", ".dbf", ".shx", ".prj"]):
+    with zipfile.ZipFile(zip_path, 'r') as z:
+        names = z.namelist()
+        missing = [ext for ext in required if not any(n.endswith(ext) for n in names)]
+        if missing:
+            raise ValueError(f"ZIP missing required components: {', '.join(missing)}")
+    return True
+
+def _extract_shp(zip_path, target_crs=None):
+    _validate_zip_components(zip_path)
+    tmp = tempfile.mkdtemp()
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as z:
+            z.extractall(tmp)
+        shp_files = [os.path.join(tmp, f) for f in os.listdir(tmp) if f.endswith('.shp')]
+        if not shp_files:
+            raise ValueError("No .shp file found in ZIP.")
+        gdf = gpd.read_file(shp_files[0])
+        if gdf.crs is None:
+            raise ValueError("Shapefile has no CRS. Please assign one.")
+        if target_crs is not None and str(gdf.crs) != target_crs:
+            gdf = gdf.to_crs(target_crs)
+        gdf.geometry = gdf.geometry.buffer(0)
+        gdf = gdf[~gdf.geometry.is_empty]
+        return gdf
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def _read_points(file_path, crs):
+    if file_path.endswith('.zip'):
+        gdf = _extract_shp(file_path, target_crs=crs)
+        if not all(gdf.geom_type.isin(['Point', 'MultiPoint'])):
+            raise ValueError("Shapefile must contain Point geometries.")
+        return gdf
+    else:
+        df = pd.read_excel(file_path)
+        if 'Latitude' in df.columns and 'Longitude' in df.columns:
+            gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.Longitude, df.Latitude), crs="EPSG:4326")
+            gdf = gdf.to_crs(crs)
+        elif 'Easting' in df.columns and 'Northing' in df.columns:
+            gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.Easting, df.Northing), crs=crs)
+        else:
+            raise ValueError("Excel must contain 'Latitude/Longitude' or 'Easting/Northing' columns.")
+        if 'Point_ID' not in df.columns:
+            raise ValueError("Excel must contain 'Point_ID' column.")
+        if df['Point_ID'].duplicated().any():
+            raise ValueError("Duplicate Point_ID values found.")
+        if gdf.geometry.is_empty.any():
+            raise ValueError("Some points have empty geometry (NaN coordinates).")
+        return gdf
+
+def _clip_to_boundary(gdf, boundary_gdf):
+    if gdf.geom_type.iloc[0] in ['Point', 'MultiPoint']:
+        boundary_union = boundary_gdf.unary_union
+        gdf = gdf[gdf.geometry.within(boundary_union)]
+    else:
+        gdf = gpd.overlay(gdf, boundary_gdf, how='intersection')
+    return gdf
+
+def _compute_slope_raster(dem_path, boundary_gdf, out_dir):
+    import scipy.ndimage as ndi
+    with rasterio.open(dem_path) as src:
+        out_image, out_transform = rio_mask(src, boundary_gdf.geometry, crop=True)
+        dem = out_image[0].astype(np.float32)
+        nodata = src.nodata or -9999
+        dem[dem == nodata] = np.nan
+        rx = abs(out_transform[0])
+        ry = abs(out_transform[4])
+        valid = ~np.isnan(dem)
+        if not valid.any():
+            raise ValueError("No valid DEM data inside boundary.")
+        if (~valid).any():
+            ind = ndi.distance_transform_edt(~valid, return_distances=False, return_indices=True)
+            filled = dem[tuple(ind)]
+        else:
+            filled = dem
+        dzdx = ndi.sobel(filled, axis=1) / (8.0 * rx)
+        dzdy = ndi.sobel(filled, axis=0) / (8.0 * ry)
+        slope = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2)))
+        classes = np.zeros_like(slope, dtype=np.uint8)
+        classes[(slope < 19) & ~np.isnan(slope)] = 1
+        classes[(slope >= 19) & (slope <= 31) & ~np.isnan(slope)] = 2
+        classes[(slope > 31) & ~np.isnan(slope)] = 3
+        out_meta = src.meta.copy()
+        out_meta.update({
+            "height": classes.shape[0],
+            "width": classes.shape[1],
+            "transform": out_transform,
+            "dtype": "uint8",
+            "nodata": 0
+        })
+        out_path = os.path.join(out_dir, "slope_classified.tif")
+        with rasterio.open(out_path, "w", **out_meta) as dst:
+            dst.write(classes, 1)
+    return out_path
+
+def _raster_to_polygons(raster_path, value_map=None):
+    from rasterio.features import shapes
+    from shapely.geometry import shape
+    with rasterio.open(raster_path) as src:
+        image = src.read(1)
+        transform = src.transform
+        results = []
+        for geom, val in shapes(image, transform=transform, connectivity=8):
+            if val == 0:
+                continue
+            results.append({
+                "class": int(val),
+                "geometry": shape(geom)
+            })
+    gdf = gpd.GeoDataFrame(results, crs=src.crs)
+    gdf = gdf[gdf.geometry.area > 1e-6]
+    return gdf
+
+def _draw_slope_table_compact(ax, slope_areas):
+    table_data = []
+    for cls, info in SLOPE_CLASSES.items():
+        area = slope_areas.get(info['range'], 0)
+        table_data.append([info['range'], f"{area:.2f} ha"])
+    total = sum(slope_areas.values())
+    table_data.append(["Total", f"{total:.2f} ha"])
+    table = ax.table(cellText=table_data, colLabels=["Slope", "Area"],
+                     loc='lower left', bbox=[0.02, 0.02, 0.3, 0.15],
+                     cellLoc='center', colWidths=[0.15, 0.10])
+    table.auto_set_font_size(False)
+    table.set_fontsize(7)
+    for (row, col), cell in table.get_celld().items():
+        if row == 0:
+            cell.set_text_props(weight='bold', color='white')
+            cell.set_facecolor('#1a5276')
+        else:
+            cell.set_facecolor('#f8f9fa')
+
+def process_group_h(boundary_zip, compartments_zip, dem_file, satellite_file,
+                    sample_points_file, survey_points_file=None,
+                    crs="EPSG:32644", out_dir=None, run_id=None):
+    if out_dir is None:
+        out_dir = os.path.join(OUTPUT, run_id or str(uuid.uuid4()))
+    os.makedirs(out_dir, exist_ok=True)
+
+    _prog(run_id, "Loading boundary...", 10)
+    boundary_gdf = _extract_shp(boundary_zip, target_crs=crs)
+    if len(boundary_gdf) != 1:
+        raise ValueError("Boundary must contain exactly one polygon.")
+    if boundary_gdf.geom_type.iloc[0] not in ['Polygon', 'MultiPolygon']:
+        raise ValueError("Boundary must be a polygon.")
+    boundary_gdf = boundary_gdf.buffer(0)
+    boundary_gdf = boundary_gdf[~boundary_gdf.is_empty]
+
+    _prog(run_id, "Loading compartments...", 15)
+    compartments_gdf = _extract_shp(compartments_zip, target_crs=crs)
+    compartments_gdf = _clip_to_boundary(compartments_gdf, boundary_gdf)
+    if compartments_gdf.empty:
+        raise ValueError("No compartments inside boundary after clipping.")
+    if 'Comp_ID' not in compartments_gdf.columns:
+        compartments_gdf['Comp_ID'] = [f"C{i+1:03d}" for i in range(len(compartments_gdf))]
+
+    _prog(run_id, "Processing DEM...", 25)
+    with rasterio.open(dem_file) as src:
+        dem_bounds = box(*src.bounds)
+    boundary_bounds = boundary_gdf.unary_union.bounds
+    if not dem_bounds.intersects(box(*boundary_bounds)):
+        raise ValueError("DEM does not overlap the boundary.")
+    slope_raster = _compute_slope_raster(dem_file, boundary_gdf, out_dir)
+    slope_poly = _raster_to_polygons(slope_raster)
+    slope_poly = _clip_to_boundary(slope_poly, boundary_gdf)
+    slope_areas = {}
+    for cls, info in SLOPE_CLASSES.items():
+        sub = slope_poly[slope_poly['class'] == cls]
+        slope_areas[info['range']] = sub.geometry.area.sum() / 10000
+
+    _prog(run_id, "Processing satellite image...", 35)
+    sat_clip_path = os.path.join(out_dir, "satellite_clipped.tif")
+    with rasterio.open(satellite_file) as src:
+        out_image, out_transform = rio_mask(src, boundary_gdf.geometry, crop=True)
+        out_meta = src.meta.copy()
+        out_meta.update({
+            "height": out_image.shape[1],
+            "width": out_image.shape[2],
+            "transform": out_transform
+        })
+        with rasterio.open(sat_clip_path, "w", **out_meta) as dst:
+            dst.write(out_image)
+
+    _prog(run_id, "Loading sample points...", 45)
+    sample_gdf = _read_points(sample_points_file, crs)
+    sample_gdf = _clip_to_boundary(sample_gdf, boundary_gdf)
+    if sample_gdf.empty:
+        raise ValueError("No sample points inside boundary after clipping.")
+
+    _prog(run_id, "Loading survey points...", 50)
+    if survey_points_file:
+        survey_gdf = _read_points(survey_points_file, crs)
+        survey_gdf = _clip_to_boundary(survey_gdf, boundary_gdf)
+    else:
+        survey_gdf = None
+
+    _prog(run_id, "Generating maps...", 55)
+
+    def create_figure():
+        fig = plt.figure(figsize=(10, 7.5), dpi=DPI)
+        fig.patch.set_facecolor('white')
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('white')
+        ax.set_aspect('equal')
+        return fig, ax
+
+    # Map 1: Slope Map
+    fig1, ax1 = create_figure()
+    for cls, info in SLOPE_CLASSES.items():
+        sub = slope_poly[slope_poly['class'] == cls]
+        if not sub.empty:
+            sub.plot(ax=ax1, facecolor=info['color'], edgecolor='black', linewidth=0.2, label=info['range'])
+    boundary_gdf.boundary.plot(ax=ax1, color='black', linewidth=2)
+    compartments_gdf.plot(ax=ax1, facecolor='none', edgecolor='gray', linewidth=0.5)
+    for _, row in compartments_gdf.iterrows():
+        ax1.annotate(row['Comp_ID'], xy=(row.geometry.centroid.x, row.geometry.centroid.y),
+                     ha='center', va='center', fontsize=6, color='black')
+    handles = [mpatches.Patch(facecolor=info['color'], label=info['range']) for cls, info in SLOPE_CLASSES.items()]
+    _add_north_arrow(fig1)
+    _add_scale_bar(fig1)
+    _draw_slope_table_compact(ax1, slope_areas)
+    ax1.set_title("Slope Map", fontsize=14, weight='bold')
+    fig1.savefig(os.path.join(out_dir, "Slope_Map.png"), dpi=DPI, bbox_inches='tight')
+    fig1.savefig(os.path.join(out_dir, "Slope_Map.pdf"), bbox_inches='tight')
+    fig1.savefig(os.path.join(out_dir, "Slope_Map.svg"), bbox_inches='tight')
+    plt.close(fig1)
+    _prog(run_id, "Slope Map generated.", 60)
+
+    # Map 2: Satellite Map
+    fig2, ax2 = create_figure()
+    with rasterio.open(sat_clip_path) as src:
+        show(src, ax=ax2, title='')
+    boundary_gdf.boundary.plot(ax=ax2, color='yellow', linewidth=2)
+    compartments_gdf.plot(ax=ax2, facecolor='none', edgecolor='white', linewidth=0.5)
+    for _, row in compartments_gdf.iterrows():
+        ax2.annotate(row['Comp_ID'], xy=(row.geometry.centroid.x, row.geometry.centroid.y),
+                     ha='center', va='center', fontsize=6, color='white')
+    _add_north_arrow(fig2)
+    _add_scale_bar(fig2)
+    ax2.set_title("Satellite Map", fontsize=14, weight='bold')
+    fig2.savefig(os.path.join(out_dir, "Satellite_Map.png"), dpi=DPI, bbox_inches='tight')
+    fig2.savefig(os.path.join(out_dir, "Satellite_Map.pdf"), bbox_inches='tight')
+    fig2.savefig(os.path.join(out_dir, "Satellite_Map.svg"), bbox_inches='tight')
+    plt.close(fig2)
+    _prog(run_id, "Satellite Map generated.", 68)
+
+    # Map 3: Sub-compartment Map
+    fig3, ax3 = create_figure()
+    import random
+    random.seed(42)
+    comps = compartments_gdf.copy()
+    comps['color'] = ["#" + ''.join(random.choices('0123456789ABCDEF', k=6)) for _ in range(len(comps))]
+    comps.plot(ax=ax3, facecolor=comps['color'], edgecolor='black', linewidth=0.5)
+    boundary_gdf.boundary.plot(ax=ax3, color='black', linewidth=2)
+    for _, row in comps.iterrows():
+        area_ha = row.geometry.area / 10000
+        ax3.annotate(f"{row['Comp_ID']}\n{area_ha:.1f}ha",
+                     xy=(row.geometry.centroid.x, row.geometry.centroid.y),
+                     ha='center', va='center', fontsize=6, color='black')
+    handles = [mpatches.Patch(facecolor=row['color'], label=row['Comp_ID']) for _, row in comps.iterrows()]
+    _add_north_arrow(fig3)
+    _add_scale_bar(fig3)
+    ax3.legend(handles=handles, title="Compartments", loc='lower right')
+    ax3.set_title("Sub-compartment Map", fontsize=14, weight='bold')
+    fig3.savefig(os.path.join(out_dir, "SubCompartment_Map.png"), dpi=DPI, bbox_inches='tight')
+    fig3.savefig(os.path.join(out_dir, "SubCompartment_Map.pdf"), bbox_inches='tight')
+    fig3.savefig(os.path.join(out_dir, "SubCompartment_Map.svg"), bbox_inches='tight')
+    plt.close(fig3)
+    _prog(run_id, "Sub-compartment Map generated.", 76)
+
+    # Map 4: Sample Plot Map
+    fig4, ax4 = create_figure()
+    boundary_gdf.boundary.plot(ax=ax4, color='black', linewidth=2)
+    compartments_gdf.plot(ax=ax4, facecolor='none', edgecolor='gray', linewidth=0.5)
+    sample_gdf.plot(ax=ax4, color='red', markersize=30, marker='o')
+    for _, row in sample_gdf.iterrows():
+        ax4.annotate(row['Point_ID'], xy=(row.geometry.x, row.geometry.y),
+                     xytext=(5, 5), textcoords='offset points', fontsize=6, color='red')
+    _add_north_arrow(fig4)
+    _add_scale_bar(fig4)
+    handles = [mpatches.Patch(facecolor='red', label='Sample Plots')]
+    ax4.legend(handles=handles, loc='lower right')
+    ax4.set_title("Sample Plot Map", fontsize=14, weight='bold')
+    fig4.savefig(os.path.join(out_dir, "SamplePlot_Map.png"), dpi=DPI, bbox_inches='tight')
+    fig4.savefig(os.path.join(out_dir, "SamplePlot_Map.pdf"), bbox_inches='tight')
+    fig4.savefig(os.path.join(out_dir, "SamplePlot_Map.svg"), bbox_inches='tight')
+    plt.close(fig4)
+    _prog(run_id, "Sample Plot Map generated.", 84)
+
+    # Map 5: Boundary Survey Point Map
+    fig5, ax5 = create_figure()
+    boundary_gdf.boundary.plot(ax=ax5, color='black', linewidth=2)
+    compartments_gdf.plot(ax=ax5, facecolor='none', edgecolor='gray', linewidth=0.5)
+    if survey_gdf is not None:
+        survey_gdf.plot(ax=ax5, color='blue', markersize=20, marker='^')
+        for _, row in survey_gdf.iterrows():
+            ax5.annotate(row['Point_ID'], xy=(row.geometry.x, row.geometry.y),
+                         xytext=(5, 5), textcoords='offset points', fontsize=6, color='blue')
+    _add_north_arrow(fig5)
+    _add_scale_bar(fig5)
+    handles = [mpatches.Patch(facecolor='blue', label='Survey Points')]
+    ax5.legend(handles=handles, loc='lower right')
+    ax5.set_title("Boundary Survey Point Map", fontsize=14, weight='bold')
+    fig5.savefig(os.path.join(out_dir, "BoundarySurveyPoint_Map.png"), dpi=DPI, bbox_inches='tight')
+    fig5.savefig(os.path.join(out_dir, "BoundarySurveyPoint_Map.pdf"), bbox_inches='tight')
+    fig5.savefig(os.path.join(out_dir, "BoundarySurveyPoint_Map.svg"), bbox_inches='tight')
+    plt.close(fig5)
+    _prog(run_id, "Boundary Survey Point Map generated.", 92)
+
+    # Map 6: Survey Point Map (no compartments)
+    fig6, ax6 = create_figure()
+    boundary_gdf.boundary.plot(ax=ax6, color='black', linewidth=2)
+    if survey_gdf is not None:
+        survey_gdf.plot(ax=ax6, color='blue', markersize=20, marker='^')
+        for _, row in survey_gdf.iterrows():
+            ax6.annotate(row['Point_ID'], xy=(row.geometry.x, row.geometry.y),
+                         xytext=(5, 5), textcoords='offset points', fontsize=6, color='blue')
+    _add_north_arrow(fig6)
+    _add_scale_bar(fig6)
+    handles = [mpatches.Patch(facecolor='blue', label='Survey Points')]
+    ax6.legend(handles=handles, loc='lower right')
+    ax6.set_title("Survey Point Map", fontsize=14, weight='bold')
+    fig6.savefig(os.path.join(out_dir, "SurveyPoint_Map.png"), dpi=DPI, bbox_inches='tight')
+    fig6.savefig(os.path.join(out_dir, "SurveyPoint_Map.pdf"), bbox_inches='tight')
+    fig6.savefig(os.path.join(out_dir, "SurveyPoint_Map.svg"), bbox_inches='tight')
+    plt.close(fig6)
+    _prog(run_id, "Survey Point Map generated.", 98)
+
+    zip_path = os.path.join(out_dir, "GroupH_Maps.zip")
+    with zipfile.ZipFile(zip_path, 'w') as z:
+        for fname in os.listdir(out_dir):
+            if fname.endswith(('.png', '.pdf', '.svg')):
+                z.write(os.path.join(out_dir, fname), fname)
+
+    _prog(run_id, "All maps generated and packaged.", 100)
+    return zip_path, out_dir
+
+# ----------------------------------------------------------------------
+# ROUTES
+# ----------------------------------------------------------------------
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+@app.route("/login", methods=["POST"])
+@_rate_limit(limit=20, window=60)
+def login():
+    data = request.get_json(silent=True) or {}
+    try:
+        username = _validate_username(data.get("username", ""))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    users = _lu()
+    is_new = username not in users
+
+    if is_new:
+        try:
+            user, _tok = _register_user(username)
+        except ValueError as e:
+            return jsonify({"error": str(e), "taken": True}), 409
+        except Exception as e:
+            log.error(f"Registration error {username!r}: {e}")
+            return jsonify({"error": "Registration failed. Please try again."}), 500
+    else:
+        try:
+            user = _login_existing(username)
+        except KeyError:
+            try:
+                user, _tok = _register_user(username)
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+        except Exception as e:
+            log.error(f"Login error {username!r}: {e}")
+            return jsonify({"error": "Login failed. Please try again."}), 500
+
+    session["username"] = username
+    session.permanent = True
+    ip = _get_client_ip()
+    log.info(f"{'Register' if is_new else 'Login'}: {username!r} from {ip}")
+
+    return jsonify({
+        "ok": True,
+        "username": username,
+        "runs": user.get("runs", [])[-20:],
+        "is_new": is_new,
+        "message": "Welcome!" if is_new else f"Welcome back, {username}!"
+    })
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    username = session.get("username")
+    _logout_user(username)
+    session.clear()
+    if username:
+        log.info(f"Logout: {username!r} from {_get_client_ip()}")
+    return jsonify({"ok": True})
+
+@app.route("/me")
+@_rate_limit(limit=60, window=60)
+@_login_required
+def me():
+    u = _require_login()
+    users = _lu()
+    user = users.get(u, {})
+    return jsonify({"username": u, "runs": user.get("runs", [])[-20:]})
+
+@app.route("/history")
+@_rate_limit(limit=30, window=60)
+@_login_required
+def history():
+    u = _require_login()
+    users = _lu()
+    user = users.get(u, {})
+    return jsonify({"runs": user.get("runs", [])})
 
 @app.route("/progress/<run_id>")
 @_rate_limit(limit=120, window=60)
 def progress_stream(run_id):
-    try: run_id = _safe_runid(run_id)
-    except: pass
+    try:
+        run_id = _safe_runid(run_id)
+    except:
+        pass
     def gen():
         sent = 0
         last_heartbeat = time.time()
         while True:
-            with _PROG_LOCK:
-                msgs = list(_PROG.get(run_id, []))
+            msgs = _PROG.get(run_id, [])
             new = msgs[sent:]
             if new:
                 for m in new:
@@ -2343,15 +2737,9 @@ def compose_map(run_id):
         return jsonify({"error": "Run not found"}), 404
     try:
         data = request.get_json(silent=True) or {}
-        title = data.get("title", "")
-        lt = data.get("legend_title", "Legend")
-        lc = data.get("label_col", "")
-        legend_pos = data.get("legend_pos")
-        north_pos = data.get("north_pos")
-        if legend_pos and isinstance(legend_pos, list) and len(legend_pos) == 2:
-            legend_pos = tuple(legend_pos)
-        if north_pos and isinstance(north_pos, list) and len(north_pos) == 2:
-            north_pos = tuple(north_pos)
+        layout_state = data.get("layout_state")
+        if not layout_state:
+            layout_state = get_default_layout_state()
 
         shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
                 for f in fs if f.endswith("_polygon.shp")]
@@ -2368,16 +2756,22 @@ def compose_map(run_id):
         if not gdfs:
             return jsonify({"error": "Could not read shapefiles."}), 400
         pg = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=crs0)
+
+        bounds = pg.total_bounds
+        if bounds is not None and len(bounds) == 4:
+            w = bounds[2] - bounds[0]
+            h = bounds[3] - bounds[1]
+            poly_aspect = w / h if h > 0 else 1.0
+        else:
+            poly_aspect = 1.0
+
+        safe_rect = compute_safe_rect(layout_state, poly_aspect)
         pp = os.path.join(folder, "output.png")
         if "Comp_ID" in pg.columns:
-            preview_compartments(pg, pp, title=title, legend_title=lt,
-                                 label_col=lc or "Comp_ID",
-                                 legend_pos=legend_pos, north_pos=north_pos)
+            render_map(pp, poly_gdf=pg, label_col="Comp_ID",
+                       safe_rect=safe_rect, layout_state=layout_state)
         else:
-            ah = float(pg["Area_ha"].sum()) if "Area_ha" in pg.columns else None
-            preview(pg, None, None, pp, title=title, legend_title=lt,
-                    area_ha=ah, user_label_col=lc or None,
-                    legend_pos=legend_pos, north_pos=north_pos)
+            render_map(pp, poly_gdf=pg, safe_rect=safe_rect, layout_state=layout_state)
         return jsonify({"ok": True, "png": f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
     except Exception as e:
         return jsonify({"error": f"Compose error: {e}"}), 500
@@ -2411,309 +2805,62 @@ def save_edit(run_id):
         if "Area_ha" not in gdf_new.columns:
             gdf_new["Area_ha"] = [round(g.area/10000, 4) if g else 0 for g in gdf_new.geometry]
         gdf_new.to_file(os.path.join(folder, "edited_polygon.shp"))
-        pp = os.path.join(folder, "output.png")
-        title = data.get("title", "Edited Map")
-        lt = data.get("legend_title", "Legend")
-        if "Comp_ID" in gdf_new.columns:
-            preview_compartments(gdf_new, pp, title=title, legend_title=lt)
+
+        layout_state = data.get("layout_state", get_default_layout_state())
+        bounds = gdf_new.total_bounds
+        if bounds is not None and len(bounds) == 4:
+            w = bounds[2] - bounds[0]
+            h = bounds[3] - bounds[1]
+            poly_aspect = w / h if h > 0 else 1.0
         else:
-            ah = float(gdf_new["Area_ha"].sum()) if "Area_ha" in gdf_new.columns else None
-            preview(gdf_new, None, None, pp, title=title, legend_title=lt, area_ha=ah)
-        zip_folder(folder)
+            poly_aspect = 1.0
+        safe_rect = compute_safe_rect(layout_state, poly_aspect)
+        pp = os.path.join(folder, "output.png")
+        if "Comp_ID" in gdf_new.columns:
+            render_map(pp, poly_gdf=gdf_new, label_col="Comp_ID",
+                       safe_rect=safe_rect, layout_state=layout_state)
+        else:
+            render_map(pp, poly_gdf=gdf_new, safe_rect=safe_rect, layout_state=layout_state)
         return jsonify({"ok": True, "png": f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
     except Exception as e:
         return jsonify({"error": f"Edit error: {e}\n{traceback.format_exc()}"}), 500
 
-@app.route("/login", methods=["POST"])
-@_rate_limit(limit=20, window=60)
-def login():
-    data = request.get_json(silent=True) or {}
-    try:
-        username = _validate_username(data.get("username", ""))
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+@app.route("/download/<run_id>")
+def download(run_id):
+    run_id = _safe_runid(run_id)
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(folder):
+        return jsonify({"error": "Run not found"}), 404
+    zip_path = os.path.join(folder, "..", f"{run_id}.zip")
+    shutil.make_archive(folder, "zip", folder)
+    return send_file(zip_path, as_attachment=True)
 
-    users = _lu()
-    is_new = username not in users
+@app.route("/outputs/<run_id>/<path:filename>")
+@_rate_limit(limit=120, window=60)
+def serve_output(run_id, filename):
+    folder = os.path.join(OUTPUT, run_id)
+    if not os.path.exists(os.path.join(folder, filename)):
+        return jsonify({"error": "File not found"}), 404
+    return send_from_directory(folder, filename)
 
-    if is_new:
-        try:
-            user, _tok = _register_user(username)
-        except ValueError as e:
-            return jsonify({"error": str(e), "taken": True}), 409
-        except Exception as e:
-            log.error(f"Registration error {username!r}: {e}")
-            return jsonify({"error": "Registration failed. Please try again."}), 500
-    else:
-        try:
-            user = _login_existing(username)
-        except KeyError:
-            try:
-                user, _tok = _register_user(username)
-            except Exception as e:
-                return jsonify({"error": str(e)}), 500
-        except Exception as e:
-            log.error(f"Login error {username!r}: {e}")
-            return jsonify({"error": "Login failed. Please try again."}), 500
-
-    session["username"] = username
-    session.permanent = True
-    ip = _get_client_ip()
-    log.info(f"{'Register' if is_new else 'Login'}: {username!r} from {ip}")
-
-    return jsonify({
-        "ok": True,
-        "username": username,
-        "runs": user.get("runs", [])[-20:],
-        "is_new": is_new,
-        "is_returning": not is_new,
-        "message": "Welcome!" if is_new else f"Welcome back, {username}!"
-    })
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    username = session.get("username")
-    _logout_user(username)
-    session.clear()
-    if username:
-        log.info(f"Logout: {username!r} from {_get_client_ip()}")
-    return jsonify({"ok": True})
-
-@app.route("/me")
-@_rate_limit(limit=60, window=60)
-@_login_required
-def me():
-    u = _require_login()
-    users = _lu()
-    user = users.get(u, {})
-    return jsonify({"username": u, "runs": user.get("runs", [])[-20:]})
-
-@app.route("/history")
-@_rate_limit(limit=30, window=60)
-@_login_required
-def history():
-    u = _require_login()
-    users = _lu()
-    user = users.get(u, {})
-    return jsonify({"runs": user.get("runs", [])})
-
-@app.route("/upload", methods=["POST"])
-@_rate_limit(limit=12, window=60)
-@_with_pipeline_sem
-def upload():
-    run_id = str(uuid.uuid4())
-    with _PROG_LOCK: _PROG[run_id] = []
-    try:
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded.", "run_id": run_id}), 400
-        file = request.files["file"]
-        try:
-            _safe_filename(file.filename)
-        except ValueError as e:
-            return jsonify({"error": str(e), "run_id": run_id}), 400
-        module = request.form.get("module", "A")
-        # ─── Reject ZIP for A, B, D ──────────────────────────────────────
-        if module in ("A", "B", "D") and file.filename.lower().endswith(".zip"):
-            return jsonify({"error": "ZIP files are not allowed for this module. Please upload a CSV or Excel file.", "run_id": run_id}), 400
-
-        mode = request.form.get("mode", "A")
-        zone = request.form.get("zone", "44")
-        title = request.form.get("title", "").strip()
-        legend_title = request.form.get("legend_title", "Legend").strip() or "Legend"
-        label_col = request.form.get("label_col", "").strip()
-        try:
-            mapping = json.loads(request.form.get("mapping", "{}"))
-        except:
-            mapping = {}
-        w = float(request.form.get("w", 50))
-        h = float(request.form.get("h", 50))
-        rows = int(request.form.get("rows", 10))
-        cols = int(request.form.get("cols", 10))
-        forest = request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
-        username = _require_login() or "guest"
-        out = os.path.join(OUTPUT, run_id)
-        os.makedirs(out, exist_ok=True)
-        crs = get_crs(zone)
-        _prog(run_id, f"Starting module {module}…", 2)
-        lc_out = None
-        lp_gdf = None
-        area_ha_disp = None
-
-        # ─── Determine base_name from uploaded file ────────────────────
-        base_name = os.path.splitext(os.path.basename(file.filename))[0]
-        if file.filename.lower().endswith(".zip"):
-            try:
-                base_name = _extract_shapefile_basename_from_zip(file, mapping.get("target_shp"))
-            except Exception as e:
-                log.warning(f"Could not extract shapefile basename from ZIP: {e}, using ZIP filename")
-                base_name = os.path.splitext(os.path.basename(file.filename))[0]
-
-        if module == "B":
-            _prog(run_id, "Reading…", 8)
-            df = read_input(file)
-            poly, line, pts = group_b(df, crs, out, mapping)
-            lc_out = label_col or "Forest"
-        elif module == "C":
-            _prog(run_id, "Processing…", 10)
-            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping, base_name=base_name)
-            lc_out = "SN"
-            lp_gdf = pts
-        elif module == "D":
-            _prog(run_id, "Reading…", 8)
-            df = read_input(file)
-            d_mode = request.form.get("d_mode", "A")
-            poly, line, pts = group_d(df, crs, out, mapping, mode=d_mode)
-            lc_out = label_col or "Forest"
-        elif module == "E":
-            e_mode = request.form.get("e_mode", "A")
-            nc = max(2, min(15, int(request.form.get("n_compartments", 4))))
-            at = float(request.form.get("area_tol_ha", "0.3") or "0.3")
-            method = request.form.get("e_method", "bisect")
-            is_zip = file.filename.lower().endswith(".zip")
-            fcn = request.form.get("forest_col_name") or None
-            # Use base_name as forest if not provided
-            if mapping and not mapping.get("forest"):
-                mapping["forest"] = base_name
-            _prog(run_id, "Loading input…", 8)
-            src_data = file if is_zip else read_input(file)
-            poly, line, pts = group_e(src_data, crs, out, mapping,
-                                      e_mode=e_mode, n_compartments=nc,
-                                      is_zip=is_zip, fcol=fcn,
-                                      area_tol_ha=at, method=method, run_id=run_id)
-            _prog(run_id, "Rendering preview…", 88)
-            preview_compartments(poly, os.path.join(out, "output.png"),
-                                 title=title, legend_title=legend_title,
-                                 label_col=label_col or "Comp_ID")
-            kmz_url = None
-            try:
-                kmz_url = generate_kmz(poly, line, pts, out, run_id)
-            except:
-                pass
-            _append_run(username, run_id, "E")
-            _prog(run_id, "Complete.", 100)
-            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
-        elif module == "F":
-            dem_cache_key = request.form.get("dem_cache_key", "").strip()
-            dem_catalog_path = request.form.get("dem_catalog_path", "").strip()
-
-            class _FileDEM:
-                def __init__(self, p):
-                    self.filename = os.path.basename(p)
-                    self._p = p
-                def save(self, dest):
-                    shutil.copy2(self._p, dest)
-                def read(self, size=-1):
-                    with open(self._p, "rb") as f:
-                        return f.read(size)
-
-            if dem_cache_key:
-                candidates = [f for f in os.listdir(DEM_CACHE_DIR) if f.startswith(dem_cache_key)]
-                if not candidates:
-                    return jsonify({"error": "Cached DEM not found. Please select again.", "run_id": run_id}), 400
-                dem_f = _FileDEM(os.path.join(DEM_CACHE_DIR, candidates[0]))
-            elif dem_catalog_path:
-                cat_full = _safe_path(DEM_CATALOG_DIR, dem_catalog_path)
-                if not os.path.exists(cat_full):
-                    return jsonify({"error": f"DEM catalog file not found: {dem_catalog_path}", "run_id": run_id}), 400
-                dem_f = _FileDEM(cat_full)
-            else:
-                dem_f = request.files.get("dem_file")
-                if not dem_f:
-                    return jsonify({"error": "No DEM selected. Choose from the catalog dropdown or upload a .tif file.", "run_id": run_id}), 400
-            # Use base_name as forest name if not provided
-            f_forest = request.form.get("f_forest") or base_name
-            f_mode = request.form.get("f_mode", "A")
-            cc = request.form.get("comp_col") or None
-            bzip = file.filename.lower().endswith(".zip")
-            fa = None
-            fas = request.form.get("field_area_ha", "").strip()
-            if fas:
-                try:
-                    fa = float(fas)
-                except:
-                    pass
-            sr, vgdf, bgdf, fmo, pgs = group_f(file, dem_f, crs, out, mapping,
-                                                boundary_is_zip=bzip,
-                                                forest_name=f_forest,
-                                                f_mode=f_mode,
-                                                comp_col_name=cc,
-                                                field_area_ha=fa,
-                                                run_id=run_id)
-            _prog(run_id, "Rendering preview…", 92)
-            preview_slope(vgdf, bgdf, sr, os.path.join(out, "output.png"),
-                          f_mode=fmo, per_group_summaries=pgs,
-                          title=title, legend_title=legend_title)
-            poly = vgdf if (vgdf is not None and not vgdf.empty) else gpd.GeoDataFrame()
-            line = gpd.GeoDataFrame()
-            pts = gpd.GeoDataFrame()
-            kmz_url = None
-            try:
-                kmz_url = generate_kmz(poly, line, pts, out, run_id)
-            except:
-                pass
-            _append_run(username, run_id, "F")
-            _prog(run_id, "Complete.", 100)
-            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
-        else:
-            _prog(run_id, "Reading…", 8)
-            df = read_input(file)
-            poly, line, pts = group_a(df, forest, crs, out, mapping)
-            if not poly.empty and "Area_ha" in poly.columns:
-                area_ha_disp = float(poly["Area_ha"].sum())
-            lc_out = label_col or "Forest"
-
-        # ─── Point label auto-detection ────────────────────────────────
-        point_label_col = None
-        if pts is not None and not pts.empty:
-            for cand in ["SN", "Order", "Point_ID", "ID", "point_id"]:
-                if cand in pts.columns:
-                    point_label_col = cand
-                    break
-            if point_label_col is None:
-                point_label_col = label_col or None
-
-        _prog(run_id, "Rendering preview…", 88)
-        preview(poly, line, pts, os.path.join(out, "output.png"),
-                pc="blue", lc="black", ptc="red",
-                label_col=lc_out, label_pts_gdf=lp_gdf,
-                area_ha=area_ha_disp, title=title, legend_title=legend_title,
-                user_label_col=label_col or None,
-                point_label_col=point_label_col)
-        kmz_url = None
-        try:
-            kmz_url = generate_kmz(poly, line, pts, out, run_id)
-        except:
-            pass
-        _append_run(username, run_id, module)
-        _prog(run_id, "Complete.", 100)
-        return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
-    except ValueError as e:
-        _prog(run_id, f"ERROR: {e}", 0)
-        return jsonify({"error": str(e), "run_id": run_id}), 400
-    except Exception as e:
-        _prog(run_id, f"ERROR: {e}", 0)
-        return jsonify({"error": f"Unexpected error: {e}", "run_id": run_id}), 500
+# ----------------------------------------------------------------------
+# DEM Routes
+# ----------------------------------------------------------------------
 
 @app.route("/dem_catalog")
 @_rate_limit(limit=30, window=60)
 def dem_catalog():
     import urllib.request as _ur
     import json as _json
-
     github_api_urls = []
     for zone in ("44N", "45N"):
         api_base = os.environ.get("GITHUB_API_DEM",
             "https://api.github.com/repos/1ravikafle-glitch/ElfakGISProStudio/contents/dem_catalog")
         github_api_urls.append((zone, f"{api_base}/{zone}"))
-
     files = []
     for zone, api_url in github_api_urls:
         try:
-            hdrs = {
-                "User-Agent": "elfak-gis-app",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
+            hdrs = {"User-Agent": "elfak-gis-app", "Accept": "application/vnd.github+json"}
             if GITHUB_TOKEN:
                 hdrs["Authorization"] = f"Bearer {GITHUB_TOKEN}"
             req = _ur.Request(api_url, headers=hdrs)
@@ -2748,67 +2895,46 @@ def dem_catalog():
     files.sort(key=lambda x: (x["zone"], x["name"]))
     return jsonify({"files": files, "source": "github"})
 
-def _github_candidate_urls(url, path):
-    import urllib.parse as _up
-    candidates = []
-    if url:
-        candidates.append(url)
-    if path:
-        enc_path = "/".join(_up.quote(seg) for seg in path.split("/"))
-        owner_repo = "1ravikafle-glitch/ElfakGISProStudio"
-        for branch in ("main", "master"):
-            candidates.append(
-                f"https://raw.githubusercontent.com/{owner_repo}/{branch}/dem_catalog/{enc_path}"
-            )
-    seen = set()
-    out = []
-    for c in candidates:
-        if c not in seen:
-            seen.add(c)
-            out.append(c)
-    return out
-
 @app.route("/dem_fetch", methods=["POST"])
 @_rate_limit(limit=5, window=60)
 def dem_fetch():
     import urllib.request as _ur
     import urllib.error as _ue
-
     data = request.get_json(silent=True) or {}
     url = data.get("url", "").strip()
     path = data.get("path", "").strip()
-
     if not url and not path:
         return jsonify({"error": "No DEM URL or path provided."}), 400
-
     if url and not (url.startswith("https://raw.githubusercontent.com/") or
                     url.startswith("https://github.com/") or
                     url.startswith("https://api.github.com/")):
         return jsonify({"error": "DEM URL must be from GitHub."}), 400
-
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(path or url))[:120]
     cache_key = hashlib.sha256((url or path).encode()).hexdigest()[:16]
     local_path = os.path.join(DEM_CACHE_DIR, f"{cache_key}_{safe_name}")
-
     if os.path.exists(local_path) and os.path.getsize(local_path) > 1000:
         size_mb = round(os.path.getsize(local_path) / (1024*1024), 1)
         log.info(f"DEM cache hit: {safe_name} ({size_mb}MB)")
         return jsonify({"ok": True, "cache_key": cache_key, "local": local_path,
                         "size_mb": size_mb, "cached": True})
-
-    candidates = _github_candidate_urls(url, path)
+    candidates = []
+    if url:
+        candidates.append(url)
+    if path:
+        owner_repo = "1ravikafle-glitch/ElfakGISProStudio"
+        enc_path = "/".join(urllib.parse.quote(seg) for seg in path.split("/"))
+        for branch in ("main", "master"):
+            candidates.append(
+                f"https://raw.githubusercontent.com/{owner_repo}/{branch}/dem_catalog/{enc_path}"
+            )
+    seen = set()
+    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
     if not candidates:
         return jsonify({"error": "Could not build a download URL from the given path."}), 400
-
-    if GITHUB_TOKEN and path:
-        api_url = f"https://api.github.com/repos/1ravikafle-glitch/ElfakGISProStudio/contents/dem_catalog/{path}"
+    last_error = None
+    for candidate_url in candidates:
         try:
-            req = _ur.Request(api_url, headers={
-                "User-Agent": "elfak-gis-app",
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github.v3.raw",
-                "X-GitHub-Api-Version": "2022-11-28",
-            })
+            req = _ur.Request(candidate_url, headers={"User-Agent": "elfak-gis-app"})
             with _ur.urlopen(req, timeout=120) as resp, open(local_path, "wb") as fout:
                 total = 0
                 while True:
@@ -2817,60 +2943,22 @@ def dem_fetch():
                         break
                     fout.write(chunk)
                     total += len(chunk)
-            if total > 500:
-                size_mb = round(os.path.getsize(local_path) / (1024*1024), 1)
-                log.info(f"DEM downloaded via authenticated API: {safe_name} ({size_mb}MB)")
-                return jsonify({"ok": True, "cache_key": cache_key, "local": local_path,
-                                "size_mb": size_mb, "cached": False, "source_url": api_url})
-            os.remove(local_path)
-        except Exception as e:
-            log.warning(f"Authenticated GitHub fetch failed: {e}")
-            if os.path.exists(local_path):
-                os.remove(local_path)
-
-    last_error = None
-    attempted = []
-    for candidate_url in candidates:
-        attempted.append(candidate_url)
-        log.info(f"Trying DEM download: {candidate_url}")
-        try:
-            req = _ur.Request(candidate_url, headers={"User-Agent": "elfak-gis-app"})
-            with _ur.urlopen(req, timeout=120) as resp, open(local_path, "wb") as fout:
-                total = 0
-                while True:
-                    chunk = resp.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    fout.write(chunk)
-                    total += len(chunk)
             if total < 500:
                 os.remove(local_path)
-                last_error = f"Response too small ({total} bytes) — likely a GitHub error page, not a real file."
+                last_error = f"Response too small ({total} bytes)"
                 continue
             size_mb = round(os.path.getsize(local_path) / (1024*1024), 1)
-            log.info(f"DEM downloaded successfully: {safe_name} ({size_mb}MB) from {candidate_url}")
+            log.info(f"DEM downloaded: {safe_name} ({size_mb}MB)")
             return jsonify({"ok": True, "cache_key": cache_key, "local": local_path,
                             "size_mb": size_mb, "cached": False, "source_url": candidate_url})
-        except _ue.HTTPError as e:
-            last_error = f"HTTP {e.code} at {candidate_url}"
-            if os.path.exists(local_path):
-                os.remove(local_path)
-            continue
         except Exception as e:
-            last_error = f"{type(e).__name__}: {e} at {candidate_url}"
+            last_error = f"{type(e).__name__}: {e}"
             if os.path.exists(local_path):
                 os.remove(local_path)
             continue
-
-    log.error(f"DEM download failed after {len(attempted)} attempt(s): {last_error}")
-    hint = ("Verify the repo is PUBLIC at github.com/1ravikafle-glitch/ElfakGISProStudio "
-            "— raw.githubusercontent.com cannot serve files from private repos without a token. "
-            "If it must stay private, set the GITHUB_TOKEN environment variable on your server.")
     return jsonify({
         "error": f"Failed to download DEM. {last_error}",
-        "attempted_urls": attempted,
-        "hint": hint,
-        "github_token_configured": bool(GITHUB_TOKEN),
+        "attempted_urls": candidates,
     }), 404
 
 @app.route("/zip_inspect", methods=["POST"])
@@ -2902,61 +2990,217 @@ def zip_inspect():
         except:
             pass
 
-@app.route("/run_g", methods=["POST"])
+# ----------------------------------------------------------------------
+# UPLOAD ROUTE (handles Groups A–G) with Human-Readable Run ID
+# ----------------------------------------------------------------------
+
+@app.route("/upload", methods=["POST"])
 @_rate_limit(limit=12, window=60)
 @_with_pipeline_sem
-def run_g():
-    run_id = str(uuid.uuid4())
-    _PROG[run_id] = []
+def upload():
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file uploaded."}), 400
     try:
-        if "file" not in request.files:
-            return jsonify({"error": "No shapefile uploaded.", "run_id": run_id}), 400
-        file = request.files["file"]
+        _safe_filename(file.filename)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    # Determine base name for run ID
+    module = request.form.get("module", "A")
+    if module == "F":
+        base_name = request.form.get("f_forest") or os.path.splitext(file.filename)[0]
+    else:
+        base_name = request.form.get("forest") or os.path.splitext(file.filename)[0]
+
+    run_id = _generate_run_id(base_name)
+    # Ensure uniqueness (very unlikely, but safe)
+    while os.path.exists(os.path.join(OUTPUT, run_id)):
+        run_id = _generate_run_id(base_name + "_" + secrets.token_hex(2))
+
+    with _PROG_LOCK: _PROG[run_id] = []
+    try:
+        if module in ("A", "B", "D") and file.filename.lower().endswith(".zip"):
+            return jsonify({"error": "ZIP files are not allowed for this module. Please upload a CSV or Excel file.", "run_id": run_id}), 400
+
+        mode = request.form.get("mode", "A")
         zone = request.form.get("zone", "44")
-        comp_col = request.form.get("comp_col", "").strip() or None
-        title = request.form.get("title", "Forest Survey Points").strip()
+        title = request.form.get("title", "").strip()
+        legend_title = request.form.get("legend_title", "Legend").strip() or "Legend"
+        label_col = request.form.get("label_col", "").strip()
         try:
-            spacing = float(request.form.get("spacing", "20"))
-            if spacing <= 0:
-                raise ValueError
+            mapping = json.loads(request.form.get("mapping", "{}"))
         except:
-            return jsonify({"error": "Invalid spacing value.", "run_id": run_id}), 400
-
-        # Determine base_name
-        base_name = os.path.splitext(os.path.basename(file.filename))[0]
-        if file.filename.lower().endswith(".zip"):
-            try:
-                base_name = _extract_shapefile_basename_from_zip(file, request.form.get('target_shp'))
-            except Exception as e:
-                log.warning(f"Could not extract shapefile basename from ZIP: {e}, using ZIP filename")
-                base_name = os.path.splitext(os.path.basename(file.filename))[0]
-
+            mapping = {}
+        w = float(request.form.get("w", 50))
+        h = float(request.form.get("h", 50))
+        rows = int(request.form.get("rows", 10))
+        cols = int(request.form.get("cols", 10))
+        forest = request.form.get("forest") or (mapping or {}).get("forest") or "FOREST"
         username = _require_login() or "guest"
         out = os.path.join(OUTPUT, run_id)
         os.makedirs(out, exist_ok=True)
+        crs = get_crs(zone)
+        _prog(run_id, f"Starting module {module}…", 2)
+        lc_out = None
+        lp_gdf = None
+        area_ha_disp = None
+        base_name_file = os.path.splitext(os.path.basename(file.filename))[0]
+        if file.filename.lower().endswith(".zip"):
+            try:
+                base_name_file = _extract_shapefile_basename_from_zip(file, mapping.get("target_shp"))
+            except Exception as e:
+                log.warning(f"Could not extract shapefile basename from ZIP: {e}, using ZIP filename")
+                base_name_file = os.path.splitext(os.path.basename(file.filename))[0]
 
-        target_shp = request.form.get("target_shp", "").strip() or None
-        df, shp_gdf, poly_gdf, summary = group_g(file, zone, comp_col, spacing, out, run_id,
-                                                   target_shp=target_shp, base_name=base_name)
+        if module == "B":
+            _prog(run_id, "Reading…", 8)
+            df = read_input(file)
+            poly, line, pts = group_b(df, crs, out, mapping)
+            lc_out = label_col or "Forest"
+        elif module == "C":
+            _prog(run_id, "Processing…", 10)
+            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping, base_name=base_name_file)
+            lc_out = "SN"
+            lp_gdf = pts
+        elif module == "D":
+            _prog(run_id, "Reading…", 8)
+            df = read_input(file)
+            d_mode = request.form.get("d_mode", "A")
+            poly, line, pts = group_d(df, crs, out, mapping, mode=d_mode)
+            lc_out = label_col or "Forest"
+        elif module == "E":
+            e_mode = request.form.get("e_mode", "A")
+            nc = max(2, min(15, int(request.form.get("n_compartments", 4))))
+            at = float(request.form.get("area_tol_ha", "0.3") or "0.3")
+            method = request.form.get("e_method", "bisect")
+            is_zip = file.filename.lower().endswith(".zip")
+            fcn = request.form.get("forest_col_name") or None
+            if mapping and not mapping.get("forest"):
+                mapping["forest"] = base_name_file
+            _prog(run_id, "Loading input…", 8)
+            src_data = file if is_zip else read_input(file)
+            poly, line, pts = group_e(src_data, crs, out, mapping,
+                                      e_mode=e_mode, n_compartments=nc,
+                                      is_zip=is_zip, fcol=fcn,
+                                      area_tol_ha=at, method=method, run_id=run_id)
+            _prog(run_id, "Rendering preview…", 88)
+            layout_state = get_default_layout_state()
+            bounds = poly.total_bounds
+            if bounds is not None and len(bounds) == 4:
+                w2 = bounds[2] - bounds[0]
+                h2 = bounds[3] - bounds[1]
+                poly_aspect = w2 / h2 if h2 > 0 else 1.0
+            else:
+                poly_aspect = 1.0
+            safe_rect = compute_safe_rect(layout_state, poly_aspect)
+            render_map(os.path.join(out, "output.png"), poly_gdf=poly,
+                       label_col=label_col or "Comp_ID",
+                       safe_rect=safe_rect, layout_state=layout_state)
+            kmz_url = generate_kmz(poly, line, pts, out, run_id)
+            _append_run(username, run_id, "E")
+            _prog(run_id, "Complete.", 100)
+            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
+        elif module == "F":
+            dem_cache_key = request.form.get("dem_cache_key", "").strip()
+            dem_catalog_path = request.form.get("dem_catalog_path", "").strip()
 
-        _prog(run_id, "Rendering A4 map…", 90)
-        _g_preview(shp_gdf, poly_gdf, os.path.join(out, "output.png"),
-                   title=title, area_ha=summary["area_ha"])
+            class _FileDEM:
+                def __init__(self, p):
+                    self.filename = os.path.basename(p)
+                    self._p = p
+                def save(self, dest):
+                    shutil.copy2(self._p, dest)
+                def read(self, size=-1):
+                    with open(self._p, "rb") as f:
+                        return f.read(size)
 
-        try:
-            kmz_url = generate_kmz(poly_gdf, gpd.GeoDataFrame(), shp_gdf, out, run_id)
-        except:
-            kmz_url = None
+            if dem_cache_key:
+                candidates = [f for f in os.listdir(DEM_CACHE_DIR) if f.startswith(dem_cache_key)]
+                if not candidates:
+                    return jsonify({"error": "Cached DEM not found. Please select again.", "run_id": run_id}), 400
+                dem_f = _FileDEM(os.path.join(DEM_CACHE_DIR, candidates[0]))
+            elif dem_catalog_path:
+                cat_full = _safe_path(DEM_CATALOG_DIR, dem_catalog_path)
+                if not os.path.exists(cat_full):
+                    return jsonify({"error": f"DEM catalog file not found: {dem_catalog_path}", "run_id": run_id}), 400
+                dem_f = _FileDEM(cat_full)
+            else:
+                dem_f = request.files.get("dem_file")
+                if not dem_f:
+                    return jsonify({"error": "No DEM selected. Choose from the catalog dropdown or upload a .tif file.", "run_id": run_id}), 400
+            f_forest = request.form.get("f_forest") or base_name_file
+            f_mode = request.form.get("f_mode", "A")
+            cc = request.form.get("comp_col") or None
+            bzip = file.filename.lower().endswith(".zip")
+            fa = None
+            fas = request.form.get("field_area_ha", "").strip()
+            if fas:
+                try:
+                    fa = float(fas)
+                except:
+                    pass
+            sr, vgdf, bgdf, fmo, pgs = group_f(file, dem_f, crs, out, mapping,
+                                                boundary_is_zip=bzip,
+                                                forest_name=f_forest,
+                                                f_mode=f_mode,
+                                                comp_col_name=cc,
+                                                field_area_ha=fa,
+                                                run_id=run_id)
+            _prog(run_id, "Rendering preview…", 92)
+            layout_state = get_default_layout_state()
+            bounds = vgdf.total_bounds if (vgdf is not None and not vgdf.empty) else (0,0,1,1)
+            if bounds is not None and len(bounds) == 4:
+                w2 = bounds[2] - bounds[0]
+                h2 = bounds[3] - bounds[1]
+                poly_aspect = w2 / h2 if h2 > 0 else 1.0
+            else:
+                poly_aspect = 1.0
+            safe_rect = compute_safe_rect(layout_state, poly_aspect)
+            render_map(os.path.join(out, "output.png"), poly_gdf=vgdf, line_gdf=bgdf,
+                       label_col="Description", safe_rect=safe_rect, layout_state=layout_state,
+                       slope_mode=True, slope_areas={r["Slope_Range"]: r["Area_ha"] for r in sr})
+            poly = vgdf if (vgdf is not None and not vgdf.empty) else gpd.GeoDataFrame()
+            line = gpd.GeoDataFrame()
+            pts = gpd.GeoDataFrame()
+            kmz_url = generate_kmz(poly, line, pts, out, run_id)
+            _append_run(username, run_id, "F")
+            _prog(run_id, "Complete.", 100)
+            return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
+        else:
+            _prog(run_id, "Reading…", 8)
+            df = read_input(file)
+            poly, line, pts = group_a(df, forest, crs, out, mapping)
+            if not poly.empty and "Area_ha" in poly.columns:
+                area_ha_disp = float(poly["Area_ha"].sum())
+            lc_out = label_col or "Forest"
 
-        _append_run(username, run_id, "G",
-                    f"{summary['total']} pts | {summary['compartments']} compartments")
+        point_label_col = None
+        if pts is not None and not pts.empty:
+            for cand in ["SN", "Order", "Point_ID", "ID", "point_id"]:
+                if cand in pts.columns:
+                    point_label_col = cand
+                    break
+            if point_label_col is None:
+                point_label_col = label_col or None
+
+        _prog(run_id, "Rendering preview…", 88)
+        layout_state = get_default_layout_state()
+        bounds = poly.total_bounds if (poly is not None and not poly.empty) else (0,0,1,1)
+        if bounds is not None and len(bounds) == 4:
+            w2 = bounds[2] - bounds[0]
+            h2 = bounds[3] - bounds[1]
+            poly_aspect = w2 / h2 if h2 > 0 else 1.0
+        else:
+            poly_aspect = 1.0
+        safe_rect = compute_safe_rect(layout_state, poly_aspect)
+        render_map(os.path.join(out, "output.png"), poly_gdf=poly, line_gdf=line, pts_gdf=pts,
+                   label_col=lc_out, point_label_col=point_label_col,
+                   safe_rect=safe_rect, layout_state=layout_state, title=title)
+        kmz_url = generate_kmz(poly, line, pts, out, run_id)
+        _append_run(username, run_id, module)
         _prog(run_id, "Complete.", 100)
-        return jsonify({
-            "run_id": run_id,
-            "download": f"/download/{run_id}",
-            "kmz_url": kmz_url,
-            "summary": summary
-        })
+        return jsonify({"run_id": run_id, "download": f"/download/{run_id}", "kmz_url": kmz_url})
     except ValueError as e:
         _prog(run_id, f"ERROR: {e}", 0)
         return jsonify({"error": str(e), "run_id": run_id}), 400
@@ -2964,27 +3208,203 @@ def run_g():
         _prog(run_id, f"ERROR: {e}", 0)
         return jsonify({"error": f"Unexpected error: {e}", "run_id": run_id}), 500
 
-@app.route("/outputs/<run_id>/<path:filename>")
-@_rate_limit(limit=120, window=60)
-def serve_output(run_id, filename):
-    folder = os.path.join(OUTPUT, run_id)
-    if not os.path.exists(os.path.join(folder, filename)):
-        return jsonify({"error": "File not found"}), 404
-    return send_from_directory(folder, filename)
+# ----------------------------------------------------------------------
+# GROUP H ROUTE with Human-Readable Run ID
+# ----------------------------------------------------------------------
 
-def zip_folder(folder):
-    return shutil.make_archive(folder, "zip", folder)
+@app.route("/run_h", methods=["POST"])
+@_rate_limit(limit=10, window=60)
+@_with_pipeline_sem
+def run_h():
+    # Generate human-readable run ID from boundary file name
+    boundary_file = request.files.get('boundary')
+    if not boundary_file:
+        return jsonify({"error": "Missing boundary file"}), 400
+    base_name = os.path.splitext(boundary_file.filename)[0]
+    run_id = _generate_run_id(base_name)
+    while os.path.exists(os.path.join(OUTPUT, run_id)):
+        run_id = _generate_run_id(base_name + "_" + secrets.token_hex(2))
 
-@app.route("/download/<run_id>")
-def download(run_id):
-    folder = os.path.join(OUTPUT, run_id)
-    if not os.path.exists(folder):
-        return jsonify({"error": "Run not found"}), 404
-    return send_file(zip_folder(folder), as_attachment=True)
+    _prog(run_id, "Starting Group H...", 0)
+    try:
+        required = ['boundary', 'compartments', 'dem', 'satellite', 'sample_points']
+        files = {}
+        for key in required:
+            if key not in request.files or request.files[key].filename == '':
+                return jsonify({"error": f"Missing required file: {key}", "run_id": run_id}), 400
+            files[key] = request.files[key]
+        survey_file = request.files.get('survey_points')
+        crs = request.form.get('crs', 'EPSG:32644')
 
-@app.route("/")
-def home():
-    return render_template("index.html")
+        tmp_dir = os.path.join(UPLOAD, f"h_temp_{run_id}")
+        os.makedirs(tmp_dir, exist_ok=True)
+        saved_files = {}
+        for key, f in files.items():
+            path = os.path.join(tmp_dir, f"{key}_{f.filename}")
+            f.save(path)
+            saved_files[key] = path
+        if survey_file and survey_file.filename != '':
+            path = os.path.join(tmp_dir, f"survey_{survey_file.filename}")
+            survey_file.save(path)
+            saved_files['survey'] = path
+
+        out_dir = os.path.join(OUTPUT, run_id)
+        os.makedirs(out_dir, exist_ok=True)
+
+        zip_path, out_dir = process_group_h(
+            saved_files['boundary'],
+            saved_files['compartments'],
+            saved_files['dem'],
+            saved_files['satellite'],
+            saved_files['sample_points'],
+            saved_files.get('survey'),
+            crs=crs,
+            out_dir=out_dir,
+            run_id=run_id
+        )
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        preview_path = os.path.join(out_dir, "Slope_Map.png")
+        if os.path.exists(preview_path):
+            shutil.copy(preview_path, os.path.join(out_dir, "output.png"))
+
+        _append_run(_require_login() or "guest", run_id, "H", "Group H maps generated")
+        _prog(run_id, "Complete.", 100)
+
+        return jsonify({
+            "run_id": run_id,
+            "download": f"/download/{run_id}",
+            "message": "Group H processing complete. Six maps generated."
+        })
+    except Exception as e:
+        _prog(run_id, f"ERROR: {e}", 0)
+        return jsonify({"error": str(e), "run_id": run_id}), 500
+
+# ----------------------------------------------------------------------
+# ABOUT, ROBOTS, SITEMAP
+# ----------------------------------------------------------------------
+
+@app.route("/about")
+def about_page():
+    return Response("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Elfak GIS Pro Studio — Professional Forest GIS Application</title>
+<meta name="description" content="Elfak GIS Pro Studio (elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio) is a professional web-based GIS application for forest boundary mapping, slope analysis, compartment subdivision, survey point generation and multi-forest analysis. Built for Nepal forestry professionals.">
+<meta name="keywords" content="elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio, elfak gis, elfak gis pro, forest gis nepal, forest boundary mapping, slope analysis nepal, compartment mapping, survey points gis, forestry nepal gis, GIS tool nepal">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Elfak GIS Pro Studio — Forest GIS Application">
+<meta property="og:description" content="Professional web GIS for Nepal forestry: boundary mapping, slope analysis, compartment subdivision, survey points. Free to use at elfakgisprostudio.onrender.com">
+<meta property="og:url" content="https://elfakgisprostudio.onrender.com/">
+<meta property="og:type" content="website">
+<link rel="canonical" href="https://elfakgisprostudio.onrender.com/">
+<link rel="alternate" href="https://elfakgisprostudio.onrender.com/" hreflang="en">
+<style>
+  body{font-family:system-ui,sans-serif;max-width:900px;margin:0 auto;padding:20px 24px;
+       color:#1a2e22;background:#f0f8f3;line-height:1.7}
+  h1{color:#059669;font-size:2em;margin-bottom:8px}
+  h2{color:#065f46;border-bottom:2px solid #34d399;padding-bottom:6px;margin-top:32px}
+  .badge{display:inline-block;background:#d1fae5;color:#065f46;padding:3px 10px;
+         border-radius:20px;font-size:13px;font-weight:600;margin:3px}
+  .cta{display:inline-block;background:linear-gradient(135deg,#34d399,#059669);
+       color:white;padding:12px 28px;border-radius:8px;text-decoration:none;
+       font-weight:700;font-size:16px;margin-top:20px;box-shadow:0 4px 14px rgba(16,185,129,.35)}
+  .feature{background:white;border-radius:10px;padding:16px 20px;margin:12px 0;
+            border-left:4px solid #10b981;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+  footer{margin-top:48px;padding-top:16px;border-top:1px solid #b7eacf;
+         color:#6b9880;font-size:13px}
+</style>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication",
+ "name":"Elfak GIS Pro Studio",
+ "alternateName":["elfakgis","elfakgispro","elfakgisstudio","elfakgisprostudio"],
+ "url":"https://elfakgisprostudio.onrender.com/",
+ "description":"Professional web-based GIS application for forest boundary mapping, slope analysis, compartment subdivision and survey point generation for Nepal forestry professionals.",
+ "applicationCategory":"GIS Software",
+ "operatingSystem":"Web Browser",
+ "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
+ "author":{"@type":"Organization","name":"Elfak GIS"}}
+</script>
+</head>
+<body>
+<h1>🌲 Elfak GIS Pro Studio</h1>
+<p><strong>Professional Forest GIS Application</strong> for boundary mapping, slope analysis, compartment subdivision, and survey point generation.</p>
+<p>
+  <span class="badge">elfakgis</span>
+  <span class="badge">elfakgispro</span>
+  <span class="badge">elfakgisstudio</span>
+  <span class="badge">elfakgisprostudio</span>
+  <span class="badge">Forest GIS Nepal</span>
+</p>
+<a href="/" class="cta">🚀 Open Application</a>
+
+<h2>What is Elfak GIS Pro Studio?</h2>
+<p>Elfak GIS Pro Studio is a free, web-based Geographic Information System designed for forestry professionals in Nepal and the broader Himalayan region. It provides a complete workflow from raw survey data to professional-quality GIS outputs — all without requiring QGIS, ArcGIS, or any desktop installation.</p>
+
+<h2>Features</h2>
+<div class="feature"><strong>A — Boundary Whole</strong>: Generate forest boundary polygon from GPS survey points (Excel/CSV). Produces shapefile, line, and point layers with area calculation.</div>
+<div class="feature"><strong>B — Segmented Forest</strong>: Multi-forest boundary generation with separate shapefile per forest/compartment.</div>
+<div class="feature"><strong>C — Sample Plot Generator</strong>: Systematic grid-based sample plot placement inside forest boundaries for forest inventory.</div>
+<div class="feature"><strong>D — Multi-Forest Complex</strong>: Batch process multiple forests with nested compartment structure.</div>
+<div class="feature"><strong>E — Polygon Subdivider</strong>: Automatically divide a forest polygon into N equal-area compartments (2–15) with configurable area tolerance.</div>
+<div class="feature"><strong>F — Slope Analysis</strong>: DEM-based slope classification (0–19°, 19–31°, 31–45°, >45°) with raster-to-polygon conversion, per-compartment area tables, and professional A4 map output.</div>
+<div class="feature"><strong>G — Survey Point Generator</strong>: Generate boundary, vertex, and divider survey points from compartment shapefiles. Exports SHP, CSV, and Excel.</div>
+<div class="feature"><strong>H — Sample Point Based GIS Maps</strong>: Upload boundary, compartments, DEM, satellite image, sample points and survey points to automatically generate six publication‑quality maps: Slope, Satellite, Sub‑compartment, Sample Plot, Boundary Survey, and Survey Point maps. Exports PNG, PDF, SVG.</div>
+
+<h2>Technical Specifications</h2>
+<ul>
+<li>Coordinate systems: UTM Zone 43N, 44N, 45N, 46N (EPSG:32643–32646)</li>
+<li>Input formats: Excel (.xlsx), CSV, Shapefile (.shp), ZIP of shapefiles, GeoTIFF (.tif)</li>
+<li>Output formats: Shapefile (.shp), GeoJSON, KMZ, PNG map, Excel, CSV, PDF, SVG</li>
+<li>Map output: A4 size, 300 DPI, professional cartography</li>
+<li>DEM analysis: Slope reclassification, raster-to-polygon, area statistics</li>
+<li>Supports 100+ simultaneous users with per-user data isolation</li>
+</ul>
+
+<h2>Who Uses Elfak GIS Pro Studio?</h2>
+<p>Forest rangers, community forestry groups, district forest offices, forest inventory teams, and GIS professionals in Nepal, Bhutan, and similar forested regions who need professional GIS output without expensive desktop software.</p>
+
+<h2>Open the Application</h2>
+<p><a href="/" class="cta">🌲 Launch Elfak GIS Pro Studio</a></p>
+
+<footer>
+  <p>Elfak GIS Pro Studio · <a href="https://elfakgisprostudio.onrender.com/">elfakgisprostudio.onrender.com</a></p>
+  <p>Keywords: elfakgis · elfakgispro · elfakgisstudio · elfakgisprostudio · forest gis nepal · slope analysis · compartment mapping · survey points · forestry gis</p>
+</footer>
+</body>
+</html>""", mimetype="text/html")
+
+@app.route("/robots.txt")
+def robots_txt():
+    return Response("""User-agent: *
+Allow: /
+Allow: /about
+Allow: /sitemap.xml
+Disallow: /upload
+Disallow: /run_g
+Disallow: /outputs/
+Disallow: /download/
+Disallow: /progress/
+Disallow: /geojson/
+Sitemap: https://elfakgisprostudio.onrender.com/sitemap.xml
+""", mimetype="text/plain")
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    return Response("""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://elfakgisprostudio.onrender.com/</loc>
+       <priority>1.0</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://elfakgisprostudio.onrender.com/about</loc>
+       <priority>0.9</priority><changefreq>monthly</changefreq></url>
+</urlset>""", mimetype="application/xml")
+
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
 
 if __name__ == "__main__":
     app.run(debug=True, threaded=True)
