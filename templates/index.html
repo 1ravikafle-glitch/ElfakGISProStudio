@@ -2280,6 +2280,34 @@
             display: none !important
         }
 
+        /* ── Group H Gallery ── */
+        #h-gallery {
+            display: none;
+            margin-top: 12px;
+        }
+        #h-gallery .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        #h-gallery .gallery-grid img {
+            width: 100%;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: transform .2s, box-shadow .2s;
+        }
+        #h-gallery .gallery-grid img:hover {
+            transform: scale(1.02);
+            box-shadow: var(--shadow-md);
+        }
+        .gallery-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
         /* ── MOBILE ── */
         .mobile-nav-btn {
             display: none;
@@ -2443,6 +2471,9 @@
                 min-width: 100px;
                 font-size: 9px;
             }
+            #h-gallery .gallery-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
         }
 
         @media (max-width: 640px) {
@@ -2546,6 +2577,9 @@
                 height: 14px;
                 top: -22px;
             }
+            #h-gallery .gallery-grid {
+                grid-template-columns: 1fr 1fr;
+            }
         }
 
         @media (max-width: 400px) {
@@ -2561,6 +2595,9 @@
             }
             #left-nav-panel {
                 width: 240px;
+            }
+            #h-gallery .gallery-grid {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -2747,6 +2784,10 @@
                     <div class="nav-item" onclick="switchTab('E')">✂️ E — Polygon Subdivider</div>
                     <div class="nav-item" onclick="switchTab('F')">🏔 F — Slope Analysis</div>
                     <div class="nav-item" onclick="switchTab('G')">📌 G — Survey Point Generator</div>
+                    <div class="nav-item" onclick="switchTab('H')" style="border-left:3px solid var(--purple);">
+                        🌲 Group H <span style="background:#059669;color:white;font-size:8px;padding:1px 6px;border-radius:10px;margin-left:4px;">NEW</span>
+                        <span style="font-size:8px;display:block;color:var(--muted);">Sample Point Based GIS Maps</span>
+                    </div>
                     <div class="nav-sep"></div>
                     <div class="fg" style="margin-top:6px">
                         <label>UTM Zone / CRS</label>
@@ -2780,6 +2821,7 @@
                             <div class="mtab" id="mt-E" onclick="switchTab('E')">E</div>
                             <div class="mtab" id="mt-F" onclick="switchTab('F')">F</div>
                             <div class="mtab" id="mt-G" onclick="switchTab('G')" style="background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.3);color:#5b21b6">G</div>
+                            <div class="mtab" id="mt-H" onclick="switchTab('H')" style="background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.3);color:#5b21b6;">H</div>
                         </div>
                     </div>
                     <div class="panel-body config-area">
@@ -3030,6 +3072,101 @@
                             <div class="g-summary" id="g-result-box"></div>
                         </div>
 
+                        <!-- H -->
+                        <div class="card" id="card-H">
+                            <div class="badge purple">
+                                <strong>📌 Group H — Sample Point Based GIS Maps</strong><br>
+                                Upload required GIS datasets and automatically generate six standard forestry maps.
+                            </div>
+
+                            <div class="row2">
+                                <div class="fg">
+                                    <label>🌲 Forest Boundary <span style="color:var(--red);">*</span></label>
+                                    <div class="dz" id="dz-H-boundary"><span class="dz-text">📦 Upload Boundary ZIP</span>
+                                        <input type="file" class="fi" data-group="H" data-key="boundary" accept=".zip">
+                                    </div>
+                                    <div style="font-size:8px;color:var(--muted);">Must contain .shp, .dbf, .shx, .prj</div>
+                                </div>
+                                <div class="fg">
+                                    <label>🗂 Sub-compartment Layer <span style="color:var(--red);">*</span></label>
+                                    <div class="dz" id="dz-H-compartments"><span class="dz-text">📦 Upload Compartments ZIP</span>
+                                        <input type="file" class="fi" data-group="H" data-key="compartments" accept=".zip">
+                                    </div>
+                                    <div style="font-size:8px;color:var(--muted);">Must contain Comp_ID or Label column</div>
+                                </div>
+                            </div>
+
+                            <div class="row2">
+                                <div class="fg">
+                                    <label>🏔 DEM (GeoTIFF) <span style="color:var(--red);">*</span></label>
+                                    <div class="dz" id="dz-H-dem"><span class="dz-text">📂 Upload DEM (.tif)</span>
+                                        <input type="file" class="fi" data-group="H" data-key="dem" accept=".tif,.tiff">
+                                    </div>
+                                </div>
+                                <div class="fg">
+                                    <label>🛰 Satellite Image <span style="color:var(--red);">*</span></label>
+                                    <div class="dz" id="dz-H-satellite"><span class="dz-text">📂 Upload Satellite Image (.tif)</span>
+                                        <input type="file" class="fi" data-group="H" data-key="satellite" accept=".tif,.tiff">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row2">
+                                <div class="fg">
+                                    <label>📍 Sample Points <span style="color:var(--red);">*</span></label>
+                                    <div class="dz" id="dz-H-sample_points"><span class="dz-text">📂 Upload Excel (.xlsx) or Shapefile (.zip)</span>
+                                        <input type="file" class="fi" data-group="H" data-key="sample_points" accept=".xlsx,.zip">
+                                    </div>
+                                    <div style="font-size:8px;color:var(--muted);">Columns: Point_ID, Latitude/Longitude OR Easting/Northing</div>
+                                </div>
+                                <div class="fg">
+                                    <label>🔍 Survey Points <span style="color:var(--muted);">(optional)</span></label>
+                                    <div class="dz" id="dz-H-survey_points"><span class="dz-text">📂 Upload Survey Points (.xlsx/.zip)</span>
+                                        <input type="file" class="fi" data-group="H" data-key="survey_points" accept=".xlsx,.zip">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row2">
+                                <div class="fg">
+                                    <label>🌐 Coordinate System</label>
+                                    <select id="h-crs">
+                                        <option value="EPSG:32644" selected>EPSG:32644 — WGS84 / UTM Zone 44N</option>
+                                        <option value="EPSG:32645">EPSG:32645 — WGS84 / UTM Zone 45N</option>
+                                        <option value="EPSG:32643">EPSG:32643 — WGS84 / UTM Zone 43N</option>
+                                        <option value="EPSG:32646">EPSG:32646 — WGS84 / UTM Zone 46N</option>
+                                    </select>
+                                </div>
+                                <div class="fg" style="justify-content:center;">
+                                    <label>&nbsp;</label>
+                                    <button class="run-btn" id="run-h-btn" onclick="runGroupH()" style="width:100%;">🚀 Generate Group H Maps</button>
+                                </div>
+                            </div>
+
+                            <div class="badge info">
+                                <strong>📋 Maps to be generated:</strong><br>
+                                Slope Map · Satellite Map · Sub-compartment Map · Sample Plot Map · Boundary Survey Point Map · Survey Point Map
+                            </div>
+
+                            <!-- Group H Gallery -->
+                            <div id="h-gallery">
+                                <div class="gallery-grid">
+                                    <div><img id="h-preview-slope" style="width:100%;border-radius:6px;border:1px solid var(--border);" alt="Slope Map"></div>
+                                    <div><img id="h-preview-satellite" style="width:100%;border-radius:6px;border:1px solid var(--border);" alt="Satellite Map"></div>
+                                    <div><img id="h-preview-sub" style="width:100%;border-radius:6px;border:1px solid var(--border);" alt="Sub-compartment Map"></div>
+                                    <div><img id="h-preview-sample" style="width:100%;border-radius:6px;border:1px solid var(--border);" alt="Sample Plot Map"></div>
+                                    <div><img id="h-preview-boundary" style="width:100%;border-radius:6px;border:1px solid var(--border);" alt="Boundary Survey Point Map"></div>
+                                    <div><img id="h-preview-survey" style="width:100%;border-radius:6px;border:1px solid var(--border);" alt="Survey Point Map"></div>
+                                </div>
+                                <div class="gallery-actions">
+                                    <button onclick="window.location.href='/download/'+currentRunId" class="etool" style="background:var(--mint-g);color:white;border:none;">📦 Download ZIP</button>
+                                    <button onclick="downloadGroupH('png')" class="etool">⬇ PNG</button>
+                                    <button onclick="downloadGroupH('pdf')" class="etool">⬇ PDF</button>
+                                    <button onclick="downloadGroupH('svg')" class="etool">⬇ SVG</button>
+                                </div>
+                            </div>
+                        </div>
+
                     </div><!-- config-area -->
                 </div><!-- panel -->
 
@@ -3063,15 +3200,13 @@
                     <div class="canvas-wrap" id="canvas-wrap-static">
                         <img id="out-img" alt="Map Output">
                         <div class="empty-msg" id="empty-msg">🌲 Run a pipeline to see your A4 map here.<br><br>
-                            Supports Groups A–G<br>PNG · SHP · CSV · Excel</div>
+                            Supports Groups A–H<br>PNG · SHP · CSV · Excel</div>
 
-                        <!-- ── OVERLAY LAYER (QGIS-style layout items) ── -->
+                        <!-- OVERLAY LAYER (QGIS-style layout items) -->
                         <div id="overlay-layer" class="overlay-layer visible">
-                            <!-- Snap guides -->
                             <div id="ov-snap-h" class="ov-snap-guide h"></div>
                             <div id="ov-snap-v" class="ov-snap-guide v"></div>
 
-                            <!-- LEGEND -->
                             <div id="ov-legend" class="ov-item ov-legend" data-ov-type="legend" style="right:4%;bottom:5%;width:180px;height:auto;min-width:60px;min-height:30px;z-index:6;">
                                 <div class="ov-drag-area">
                                     <div class="ov-drag-grip">⠿</div>
@@ -3084,7 +3219,6 @@
                                 <div class="ov-rotate-handle"></div>
                             </div>
 
-                            <!-- NORTH ARROW -->
                             <div id="ov-north" class="ov-item ov-north" data-ov-type="north" style="right:6%;top:4%;width:42px;height:58px;min-width:20px;min-height:20px;z-index:7;">
                                 <div class="ov-drag-area">
                                     <svg viewBox="0 0 40 56" class="ov-north-svg">
@@ -3099,7 +3233,6 @@
                                 <div class="ov-rotate-handle"></div>
                             </div>
 
-                            <!-- SCALE BAR -->
                             <div id="ov-scale" class="ov-item ov-scale" data-ov-type="scale" style="left:6%;bottom:6%;width:120px;height:28px;min-width:40px;min-height:20px;z-index:8;">
                                 <div class="ov-drag-area">
                                     <span contenteditable="true" spellcheck="false" style="outline:none;font-size:10px;font-family:var(--mono);color:var(--txt);user-select:text;cursor:text;">0    500    1000 m</span>
@@ -3110,7 +3243,6 @@
                                 <div class="ov-rotate-handle"></div>
                             </div>
 
-                            <!-- TITLE -->
                             <div id="ov-title" class="ov-item ov-title" data-ov-type="title" style="left:50%;top:2%;transform:translateX(-50%);width:auto;height:auto;min-width:40px;min-height:24px;z-index:9;pointer-events:none;">
                                 <div class="ov-drag-area" contenteditable="true" spellcheck="false" style="cursor:text;user-select:text;outline:none;text-align:center;font-size:16px;font-weight:800;color:var(--txt);padding:4px 12px;border-radius:4px;background:transparent;text-shadow:0 1px 4px rgba(255,255,255,.5);width:100%;height:100%;white-space:nowrap;">
                                     Map Title
@@ -3121,7 +3253,6 @@
                                 <div class="ov-rotate-handle"></div>
                             </div>
 
-                            <!-- AREA TEXT -->
                             <div id="ov-area" class="ov-item ov-area" data-ov-type="area" style="right:4%;top:12%;width:auto;height:auto;min-width:30px;min-height:20px;z-index:10;pointer-events:none;">
                                 <div class="ov-drag-area" style="font-size:11px;font-family:var(--mono);color:var(--txt2);padding:3px 10px;border-radius:4px;background:var(--panel-elevated);border:1px solid var(--panel-border);backdrop-filter:blur(8px);box-shadow:var(--shadow-xs);cursor:text;user-select:text;outline:none;" contenteditable="true" spellcheck="false">
                                     Area: 0.00 ha
@@ -3132,7 +3263,6 @@
                                 <div class="ov-rotate-handle"></div>
                             </div>
 
-                            <!-- LOGO -->
                             <div id="ov-logo" class="ov-item ov-logo" data-ov-type="logo" style="left:4%;top:2%;width:44px;height:44px;min-width:30px;min-height:30px;z-index:11;pointer-events:none;">
                                 <div class="ov-drag-area" style="display:flex;align-items:center;justify-content:center;border-radius:4px;background:transparent;cursor:default;">
                                     <svg viewBox="0 0 24 24" fill="none" style="width:100%;height:100%;max-width:44px;max-height:44px;filter:drop-shadow(0 1px 4px rgba(0,0,0,.1));">
@@ -3146,10 +3276,7 @@
                                 <div class="ov-rotate-handle"></div>
                             </div>
 
-                            <!-- LAYER MANAGEMENT PANEL -->
                             <div id="layer-panel" class="layer-panel"></div>
-
-                            <!-- ALIGNMENT TOOLBAR -->
                             <div id="align-toolbar" class="align-toolbar">
                                 <button class="etool" onclick="alignSelected('left')" title="Align Left">⬅</button>
                                 <button class="etool" onclick="alignSelected('center-h')" title="Center Horizontally">⟷</button>
@@ -3212,6 +3339,7 @@
                                 <option value="E">E — Subdivider</option>
                                 <option value="F">F — Slope</option>
                                 <option value="G">G — Survey Points</option>
+                                <option value="H">H — Sample Point Based</option>
                             </select>
                         </div>
                         <button class="run-btn" style="width:100%" onclick="doCompose()">🎨 Re-Render Map</button>
@@ -3222,7 +3350,6 @@
                             <a id="dl-btn2" class="etool" style="text-decoration:none">📦 Download ZIP</a>
                         </div>
 
-                        <!-- ─── NEW: EXPORT OFFICIAL MAP PANEL ─── -->
                         <div class="sep"></div>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
                             <div class="fg">
@@ -3252,8 +3379,6 @@
                             ⬇ Export Official Map
                         </button>
                         <div id="export-status" style="font-size:10px;color:var(--muted);font-family:var(--mono);min-height:16px;margin-top:4px"></div>
-                        <!-- ─── END NEW PANEL ─── -->
-
                     </div>
                 </div>
 
@@ -3283,7 +3408,7 @@
     <script>
         /* ================================================================
            ELFAK GIS PRO STUDIO — FULL APPLICATION JS
-           (Includes layout editor, export, modules A-G, login, history, etc.)
+           (Includes layout editor, export, modules A-H, login, history, etc.)
            ================================================================ */
 
         // ── Apply theme IMMEDIATELY ──
@@ -3518,13 +3643,25 @@
             }
         }
 
+        // File input handler for dropzones
         document.querySelectorAll('.fi').forEach(inp => {
             inp.addEventListener('change', async function() {
                 const file = this.files[0];
                 if (!file) return;
+
+                // Handle Group H inputs
+                const group = this.dataset.group;
+                if (group === 'H') {
+                    const key = this.dataset.key;
+                    const dz = document.querySelector(`#dz-H-${key} .dz-text`);
+                    if (dz) dz.textContent = '📄 ' + file.name;
+                    return; // Group H uses separate handling
+                }
+
                 const card = this.dataset.card;
                 const dzText = document.querySelector(`#dz-${card} .dz-text`);
                 if (dzText) dzText.textContent = '📄 ' + file.name;
+
                 if (card === 'C') {
                     const isZip = file.name.toLowerCase().endsWith('.zip');
                     document.getElementById('c-coord-fields').classList.toggle('hidden', isZip);
@@ -3574,6 +3711,7 @@
             const f = this.files[0];
             if (f) document.getElementById('f-dem-lbl').textContent = '🏔 ' + f.name;
         });
+
         document.getElementById('fi-G').addEventListener('change', async function() {
             const f = this.files[0];
             if (!f) return;
@@ -3614,8 +3752,16 @@
                     inp.dispatchEvent(new Event('change', { bubbles: true })); } });
         });
 
-        const MOD_LABELS = { A: 'A · Boundary', B: 'B · Segmented', C: 'C · Sample Plot', D: 'D · Multi-Forest',
-            E: 'E · Subdivider', F: 'F · Slope Analysis', G: 'G · Survey Points' };
+        const MOD_LABELS = {
+            A: 'A · Boundary',
+            B: 'B · Segmented',
+            C: 'C · Sample Plot',
+            D: 'D · Multi-Forest',
+            E: 'E · Subdivider',
+            F: 'F · Slope Analysis',
+            G: 'G · Survey Points',
+            H: 'H · Sample Point Based'
+        };
 
         function switchTab(t) {
             activeModule = t;
@@ -4004,6 +4150,84 @@
             }
         }
 
+        // ── GROUP H ──────────────────────────────────────────────────────
+
+        async function runGroupH() {
+            const btn = document.getElementById('run-h-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Processing...';
+
+            const formData = new FormData();
+            const files = document.querySelectorAll('#card-H input[type="file"]');
+            let missing = false;
+            files.forEach(inp => {
+                const key = inp.dataset.key;
+                if (inp.files.length === 0) {
+                    if (key !== 'survey_points') {
+                        missing = true;
+                        inp.style.borderColor = 'red';
+                    }
+                } else {
+                    formData.append(key, inp.files[0]);
+                }
+            });
+            if (missing) {
+                alert('Please upload all required files.');
+                btn.disabled = false;
+                btn.textContent = '🚀 Generate Group H Maps';
+                return;
+            }
+            formData.append('crs', document.getElementById('h-crs').value);
+
+            setProgress('Group H', 'Uploading and processing...', 10);
+            try {
+                const response = await fetch('/run_h', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                currentRunId = data.run_id;
+                startSSE(data.run_id);
+                document.getElementById('dl-btn').href = `/download/${data.run_id}`;
+                document.getElementById('dl-btn').style.display = 'inline-block';
+
+                // Show gallery
+                const gallery = document.getElementById('h-gallery');
+                gallery.style.display = 'block';
+                const base = `/outputs/${data.run_id}/`;
+                const mapNames = ['Slope_Map', 'Satellite_Map', 'SubCompartment_Map', 'SamplePlot_Map', 'BoundarySurveyPoint_Map', 'SurveyPoint_Map'];
+                const imgIds = ['h-preview-slope', 'h-preview-satellite', 'h-preview-sub', 'h-preview-sample', 'h-preview-boundary', 'h-preview-survey'];
+                mapNames.forEach((name, i) => {
+                    const img = document.getElementById(imgIds[i]);
+                    if (img) img.src = base + name + '.png?t=' + Date.now();
+                });
+
+                // Set main preview to Slope Map
+                document.getElementById('out-img').src = base + 'Slope_Map.png?t=' + Date.now();
+                document.getElementById('out-img').style.display = 'block';
+                document.getElementById('empty-msg').style.display = 'none';
+                switchPView('static');
+                document.getElementById('run-meta').textContent = `Group H run: ${data.run_id.slice(0,8)}…`;
+
+                // Update composer module to H
+                document.getElementById('comp-module').value = 'H';
+
+                // Show success
+                setProgress('Complete ✓', 'All six maps generated.', 100);
+            } catch (e) {
+                alert('Error: ' + e.message);
+                setProgress('Error', e.message, 0, true);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🚀 Generate Group H Maps';
+            }
+        }
+
+        function downloadGroupH(format) {
+            if (!currentRunId) return alert('No run available.');
+            window.location.href = `/download/${currentRunId}`;
+        }
+
+        // ── View switching ──────────────────────────────────────────────
+
         function switchPView(v) {
             ['static', 'osm', 'compose'].forEach(t => {
                 const el = document.getElementById('pv-' + t);
@@ -4039,6 +4263,8 @@
                 }
             }
         }
+
+        // ── OSM Map loading ─────────────────────────────────────────────
 
         let _osmLegendControl = null;
 
@@ -4119,6 +4345,8 @@
             lyr.on('mouseout', () => { if (lyr !== selectedLayer) try { lyr.setStyle && lyr.setStyle({ weight: 2,
                         color: '#1a3a22' }); } catch {} });
         }
+
+        // ── DEM Catalog ─────────────────────────────────────────────────
 
         let _demCatalog = [];
         let _demCacheKey = '';
@@ -4423,9 +4651,7 @@
                 alert('Save error: ' + e.message); }
         }
 
-        /* ================================================================
-           OVERLAY LAYOUT ENGINE — QGIS-style layout items
-           ================================================================ */
+        // ── LAYOUT ENGINE ──────────────────────────────────────────────
 
         let _layoutEditActive = false;
         let _selectedOvItem = null;
@@ -5624,7 +5850,7 @@
             return state;
         }
 
-        // ── LAYOUT EXPORT ──────────────────────────────────────────────────
+        // ── Export Layout ──
         async function exportLayout() {
             const runId = currentRunId;
             if (!runId) {
@@ -5957,7 +6183,7 @@
                     .catch(() => {});
             }
         }
-        const MICONS = { A: '🌲', B: '🌲', C: '📍', D: '🗂', E: '✂️', F: '🏔', G: '📌' };
+        const MICONS = { A: '🌲', B: '🌲', C: '📍', D: '🗂', E: '✂️', F: '🏔', G: '📌', H: '🌲' };
 
         function renderHistory(runs) {
             const body = document.getElementById('hist-body');
