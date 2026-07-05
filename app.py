@@ -777,7 +777,7 @@ def group_b(df, crs, out, mapping=None):
     if not pt.empty: pt.to_file(os.path.join(out,"forest_point.shp"))
     return p,l,pt
 
-def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
+def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None, base_name="boundary"):
     polygons=[]
     if file.filename.lower().endswith(".zip"):
         folder=os.path.join(UPLOAD,str(uuid.uuid4())); os.makedirs(folder,exist_ok=True)
@@ -828,11 +828,11 @@ def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None):
                 pts.append({"SN":sn,"X":center.x,"Y":center.y,"geometry":center}); sn+=1
     pt_gdf=gpd.GeoDataFrame(pts,crs=crs)
     p_gdf=_enforce_poly_gdf(p_gdf)
-    if not p_gdf.empty: p_gdf.to_file(os.path.join(out,"boundary_polygon.shp"))
-    l_gdf.to_file(os.path.join(out,"boundary_line.shp"))
+    if not p_gdf.empty: p_gdf.to_file(os.path.join(out,f"{base_name}_polygon.shp"))
+    l_gdf.to_file(os.path.join(out,f"{base_name}_line.shp"))
     if not pt_gdf.empty:
-        pt_gdf.to_file(os.path.join(out,"sampleplot_point.shp"))
-        pd.DataFrame(pts)[["SN","X","Y"]].to_excel(os.path.join(out,"sampleplot.xlsx"),index=False)
+        pt_gdf.to_file(os.path.join(out,f"{base_name}_point.shp"))
+        pd.DataFrame(pts)[["SN","X","Y"]].to_excel(os.path.join(out,f"{base_name}_sampleplot.xlsx"),index=False)
     return p_gdf,l_gdf,pt_gdf
 
 def _save_fl(pr,lr,pts,d,crs):
@@ -1259,27 +1259,79 @@ def _bnd_from_df(df,mapping):
     coords.append(coords[0]); return safe_polygon(coords)
 
 def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
-    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
-    os.makedirs(folder, exist_ok=True)
-    zp = os.path.join(folder, "b.zip")
-    zip_file.save(zp)
-    with zipfile.ZipFile(zp) as z:
-        z.extractall(folder)
-    shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
-            for f in fs if f.endswith(".shp")]
-    if not shps:
-        raise ValueError("No .shp found in the boundary ZIP.")
-    sp = shps[0]
-    if target_shp:
-        for s in shps:
-            if os.path.basename(s) == os.path.basename(target_shp):
-                sp = s; break
-    gdf = gpd.read_file(sp)
-    if gdf.empty:
-        raise ValueError("Boundary shapefile is empty.")
-    gdf = gdf.set_crs(src_crs) if gdf.crs is None else gdf
-    gdf = gdf.to_crs(dem_crs)
-    return _repair(gdf.unary_union), gdf
+    """Extract and read boundary shapefile from a ZIP archive.
+    Returns: (union_geometry, gdf, shapefile_basename_without_extension)
+    """
+    import io, zipfile
+    import tempfile
+
+    # Read the ZIP into memory
+    try:
+        zip_bytes = zip_file.read()
+        if len(zip_bytes) < 100:
+            raise ValueError("Uploaded ZIP file is empty or too small.")
+    except Exception as e:
+        raise ValueError(f"Could not read uploaded ZIP file: {e}")
+
+    # Extract to a temporary directory
+    tmp_dir = os.path.join(UPLOAD, "bnd_tmp_" + uuid.uuid4().hex[:8])
+    os.makedirs(tmp_dir, exist_ok=True)
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            zf.extractall(tmp_dir)
+
+        # Find all .shp files
+        shps = []
+        for root, _, files in os.walk(tmp_dir):
+            for f in files:
+                if f.lower().endswith(".shp"):
+                    shps.append(os.path.join(root, f))
+
+        if not shps:
+            raise ValueError("No .shp file found inside the uploaded ZIP.")
+
+        # Choose the shapefile
+        if target_shp:
+            target_base = os.path.basename(target_shp)
+            chosen = None
+            for s in shps:
+                if os.path.basename(s) == target_base:
+                    chosen = s
+                    break
+            if chosen is None:
+                raise ValueError(f"Specified shapefile '{target_shp}' not found in ZIP.")
+        else:
+            chosen = shps[0]
+
+        # Get basename without extension
+        shp_basename = os.path.splitext(os.path.basename(chosen))[0]
+
+        # Read the shapefile
+        gdf = gpd.read_file(chosen)
+        if gdf.empty:
+            raise ValueError("Boundary shapefile is empty.")
+
+        # Ensure CRS: if missing, assign the user-provided CRS
+        if gdf.crs is None:
+            gdf = gdf.set_crs(src_crs)
+        else:
+            # Reproject to the DEM's CRS
+            gdf = gdf.to_crs(dem_crs)
+
+        # Union all geometries into one polygon
+        union = _repair(gdf.unary_union)
+        if union is None or union.is_empty:
+            raise ValueError("Boundary geometry is empty after union.")
+
+        return union, gdf, shp_basename
+
+    except Exception as e:
+        raise ValueError(f"Failed to process boundary ZIP: {e}")
+    finally:
+        try:
+            shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
 
 def group_f(boundary_file, dem_file, crs, out, mapping=None,
             boundary_is_zip=False, forest_name="FOREST",
@@ -1309,7 +1361,11 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if run_id: _prog(run_id, "Step 1 — Loading & reprojecting boundary…", 10)
     if boundary_is_zip:
         ts = (mapping or {}).get("target_shp")
-        bpoly, bgdf = _bnd_from_zip(boundary_file, ts, crs, str(dem_crs))
+        bpoly, bgdf, shp_basename = _bnd_from_zip(boundary_file, ts, crs, str(dem_crs))
+        # If user didn't override forest_name, use the shapefile basename
+        if forest_name in (None, "", "FOREST"):
+            forest_name = shp_basename
+            pfx = _safe_dn(forest_name)  # update prefix
     else:
         try:
             df   = read_input(boundary_file)
@@ -1785,8 +1841,9 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
         try: bgdf.boundary.plot(ax=ax1, color="black", linewidth=1.8, zorder=5)
         except: pass
     if hg and bgdf is not None and not bgdf.empty:
-        gc=next((c for c in bgdf.columns if c.lower()!="geometry"),None)
-        if gc: _label_feat(ax1, bgdf, gc)
+        group_col = next((c for c in bgdf.columns if c.lower()!="geometry"), None)
+        if group_col:
+            _label_feat(ax1, bgdf, group_col)
 
     _style_ax(ax1); _scale_bar(ax1)
     mt=title.strip() if title.strip() else "Slope Classification Map"
@@ -1800,9 +1857,10 @@ def preview_slope(vec_gdf, bgdf, summary_rows, path, f_mode="A",
 
     if not summary_rows:
         fig.savefig(path, dpi=DPI, facecolor="white", pad_inches=0.15)
-        plt.close(fig); gc.collect(); return
+        plt.close(fig)
+        gc.collect()
+        return
 
-    # ─── TABLE ────────────────────────────────────────────────────────────
     hr=any(r.get("Recal_ha") is not None for r in summary_rows)
     if f_mode=="A":
         th=sum(r["Area_ha"] for r in summary_rows)
@@ -2125,7 +2183,32 @@ def _g_preview(shp_gdf, poly_gdf, path, title="Forest Survey Points", area_ha=No
     plt.close(fig)
     gc.collect()
 
-def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None):
+# Helper to extract shapefile basename from ZIP without extracting to disk (in-memory)
+def _extract_shapefile_basename_from_zip(file_storage, target_shp=None):
+    """Read a ZIP in memory and return the basename (without extension) of the first .shp
+    or the one matching target_shp. Raises ValueError if no .shp is found."""
+    import io, zipfile
+    zip_bytes = file_storage.read()
+    if len(zip_bytes) < 100:
+        raise ValueError("ZIP file is empty or too small.")
+    # Reset stream so the same FileStorage can be used later
+    file_storage.seek(0)
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        namelist = zf.namelist()
+        shps = [n for n in namelist if n.lower().endswith('.shp')]
+        if not shps:
+            raise ValueError("No .shp file found inside the ZIP.")
+        if target_shp:
+            target_base = os.path.basename(target_shp)
+            chosen = next((n for n in shps if os.path.basename(n) == target_base), None)
+            if chosen is None:
+                raise ValueError(f"Target shapefile '{target_shp}' not found in ZIP.")
+        else:
+            chosen = shps[0]
+        return os.path.splitext(os.path.basename(chosen))[0]
+
+def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None, base_name="ForestPoints"):
     _prog(run_id, "Reading shapefile…", 5)
     gdf = _g_read_shp(file_storage, target_shp=target_shp)
     if gdf.empty:
@@ -2162,7 +2245,7 @@ def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, tar
     all_recs = _g_assign_ids(all_recs)
 
     _prog(run_id, f"Exporting {len(all_recs)} points → SHP / CSV / XLSX…", 80)
-    df, shp_gdf = _g_export(all_recs, epsg, out_dir)
+    df, shp_gdf = _g_export(all_recs, epsg, out_dir, prefix=base_name)
 
     summary = {
         "total": len(all_recs),
@@ -2456,6 +2539,15 @@ def upload():
         lp_gdf = None
         area_ha_disp = None
 
+        # ─── Determine base_name from uploaded file ────────────────────
+        base_name = os.path.splitext(os.path.basename(file.filename))[0]
+        if file.filename.lower().endswith(".zip"):
+            try:
+                base_name = _extract_shapefile_basename_from_zip(file, mapping.get("target_shp"))
+            except Exception as e:
+                log.warning(f"Could not extract shapefile basename from ZIP: {e}, using ZIP filename")
+                base_name = os.path.splitext(os.path.basename(file.filename))[0]
+
         if module == "B":
             _prog(run_id, "Reading…", 8)
             df = read_input(file)
@@ -2463,7 +2555,7 @@ def upload():
             lc_out = label_col or "Forest"
         elif module == "C":
             _prog(run_id, "Processing…", 10)
-            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping)
+            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping, base_name=base_name)
             lc_out = "SN"
             lp_gdf = pts
         elif module == "D":
@@ -2479,8 +2571,9 @@ def upload():
             method = request.form.get("e_method", "bisect")
             is_zip = file.filename.lower().endswith(".zip")
             fcn = request.form.get("forest_col_name") or None
-            if mapping and "forest" not in mapping:
-                mapping["forest"] = forest
+            # Use base_name as forest if not provided
+            if mapping and not mapping.get("forest"):
+                mapping["forest"] = base_name
             _prog(run_id, "Loading input…", 8)
             src_data = file if is_zip else read_input(file)
             poly, line, pts = group_e(src_data, crs, out, mapping,
@@ -2527,7 +2620,8 @@ def upload():
                 dem_f = request.files.get("dem_file")
                 if not dem_f:
                     return jsonify({"error": "No DEM selected. Choose from the catalog dropdown or upload a .tif file.", "run_id": run_id}), 400
-            f_forest = request.form.get("f_forest") or forest
+            # Use base_name as forest name if not provided
+            f_forest = request.form.get("f_forest") or base_name
             f_mode = request.form.get("f_mode", "A")
             cc = request.form.get("comp_col") or None
             bzip = file.filename.lower().endswith(".zip")
@@ -2828,13 +2922,22 @@ def run_g():
         except:
             return jsonify({"error": "Invalid spacing value.", "run_id": run_id}), 400
 
+        # Determine base_name
+        base_name = os.path.splitext(os.path.basename(file.filename))[0]
+        if file.filename.lower().endswith(".zip"):
+            try:
+                base_name = _extract_shapefile_basename_from_zip(file, request.form.get('target_shp'))
+            except Exception as e:
+                log.warning(f"Could not extract shapefile basename from ZIP: {e}, using ZIP filename")
+                base_name = os.path.splitext(os.path.basename(file.filename))[0]
+
         username = _require_login() or "guest"
         out = os.path.join(OUTPUT, run_id)
         os.makedirs(out, exist_ok=True)
 
         target_shp = request.form.get("target_shp", "").strip() or None
         df, shp_gdf, poly_gdf, summary = group_g(file, zone, comp_col, spacing, out, run_id,
-                                                   target_shp=target_shp)
+                                                   target_shp=target_shp, base_name=base_name)
 
         _prog(run_id, "Rendering A4 map…", 90)
         _g_preview(shp_gdf, poly_gdf, os.path.join(out, "output.png"),
