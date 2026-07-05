@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.5,user-scalable=yes" />
     <title>Elfak GIS Pro Studio — Professional Forest GIS Application</title>
-    <meta name="description" content="Elfak GIS Pro Studio (elfakgis, elfakgispro, elfakgisprostudio) — Professional web GIS for forest boundary mapping, slope analysis, compartment subdivision and survey points. Free for Nepal forestry professionals." />
+    <meta name="description" content="Elfak GIS Pro Studio (elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio) — Professional web GIS for forest boundary mapping, slope analysis, compartment subdivision and survey points. Free for Nepal forestry professionals." />
     <meta name="keywords" content="elfakgis, elfakgispro, elfakgisstudio, elfakgisprostudio, elfak gis, forest gis nepal, boundary mapping, slope analysis, compartment mapping, forestry nepal" />
     <meta name="robots" content="index, follow" />
     <meta name="author" content="Elfak GIS Pro Studio" />
@@ -1515,7 +1515,7 @@
             margin-left: auto;
         }
 
-        /* ── ALIGNMENT TOOLBAR (floating) ── */
+        /* ── ALIGNMENT TOOLBAR ── */
         .align-toolbar {
             display: none;
             position: absolute;
@@ -1562,7 +1562,7 @@
             margin: 0 2px;
         }
 
-        /* ── LEGEND (enhanced) ── */
+        /* ── LEGEND ── */
         .ov-legend {
             min-width: 60px;
             min-height: 30px;
@@ -1735,7 +1735,7 @@
             filter: drop-shadow(0 1px 4px rgba(0, 0, 0, .1));
         }
 
-        /* ── DRAG GRIP (small handler) ── */
+        /* ── DRAG GRIP ── */
         .ov-drag-grip {
             position: absolute;
             top: 2px;
@@ -3221,6 +3221,39 @@
                             <button class="etool" onclick="window.open(document.getElementById('out-img').src,'_blank')">🖼 Open Full PNG</button>
                             <a id="dl-btn2" class="etool" style="text-decoration:none">📦 Download ZIP</a>
                         </div>
+
+                        <!-- ─── NEW: EXPORT OFFICIAL MAP PANEL ─── -->
+                        <div class="sep"></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                            <div class="fg">
+                                <label>Export Format</label>
+                                <select id="export-format">
+                                    <option value="pdf" selected>PDF (Vector)</option>
+                                    <option value="png">PNG (High DPI)</option>
+                                    <option value="svg">SVG (Vector)</option>
+                                </select>
+                            </div>
+                            <div class="fg">
+                                <label>DPI (for PNG only)</label>
+                                <input type="number" id="export-dpi" value="200" min="72" max="600" step="10">
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                            <div class="fg">
+                                <label>Page Width (A4 = 8.27″)</label>
+                                <input type="number" id="export-page-w" value="8.27" step="0.1" min="4">
+                            </div>
+                            <div class="fg">
+                                <label>Page Height (A4 = 11.69″)</label>
+                                <input type="number" id="export-page-h" value="11.69" step="0.1" min="4">
+                            </div>
+                        </div>
+                        <button class="run-btn" style="width:100%;margin-top:6px" onclick="exportLayout()">
+                            ⬇ Export Official Map
+                        </button>
+                        <div id="export-status" style="font-size:10px;color:var(--muted);font-family:var(--mono);min-height:16px;margin-top:4px"></div>
+                        <!-- ─── END NEW PANEL ─── -->
+
                     </div>
                 </div>
 
@@ -3249,8 +3282,8 @@
 
     <script>
         /* ================================================================
-           ELFAK GIS PRO STUDIO — LAYOUT EDITOR ENGINE
-           Modified and extended from original to support QGIS-style layout
+           ELFAK GIS PRO STUDIO — FULL APPLICATION JS
+           (Includes layout editor, export, modules A-G, login, history, etc.)
            ================================================================ */
 
         // ── Apply theme IMMEDIATELY ──
@@ -3922,7 +3955,6 @@
                         vfb.style.visibility = 'visible';
                         vfb.style.opacity = '1';
                     }
-                    // Auto-show overlay
                     showOverlayForRun();
                 };
                 img.src = `${BASE}/outputs/${data.run_id}/output.png?t=${Date.now()}`;
@@ -3998,7 +4030,6 @@
                 if (leafMap) setTimeout(() => leafMap.invalidateSize(), 160);
             }
             if (v === 'static') {
-                // ensure overlay is visible if there's a run
                 if (currentRunId) {
                     const layer = document.getElementById('overlay-layer');
                     const img = document.getElementById('out-img');
@@ -4397,19 +4428,16 @@
            ================================================================ */
 
         let _layoutEditActive = false;
-        let _selectedOvItem = null; // The currently selected overlay item DOM element
+        let _selectedOvItem = null;
         let _ovDragState = null;
         let _ovResizeState = null;
         let _ovRotateState = null;
         let _ovItems = [];
-        let _layoutState = {};
 
-        // ── Get all overlay items ──
         function _getOvItems() {
             return document.querySelectorAll('.ov-item');
         }
 
-        // ── Deselect all ──
         function _deselectAll() {
             _getOvItems().forEach(el => {
                 el.classList.remove('ov-selected');
@@ -4419,22 +4447,18 @@
             document.getElementById('align-toolbar')?.classList.remove('visible');
         }
 
-        // ── Select an item ──
         function _selectOvItem(el) {
             _deselectAll();
             _selectedOvItem = el;
             if (el) {
                 el.classList.add('ov-selected');
-                // Ensure it's on top while editing
                 el.style.zIndex = 50;
-                // Show layer panel
                 _updateLayerPanel();
                 document.getElementById('layer-panel')?.classList.add('visible');
                 document.getElementById('align-toolbar')?.classList.add('visible');
             }
         }
 
-        // ── Update layer panel ──
         function _updateLayerPanel() {
             const panel = document.getElementById('layer-panel');
             if (!panel) return;
@@ -4442,7 +4466,6 @@
             if (!items.length) { panel.innerHTML = '<div style="font-size:9px;color:var(--muted);padding:4px;">No items</div>'; return; }
 
             let html = '<div style="font-size:8px;font-family:var(--mono);color:var(--muted);padding:2px 0 4px;border-bottom:1px solid var(--panel-border);margin-bottom:4px;">LAYERS</div>';
-            // Sort by z-index
             const sorted = Array.from(items).sort((a, b) => (parseInt(a.style.zIndex) || 6) - (parseInt(b.style.zIndex) || 6));
             sorted.forEach(el => {
                 const type = el.dataset.ovType || 'item';
@@ -4460,7 +4483,6 @@
             panel.innerHTML = html;
         }
 
-        // ── Toggle layer visibility ──
         function toggleLayerVisibility(id) {
             const el = document.getElementById(id);
             if (!el) return;
@@ -4470,7 +4492,6 @@
             _ovSaveState();
         }
 
-        // ── Move layer up/down ──
         function moveLayerUp(id) {
             const el = document.getElementById(id);
             if (!el) return;
@@ -4494,7 +4515,6 @@
             _ovSaveState();
         }
 
-        // ── Bring to front / back ──
         function bringToFront() {
             if (!_selectedOvItem) return;
             const items = _getOvItems();
@@ -4530,7 +4550,6 @@
             }
         }
 
-        // ── Alignment ──
         function alignSelected(mode) {
             if (!_selectedOvItem) { alert('Select an item first.'); return; }
             const wrap = document.getElementById('canvas-wrap-static');
@@ -4542,12 +4561,6 @@
             let top = parseFloat(_selectedOvItem.style.top) || 0;
             const w = itemRect.width;
             const h = itemRect.height;
-
-            // Convert to % of wrap
-            const pctX = (left / wrapRect.width) * 100;
-            const pctY = (top / wrapRect.height) * 100;
-            const pctW = (w / wrapRect.width) * 100;
-            const pctH = (h / wrapRect.height) * 100;
 
             let newLeft = left,
                 newTop = top;
@@ -4572,7 +4585,6 @@
                     newTop = (wrapRect.height - h) / 2;
                     break;
                 case 'distribute-h':
-                    // Distribute horizontally among all visible items
                     const items = _getOvItems();
                     const visItems = Array.from(items).filter(it => it.style.display !== 'none' && it !== _selectedOvItem);
                     if (visItems.length < 2) { alert('Need at least 2 items to distribute.'); return; }
@@ -4617,7 +4629,6 @@
             _ovSaveState();
         }
 
-        // ── Drag system ──
         function _ovDragStart(e) {
             if (e.target.closest('.ov-resize-handle')) return;
             if (e.target.closest('.ov-rotate-handle')) return;
@@ -4630,14 +4641,12 @@
             if (!el) return;
             if (!_layoutEditActive) return;
 
-            // Select this item
             _selectOvItem(el);
 
             const layer = document.getElementById('overlay-layer');
             const layerRect = layer.getBoundingClientRect();
             const elRect = el.getBoundingClientRect();
 
-            // Get current position in pixels
             const left = parseFloat(el.style.left) || 0;
             const top = parseFloat(el.style.top) || 0;
 
@@ -4659,7 +4668,6 @@
             el.addEventListener('pointerup', _ovDragEnd);
             el.addEventListener('pointercancel', _ovDragEnd);
 
-            // Hide snap guides initially
             document.getElementById('ov-snap-h')?.classList.remove('visible');
             document.getElementById('ov-snap-v')?.classList.remove('visible');
 
@@ -4673,14 +4681,12 @@
             let x = e.clientX - layerRect.left - offsetX;
             let y = e.clientY - layerRect.top - offsetY;
 
-            // Snap to edges
             const snapDist = 8;
             const snapH = document.getElementById('ov-snap-h');
             const snapV = document.getElementById('ov-snap-v');
             let snappedH = false,
                 snappedV = false;
 
-            // Canvas edges
             if (x < snapDist) { x = 0;
                 snappedV = true; }
             if (x + el.offsetWidth > layerRect.width - snapDist) { x = layerRect.width - el.offsetWidth;
@@ -4690,7 +4696,6 @@
             if (y + el.offsetHeight > layerRect.height - snapDist) { y = layerRect.height - el.offsetHeight;
                 snappedH = true; }
 
-            // Center snap
             const centerX = (layerRect.width - el.offsetWidth) / 2;
             const centerY = (layerRect.height - el.offsetHeight) / 2;
             if (Math.abs(x - centerX) < snapDist) { x = centerX;
@@ -4698,28 +4703,24 @@
             if (Math.abs(y - centerY) < snapDist) { y = centerY;
                 snappedH = true; }
 
-            // Snap to other items (align centers)
             const otherItems = _getOvItems();
             otherItems.forEach(other => {
                 if (other === el || other.style.display === 'none') return;
                 const or = other.getBoundingClientRect();
                 const ol = parseFloat(other.style.left) || 0;
                 const ot = parseFloat(other.style.top) || 0;
-                // Horizontal center alignment
                 const otherCenterX = ol + or.width / 2;
                 const myCenterX = x + el.offsetWidth / 2;
                 if (Math.abs(myCenterX - otherCenterX) < snapDist) {
                     x = otherCenterX - el.offsetWidth / 2;
                     snappedV = true;
                 }
-                // Vertical center alignment
                 const otherCenterY = ot + or.height / 2;
                 const myCenterY = y + el.offsetHeight / 2;
                 if (Math.abs(myCenterY - otherCenterY) < snapDist) {
                     y = otherCenterY - el.offsetHeight / 2;
                     snappedH = true;
                 }
-                // Edge alignment
                 if (Math.abs(x - ol) < snapDist) { x = ol;
                     snappedV = true; }
                 if (Math.abs(x + el.offsetWidth - (ol + or.width)) < snapDist) { x = ol + or.width - el.offsetWidth;
@@ -4730,7 +4731,6 @@
                     snappedH = true; }
             });
 
-            // Clamp
             x = Math.max(0, Math.min(x, layerRect.width - el.offsetWidth));
             y = Math.max(0, Math.min(y, layerRect.height - el.offsetHeight));
 
@@ -4739,7 +4739,6 @@
             el.style.right = 'auto';
             el.style.bottom = 'auto';
 
-            // Show snap guides
             if (snapH && snapH) { snapH.style.top = y + 'px';
                 snapH.classList.add('visible'); } else if (snapH) { snapH.classList.remove('visible'); }
             if (snapV && snapV) { snapV.style.left = x + 'px';
@@ -4762,7 +4761,6 @@
             _ovSaveState();
         }
 
-        // ── Resize system ──
         function _ovResizeStart(e) {
             const handle = e.currentTarget;
             const el = handle.closest('.ov-item');
@@ -4845,7 +4843,6 @@
                     return;
             }
 
-            // Maintain aspect ratio if shift is held (or for specific items)
             const keepAspect = shiftKey || el.dataset.ovType === 'north' || el.dataset.ovType === 'logo';
             if (keepAspect) {
                 const ratio = startWidth / startHeight;
@@ -4854,14 +4851,12 @@
                 } else if (handle.includes('n') || handle.includes('s')) {
                     newW = newH * ratio;
                 } else {
-                    // Corner handle: use the larger delta
                     if (Math.abs(dx) > Math.abs(dy)) {
                         newH = newW / ratio;
                     } else {
                         newW = newH * ratio;
                     }
                 }
-                // Adjust position for corner handles
                 if (handle.includes('n')) {
                     newT = startTop + startHeight - newH;
                 }
@@ -4877,22 +4872,12 @@
             el.style.top = newT + 'px';
             el.style.bottom = 'auto';
 
-            // For legend, also scale inner content
-            if (el.dataset.ovType === 'legend') {
-                const inner = el.querySelector('.ov-drag-area');
-                if (inner) {
-                    // We'll just let the CSS handle it via width/height
-                }
-            }
-
-            // Update north arrow viewBox if needed
             if (el.dataset.ovType === 'north') {
                 const svg = el.querySelector('.ov-north-svg');
                 if (svg) {
                     const w = newW;
                     const h = newH;
                     svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-                    // Scale text and arrow proportionally
                     const scale = Math.min(w / 40, h / 56);
                     svg.querySelector('text')?.setAttribute('font-size', 13 * scale);
                 }
@@ -4909,7 +4894,6 @@
             _ovSaveState();
         }
 
-        // ── Rotation system ──
         function _ovRotateStart(e) {
             const handle = e.currentTarget;
             const el = handle.closest('.ov-item');
@@ -4950,7 +4934,6 @@
             const startAngleRaw = Math.atan2(startDy, startDx) * 180 / Math.PI;
 
             let delta = angle - startAngleRaw;
-            // Normalize
             while (delta < -180) delta += 360;
             while (delta > 180) delta -= 360;
 
@@ -4969,7 +4952,6 @@
             _ovSaveState();
         }
 
-        // ── Toggle layout edit mode ──
         function toggleLayoutEdit() {
             const img = document.getElementById('out-img');
             if (!currentRunId || !img || img.style.display === 'none') {
@@ -4993,10 +4975,8 @@
                 _rebuildOverlayLegend(activeModule, currentGeoJSON);
                 _wireOvEvents();
                 _ovRestoreState();
-                // Show layer panel
                 _updateLayerPanel();
                 document.getElementById('layer-panel')?.classList.add('visible');
-                // Show align toolbar
                 document.getElementById('align-toolbar')?.classList.add('visible');
             } else {
                 _deselectAll();
@@ -5006,30 +4986,25 @@
             }
         }
 
-        // ── Wire up overlay events ──
         function _wireOvEvents() {
             _getOvItems().forEach(el => {
                 if (el.dataset.wired) return;
                 el.dataset.wired = '1';
 
-                // Drag on the drag area
                 const area = el.querySelector('.ov-drag-area');
                 if (area) {
                     area.addEventListener('pointerdown', _ovDragStart);
                 }
 
-                // Resize handles
                 el.querySelectorAll('.ov-resize-handle').forEach(h => {
                     h.addEventListener('pointerdown', _ovResizeStart);
                 });
 
-                // Rotation handle
                 const rot = el.querySelector('.ov-rotate-handle');
                 if (rot) {
                     rot.addEventListener('pointerdown', _ovRotateStart);
                 }
 
-                // Click to select
                 el.addEventListener('click', function(e) {
                     if (e.target.closest('.ov-resize-handle')) return;
                     if (e.target.closest('.ov-rotate-handle')) return;
@@ -5038,12 +5013,10 @@
                     _selectOvItem(this);
                 });
 
-                // Double-click to focus on text
                 el.addEventListener('dblclick', function(e) {
                     const editable = this.querySelector('[contenteditable]');
                     if (editable && _layoutEditActive) {
                         editable.focus();
-                        // Select all text
                         const sel = window.getSelection();
                         const range = document.createRange();
                         range.selectNodeContents(editable);
@@ -5054,7 +5027,6 @@
             });
         }
 
-        // ── Build overlay legend ──
         function _rebuildOverlayLegend(module, geojson) {
             const body = document.getElementById('ov-legend-body');
             const titleEl = document.getElementById('ov-legend-title');
@@ -5170,7 +5142,6 @@
             _ovRestoreState();
         }
 
-        // ── Show overlay for current run ──
         function showOverlayForRun() {
             if (currentRunId) {
                 const layer = document.getElementById('overlay-layer');
@@ -5181,25 +5152,20 @@
                     _wireOvEvents();
                     _ovRestoreState();
                     if (!_layoutEditActive) layer.classList.remove('editing');
-                    // Update title from comp-title or g-title
                     const titleEl = document.getElementById('ov-title')?.querySelector('.ov-drag-area');
                     if (titleEl) {
                         const compTitle = document.getElementById('comp-title')?.value || document.getElementById('g-title')
                             ?.value || 'Map Title';
                         if (compTitle) titleEl.textContent = compTitle;
                     }
-                    // Update area text
                     const areaEl = document.getElementById('ov-area')?.querySelector('.ov-drag-area');
                     if (areaEl && currentGeoJSON) {
                         const ah = currentGeoJSON.features?.reduce((s, f) => s + (f.properties?.Area_ha || 0), 0) || 0;
                         if (ah > 0) areaEl.textContent = `Area: ${ah.toFixed(3)} ha`;
                     }
-                    // Update scale bar
                     const scaleEl = document.getElementById('ov-scale')?.querySelector('.ov-drag-area span');
                     if (scaleEl && currentGeoJSON) {
-                        // Keep existing or set default
                         if (!scaleEl.textContent.trim() || scaleEl.textContent === '0    500    1000 m') {
-                            // Estimate scale from bounds
                             try {
                                 const bounds = currentGeoJSON.features.reduce((b, f) => {
                                     if (!f.geometry) return b;
@@ -5230,7 +5196,6 @@
             }
         }
 
-        // ── Save layout state ──
         function _ovSaveState() {
             if (!currentRunId) return;
             const state = {};
@@ -5249,24 +5214,20 @@
                     rotation: el.dataset.rotation || '0',
                     display: el.style.display || '',
                 };
-                // For legend, save inner HTML
                 if (el.id === 'ov-legend') {
                     const body = document.getElementById('ov-legend-body');
                     const title = document.getElementById('ov-legend-title');
                     if (body) state[id]['legend-html'] = body.innerHTML;
                     if (title) state[id]['legend-title'] = title.textContent;
                 }
-                // For title, save text
                 if (el.id === 'ov-title') {
                     const area = el.querySelector('.ov-drag-area');
                     if (area) state[id]['text'] = area.textContent;
                 }
-                // For area, save text
                 if (el.id === 'ov-area') {
                     const area = el.querySelector('.ov-drag-area');
                     if (area) state[id]['text'] = area.textContent;
                 }
-                // For scale, save text
                 if (el.id === 'ov-scale') {
                     const span = el.querySelector('.ov-drag-area span');
                     if (span) state[id]['text'] = span.textContent;
@@ -5277,7 +5238,6 @@
             } catch (e) { /* ignore */ }
         }
 
-        // ── Restore layout state ──
         function _ovRestoreState() {
             if (!currentRunId) return;
             let state;
@@ -5299,7 +5259,6 @@
                 if (s.rotation) el.dataset.rotation = s.rotation;
                 if (s.display !== undefined) el.style.display = s.display;
 
-                // Restore legend content
                 if (id === 'ov-legend') {
                     if (s['legend-html']) {
                         const body = document.getElementById('ov-legend-body');
@@ -5310,21 +5269,18 @@
                         if (title) title.textContent = s['legend-title'];
                     }
                 }
-                // Restore title text
                 if (id === 'ov-title') {
                     if (s['text']) {
                         const area = el.querySelector('.ov-drag-area');
                         if (area) area.textContent = s['text'];
                     }
                 }
-                // Restore area text
                 if (id === 'ov-area') {
                     if (s['text']) {
                         const area = el.querySelector('.ov-drag-area');
                         if (area) area.textContent = s['text'];
                     }
                 }
-                // Restore scale text
                 if (id === 'ov-scale') {
                     if (s['text']) {
                         const span = el.querySelector('.ov-drag-area span');
@@ -5332,12 +5288,9 @@
                     }
                 }
             });
-
-            // Update layer panel
             _updateLayerPanel();
         }
 
-        // ── Reset layout positions ──
         function resetLayoutPositions() {
             const defaults = {
                 'ov-legend': { right: '4%', bottom: '5%', width: '180px', height: 'auto', zIndex: '6' },
@@ -5366,19 +5319,16 @@
                 }
             });
 
-            // Reset title text
             const titleEl = document.getElementById('ov-title')?.querySelector('.ov-drag-area');
             if (titleEl) titleEl.textContent = document.getElementById('comp-title')?.value || document.getElementById('g-title')
                 ?.value || 'Map Title';
 
-            // Reset area text
             const areaEl = document.getElementById('ov-area')?.querySelector('.ov-drag-area');
             if (areaEl && currentGeoJSON) {
                 const ah = currentGeoJSON.features?.reduce((s, f) => s + (f.properties?.Area_ha || 0), 0) || 0;
                 areaEl.textContent = ah > 0 ? `Area: ${ah.toFixed(3)} ha` : 'Area: 0.00 ha';
             }
 
-            // Reset scale bar
             const scaleEl = document.getElementById('ov-scale')?.querySelector('.ov-drag-area span');
             if (scaleEl) scaleEl.textContent = '0    500    1000 m';
 
@@ -5387,7 +5337,6 @@
             _updateLayerPanel();
         }
 
-        // ── Save layout to JSON file ──
         function saveLayout() {
             if (!currentRunId) { alert('No run available. Generate a map first.'); return; }
             _ovSaveState();
@@ -5409,7 +5358,6 @@
                     display: el.style.display !== 'none',
                     type: el.dataset.ovType || 'item',
                 };
-                // Save text content for editable elements
                 if (id === 'ov-legend') {
                     const body = document.getElementById('ov-legend-body');
                     const title = document.getElementById('ov-legend-title');
@@ -5441,7 +5389,6 @@
             URL.revokeObjectURL(url);
         }
 
-        // ── Load layout from JSON file ──
         function loadLayoutFromFile(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -5465,7 +5412,6 @@
                             el.dataset.rotation = s.rotation; }
                         if (s.display !== undefined) el.style.display = s.display ? '' : 'none';
 
-                        // Restore text content
                         if (id === 'ov-legend') {
                             if (s.legendHtml) {
                                 const body = document.getElementById('ov-legend-body');
@@ -5497,12 +5443,11 @@
                 }
             };
             reader.readAsText(file);
-            event.target.value = ''; // Reset input
+            event.target.value = '';
         }
 
-        // ── Override viewFullMap to capture overlay ──
-        const _origViewFullMap = viewFullMap;
-        viewFullMap = function() {
+        // ── Full View ──
+        function viewFullMap() {
             const modal = document.getElementById('map-modal');
             const mimg = document.getElementById('modal-img');
             const mdl = document.getElementById('modal-dl-btn');
@@ -5536,12 +5481,10 @@
                 }
             };
 
-            // Temporarily enable overlay visibility for capture
             const layer = document.getElementById('overlay-layer');
             const wasEditing = layer.classList.contains('editing');
             const wasVisible = layer.classList.contains('visible');
 
-            // Make sure all items are visible
             _getOvItems().forEach(el => {
                 if (el.style.display === 'none') {
                     el.dataset.hiddenForCapture = 'true';
@@ -5559,15 +5502,12 @@
                     const clonedOverlay = clonedDoc.querySelector('#overlay-layer');
                     if (clonedOverlay) {
                         clonedOverlay.classList.add('visible');
-                        // Ensure all items are visible
                         clonedOverlay.querySelectorAll('.ov-item').forEach(item => {
                             item.style.display = '';
-                            // Make sure editable content is rendered
                         });
                     }
                 }
             }).then(canvas => {
-                // Restore hidden state
                 _getOvItems().forEach(el => {
                     if (el.dataset.hiddenForCapture === 'true') {
                         el.style.display = 'none';
@@ -5596,11 +5536,10 @@
                 console.error('Composite capture failed:', err);
                 fallbackToRaw();
             });
-        };
+        }
 
-        // ── Override doCompose to include layout state ──
-        const _origDoCompose = doCompose;
-        doCompose = async function(extraPayload) {
+        // ── Do Compose ──
+        async function doCompose(extraPayload) {
             if (!currentRunId) { alert('Run a pipeline first.'); return false; }
             const statusEl = document.getElementById('comp-status');
             if (statusEl) statusEl.textContent = 'Re-rendering…';
@@ -5619,7 +5558,6 @@
                 module: document.getElementById('comp-module').value || activeModule,
                 legend_pos: legendPos,
                 north_pos: northPos,
-                // Pass layout state for server-side rendering
                 layout_state: _getLayoutStateForServer(),
             }, extraPayload || {});
 
@@ -5638,7 +5576,6 @@
                     img.style.transition = 'opacity .35s var(--ease)';
                     requestAnimationFrame(() => { img.style.opacity = '1'; });
                     setTimeout(() => img.style.transition = '', 400);
-                    // Restore overlay after image loads
                     setTimeout(() => showOverlayForRun(), 100);
                 };
                 img.src = `${BASE}${d.png}`;
@@ -5650,7 +5587,7 @@
                 else alert('Compose error: ' + e.message);
                 return false;
             }
-        };
+        }
 
         function _getLayoutStateForServer() {
             const state = {};
@@ -5669,7 +5606,6 @@
                     visible: el.style.display !== 'none',
                     type: el.dataset.ovType || 'item',
                 };
-                // Text content
                 if (id === 'ov-title' || id === 'ov-area') {
                     const area = el.querySelector('.ov-drag-area');
                     if (area) state[id].text = area.textContent;
@@ -5688,7 +5624,103 @@
             return state;
         }
 
-        // ── Override Download ZIP ──
+        // ── LAYOUT EXPORT ──────────────────────────────────────────────────
+        async function exportLayout() {
+            const runId = currentRunId;
+            if (!runId) {
+                alert('No active run. Please generate a map first.');
+                return;
+            }
+
+            if (typeof _ovSaveState === 'function') {
+                _ovSaveState();
+            }
+
+            let layoutState = {};
+            if (typeof _getLayoutStateForServer === 'function') {
+                layoutState = _getLayoutStateForServer();
+            } else {
+                layoutState = {
+                    'ov-title': {
+                        visible: true,
+                        left: 50, top: 4,
+                        text: document.getElementById('comp-title')?.value || 'Forest Map'
+                    },
+                    'ov-area': {
+                        visible: true,
+                        left: 50, top: 10,
+                        text: document.getElementById('ov-area')?.querySelector('.ov-drag-area')?.textContent || 'Area: 0.00 ha'
+                    },
+                    'ov-north': {
+                        visible: true,
+                        left: 88, top: 6,
+                        width: 5, height: 7,
+                        rotation: 0
+                    },
+                    'ov-legend': {
+                        visible: true,
+                        left: 4, top: 80,
+                        width: 22, height: 14,
+                        legendTitle: document.getElementById('comp-legend')?.value || 'Legend',
+                        legendHtml: document.getElementById('ov-legend-body')?.innerHTML || ''
+                    },
+                    'ov-scale': {
+                        visible: true,
+                        left: 35, top: 86,
+                        width: 30, height: 4,
+                        text: document.getElementById('ov-scale')?.querySelector('.ov-drag-area span')?.textContent || '1:10,000'
+                    }
+                };
+            }
+
+            const fmt = document.getElementById('export-format').value;
+            const dpi = parseInt(document.getElementById('export-dpi').value) || 200;
+            const pageW = parseFloat(document.getElementById('export-page-w').value) || 8.27;
+            const pageH = parseFloat(document.getElementById('export-page-h').value) || 11.69;
+
+            const status = document.getElementById('export-status');
+            status.textContent = '⏳ Generating official map layout…';
+            status.style.color = 'var(--muted)';
+
+            try {
+                const response = await fetch(`${BASE}/export_layout`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        run_id: runId,
+                        layout_state: layoutState,
+                        format: fmt,
+                        dpi: dpi,
+                        page_width: pageW,
+                        page_height: pageH
+                    })
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || 'Export failed');
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `layout.${fmt}`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+
+                status.textContent = '✅ Map exported successfully!';
+                status.style.color = 'var(--mint)';
+            } catch (e) {
+                status.textContent = '❌ Error: ' + e.message;
+                status.style.color = 'var(--red)';
+                console.error(e);
+            }
+        }
+
+        // ── Download ZIP override ──
         const dlBtn = document.getElementById('dl-btn');
         if (dlBtn) {
             const newBtn = dlBtn.cloneNode(true);
@@ -5982,7 +6014,6 @@
             switchPView('static');
             toggleHist();
             loadOSM(rid, null);
-            // Also fetch geojson for overlay
             fetchJSON(`${BASE}/geojson/${rid}`).then(gj => {
                 if (gj) { currentGeoJSON = gj;
                     _rebuildOverlayLegend(activeModule, gj); }
@@ -5991,11 +6022,9 @@
 
         // ── Initial setup ──
         document.addEventListener('DOMContentLoaded', function() {
-            // Set up overlay layer visibility
             const layer = document.getElementById('overlay-layer');
             layer.classList.add('visible');
 
-            // Watch for image load to show overlay
             const img = document.getElementById('out-img');
             img.addEventListener('load', function() {
                 if (currentRunId && this.style.display !== 'none') {
@@ -6003,44 +6032,30 @@
                 }
             });
 
-            // Set up the layout edit button
             const editBtn = document.getElementById('layout-edit-btn');
             if (editBtn) {
-                // Initial state
                 document.getElementById('layout-hint').style.display = 'none';
             }
 
-            // Wire up initial overlay events
             _wireOvEvents();
 
-            // Make sure layer panel is hidden initially
             document.getElementById('layer-panel')?.classList.remove('visible');
             document.getElementById('align-toolbar')?.classList.remove('visible');
 
-            // Set up scale bar initial text
             const scaleSpan = document.getElementById('ov-scale')?.querySelector('.ov-drag-area span');
             if (scaleSpan && !scaleSpan.textContent.trim()) {
                 scaleSpan.textContent = '0    500    1000 m';
             }
 
-            // Set up title initial text
             const titleArea = document.getElementById('ov-title')?.querySelector('.ov-drag-area');
             if (titleArea && !titleArea.textContent.trim()) {
                 titleArea.textContent = 'Map Title';
             }
 
             console.log('🌲 Elfak GIS Pro Studio — Layout Editor ready');
-            console.log('  📐 Drag items · Click to select · Resize handles · Rotate');
-            console.log('  📂 Save/Load layout as JSON');
-            console.log('  🎯 Snap to edges, centers, and other items');
         });
 
         console.log('🌲 Elfak GIS Pro Studio — Professional Layout Editor');
-        console.log('  🖱 Drag items to reposition');
-        console.log('  🔲 Click to select · Resize handles appear');
-        console.log('  🔄 Rotate with the circular handle');
-        console.log('  📂 Save/Load layout as JSON');
-        console.log('  🎯 Snap to edges, centers, and other items');
     </script>
 </body>
 </html>
