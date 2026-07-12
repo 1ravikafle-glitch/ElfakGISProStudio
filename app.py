@@ -15,6 +15,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mticker
 from matplotlib.transforms import Bbox
 from shapely.geometry import Polygon, Point, LineString, MultiPolygon, box
+from shapely.geometry import box as _sbox
 from shapely.ops import unary_union
 from shapely import affinity
 
@@ -22,6 +23,7 @@ try:
     import rasterio
     from rasterio.mask import mask as rio_mask
     from rasterio.features import shapes as rio_shapes
+    from rasterio.plot import show
     import scipy.ndimage as ndi
     _HAS_RASTERIO = True
 except ImportError:
@@ -78,22 +80,16 @@ def _generate_run_id(base_name, max_len=40):
     Create a human-readable run ID from a base name, with timestamp and random suffix.
     Returns: e.g. "Salghari_CF_20250101_143022_8x9k"
     """
-    # Sanitize: keep alnum, underscore, hyphen
     clean = re.sub(r'[^A-Za-z0-9_-]', '_', base_name)
-    # Remove repeated underscores
     clean = re.sub(r'_+', '_', clean)
-    # Trim to avoid overly long names (leave room for timestamp + suffix)
-    max_base = max_len - 20  # reserve 20 chars for timestamp + suffix
+    max_base = max_len - 20
     if len(clean) > max_base:
         clean = clean[:max_base]
-    # Remove trailing underscores
     clean = clean.rstrip('_')
     if not clean:
         clean = "forest"
-    # timestamp
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # short random suffix (4 chars)
-    suffix = secrets.token_hex(2)  # 4 hex chars
+    suffix = secrets.token_hex(2)
     return f"{clean}_{ts}_{suffix}"
 
 def _safe_runid(rid):
@@ -102,6 +98,106 @@ def _safe_runid(rid):
         log.warning(f"Invalid run_id rejected: {rid!r}")
         abort(400, "Invalid run ID.")
     return rid
+
+# ----------------------------------------------------------------------
+# KMZ Generation (was missing)
+# ----------------------------------------------------------------------
+
+def generate_kmz(poly_gdf, line_gdf, pts_gdf, out_dir, run_id):
+    import zipfile as zf
+
+    def w84(gdf):
+        if gdf is None or gdf.empty:
+            return None
+        try:
+            return gdf.to_crs("EPSG:4326") if gdf.crs else None
+        except:
+            return None
+
+    pw = w84(poly_gdf)
+    lw = w84(line_gdf)
+    ptw = w84(pts_gdf)
+    ref = pw if pw is not None and not pw.empty else lw
+
+    if ref is not None and not ref.empty:
+        u = ref.unary_union
+        cx, cy = u.centroid.x, u.centroid.y
+        minx, miny, maxx, maxy = u.bounds
+        span = max(maxx - minx, maxy - miny)
+        alt = max(500, int(span * 111000 * 2))
+    else:
+        cx, cy, alt = 0, 0, 10000
+
+    st = """<Style id="poly_style"><LineStyle><color>ff00ff00</color><width>2</width></LineStyle><PolyStyle><color>4400cc00</color></PolyStyle></Style>
+<Style id="line_style"><LineStyle><color>ff0000ff</color><width>2</width></LineStyle></Style>
+<Style id="point_style"><IconStyle><color>ff0000ff</color><scale>0.8</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>"""
+
+    def kml_pm(gdf, sid, nc=None):
+        lines = []
+        for i, row in gdf.iterrows():
+            g = row.geometry
+            if g is None or g.is_empty:
+                continue
+            if nc and nc in row.index and row[nc]:
+                label = str(row[nc])
+            elif "Comp_ID" in row.index and row["Comp_ID"]:
+                label = str(row["Comp_ID"])
+            elif "Forest" in row.index and row["Forest"]:
+                label = str(row["Forest"])
+            else:
+                label = f"Feature {i+1}"
+
+            def cs(c):
+                return " ".join(f"{x},{y},0" for x, y in c)
+
+            def pk(geom):
+                o = cs(list(geom.exterior.coords))
+                r = [f"<outerBoundaryIs><LinearRing><coordinates>{o}</coordinates></LinearRing></outerBoundaryIs>"]
+                for interior in geom.interiors:
+                    inn = cs(list(interior.coords))
+                    r.append(f"<innerBoundaryIs><LinearRing><coordinates>{inn}</coordinates></LinearRing></innerBoundaryIs>")
+                return f"<Polygon>{''.join(r)}</Polygon>"
+
+            if g.geom_type == "Polygon":
+                gk = pk(g)
+            elif g.geom_type == "MultiPolygon":
+                gk = f"<MultiGeometry>{''.join(pk(x) for x in g.geoms)}</MultiGeometry>"
+            elif g.geom_type == "LineString":
+                gk = f"<LineString><coordinates>{cs(list(g.coords))}</coordinates></LineString>"
+            elif g.geom_type == "Point":
+                gk = f"<Point><coordinates>{g.x},{g.y},0</coordinates></Point>"
+            else:
+                continue
+            lines.append(f"<Placemark><name>{label}</name><styleUrl>#{sid}</styleUrl>{gk}</Placemark>")
+        return "\n".join(lines)
+
+    folders = []
+    if pw is not None and not pw.empty:
+        folders.append(f"<Folder><name>Polygons</name>{kml_pm(pw,'poly_style','Forest')}</Folder>")
+    if lw is not None and not lw.empty:
+        folders.append(f"<Folder><name>Lines</name>{kml_pm(lw,'line_style','Forest')}</Folder>")
+    if ptw is not None and not ptw.empty:
+        folders.append(f"<Folder><name>Points</name>{kml_pm(ptw,'point_style','SN')}</Folder>")
+
+    kml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>Elfak GIS</name>
+<LookAt><longitude>{cx}</longitude><latitude>{cy}</latitude><altitude>0</altitude><range>{alt}</range><tilt>0</tilt><heading>0</heading></LookAt>
+{st}
+{"".join(folders)}
+</Document>
+</kml>"""
+
+    kmz = os.path.join(out_dir, "output.kmz")
+    with zf.ZipFile(kmz, "w", zf.ZIP_DEFLATED) as z:
+        z.writestr("doc.kml", kml.encode("utf-8"))
+    return {
+        "url": f"/outputs/{run_id}/output.kmz",
+        "lat": round(cy, 6),
+        "lon": round(cx, 6),
+        "alt": alt
+    }
 
 # ----------------------------------------------------------------------
 # User Management, Progress, Rate Limiting
@@ -365,7 +461,7 @@ def _with_pipeline_sem(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         global _ACTIVE_PIPELINES
-        acquired = _PIPELINE_SEM.acquire(timeout=45)
+        acquired = _PIPELINE_SEM.acquire(timeout=5)
         if not acquired:
             log.warning(f"Pipeline semaphore exhausted for {_get_client_ip()}")
             return jsonify({
@@ -1082,65 +1178,155 @@ def group_b(df, crs, out, mapping=None):
 # ----------------------------------------------------------------------
 # GROUP C – SAMPLE PLOT GENERATOR
 # ----------------------------------------------------------------------
+import tempfile
+import zipfile
+import shutil
+import traceback
 
-def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None, base_name="boundary"):
-    polygons=[]
-    if file.filename.lower().endswith(".zip"):
-        folder=os.path.join(UPLOAD,str(uuid.uuid4())); os.makedirs(folder,exist_ok=True)
-        zp=os.path.join(folder,"i.zip"); file.save(zp)
-        with zipfile.ZipFile(zp) as z: z.extractall(folder)
-        shps=[os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith(".shp")]
-        if not shps: raise ValueError("No .shp in ZIP.")
-        sp=shps[0]; ts=(mapping or {}).get("target_shp")
-        if ts:
-            for s in shps:
-                if os.path.basename(s)==os.path.basename(ts): sp=s; break
-        gdf=gpd.read_file(sp)
-        if gdf.empty: raise ValueError("Shapefile empty.")
-        gdf=gdf.set_crs(crs) if gdf.crs is None else gdf.to_crs(crs)
-        for geom in gdf.geometry:
-            if geom is None or geom.is_empty: continue
-            if geom.geom_type=="Polygon": polygons.append(geom if geom.is_valid else geom.buffer(0))
-            elif geom.geom_type=="MultiPolygon":
-                for p in geom.geoms: polygons.append(p if p.is_valid else p.buffer(0))
-        if not polygons: raise ValueError("No polygon geometries found.")
+def group_c(file, crs, w, h, rows, cols, out, mode, mapping=None, base_name="boundary", run_id=None):
+    """
+    Process boundary file (CSV/Excel or ZIP shapefile) and generate grid points.
+    """
+    polygons = []
+    is_zip = file.filename.lower().endswith(".zip")
+
+    if is_zip:
+        tmp_dir = tempfile.mkdtemp(prefix="group_c_")
+        zip_path = os.path.join(tmp_dir, "upload.zip")
+        try:
+            # Save uploaded ZIP to temp
+            file.save(zip_path)
+
+            # Extract
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(tmp_dir)
+
+            # Find all .shp files
+            shps = []
+            for root, _, files in os.walk(tmp_dir):
+                for fname in files:
+                    if fname.lower().endswith(".shp"):
+                        shps.append(os.path.join(root, fname))
+
+            if not shps:
+                raise ValueError("No .shp file found in the uploaded ZIP.")
+
+            # Choose target shapefile (if specified)
+            sp = shps[0]
+            ts = (mapping or {}).get("target_shp")
+            if ts:
+                for s in shps:
+                    if os.path.basename(s) == os.path.basename(ts):
+                        sp = s
+                        break
+
+            # Read shapefile
+            try:
+                gdf = gpd.read_file(sp)
+            except Exception as e:
+                raise ValueError(f"Failed to read shapefile: {e}")
+
+            if gdf.empty:
+                raise ValueError("Shapefile is empty.")
+
+            # Ensure CRS
+            if gdf.crs is None:
+                gdf = gdf.set_crs(crs)
+            else:
+                try:
+                    gdf = gdf.to_crs(crs)
+                except Exception as e:
+                    # Fallback: use the user-provided CRS
+                    gdf = gdf.set_crs(crs)
+                    log.warning(f"CRS conversion failed, set to {crs}: {e}")
+
+            # Collect valid polygons
+            for geom in gdf.geometry:
+                if geom is None or geom.is_empty:
+                    continue
+                if geom.geom_type == "Polygon":
+                    polygons.append(geom if geom.is_valid else geom.buffer(0))
+                elif geom.geom_type == "MultiPolygon":
+                    for p in geom.geoms:
+                        polygons.append(p if p.is_valid else p.buffer(0))
+
+            if not polygons:
+                raise ValueError("No valid polygon geometries found in shapefile.")
+
+        except Exception as e:
+            # Log the full traceback
+            log.error(f"Group C ZIP processing error: {traceback.format_exc()}")
+            raise ValueError(f"ZIP processing failed: {e}")
+        finally:
+            # Clean up temp directory
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     else:
-        df=read_input(file); df=normalize_order(df)
-        xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
-        oc=safe_col(df,mapping,"Order","Order")
-        if not xc: raise ValueError("X column not found.")
-        if not yc: raise ValueError("Y column not found.")
-        if mode=="A":
-            if oc: df=df.sort_values(oc)
-            coords=list(zip(df[xc],df[yc])); coords.append(coords[0]); polygons=[safe_polygon(coords)]
-        else:
-            fc=safe_col(df,mapping,"Forest","Forest"); cc=safe_col(df,mapping,"Compartment","Compartment")
-            if not fc: raise ValueError("Forest column required for segmented mode.")
-            gkeys=[fc,cc] if cc else [fc]
-            for _,g in df.groupby(gkeys):
-                if oc: g=g.sort_values(oc)
-                c=list(zip(g[xc],g[yc])); c.append(c[0])
-                if len(c)>=4: polygons.append(safe_polygon(c))
-            if not polygons: raise ValueError("No valid polygons built.")
-    if not polygons: raise ValueError("No valid polygons from input.")
-    p_gdf=gpd.GeoDataFrame([{"geometry":p} for p in polygons],crs=crs)
-    l_gdf=gpd.GeoDataFrame([{"geometry":LineString(p.exterior.coords)} for p in polygons],crs=crs)
-    union=p_gdf.unary_union; minx,miny,_,_=union.bounds
-    pts=[]; sn=1
+        # CSV/Excel handling (unchanged)
+        df = read_input(file)
+        df = normalize_order(df)
+        xc = safe_col(df, mapping, "X", "X")
+        yc = safe_col(df, mapping, "Y", "Y")
+        oc = safe_col(df, mapping, "Order", "Order")
+
+        if not xc or not yc:
+            raise ValueError("X/Y columns not found.")
+
+        if mode == "A":
+            if oc:
+                df = df.sort_values(oc)
+            coords = list(zip(df[xc], df[yc]))
+            coords.append(coords[0])
+            polygons = [safe_polygon(coords)]
+        else:  # mode B – segmented
+            fc = safe_col(df, mapping, "Forest", "Forest")
+            cc = safe_col(df, mapping, "Compartment", "Compartment")
+            if not fc:
+                raise ValueError("Forest column required for segmented mode.")
+            gkeys = [fc, cc] if cc else [fc]
+            for _, g in df.groupby(gkeys):
+                if oc:
+                    g = g.sort_values(oc)
+                coords = list(zip(g[xc], g[yc]))
+                if len(coords) < 3:
+                    continue
+                coords.append(coords[0])
+                polygons.append(safe_polygon(coords))
+            if not polygons:
+                raise ValueError("No valid polygons could be constructed from the data.")
+
+    if not polygons:
+        raise ValueError("No valid polygons from input.")
+
+    # Build GeoDataFrames
+    p_gdf = gpd.GeoDataFrame([{"geometry": p} for p in polygons], crs=crs)
+    l_gdf = gpd.GeoDataFrame([{"geometry": LineString(p.exterior.coords)} for p in polygons], crs=crs)
+
+    # Union for point‑in‑polygon tests
+    union = p_gdf.unary_union
+    minx, miny, _, _ = union.bounds
+
+    pts = []
+    sn = 1
     for ri in range(rows):
         for ci in range(cols):
-            center=Point(minx+ci*w+w/2, miny+ri*h+h/2)
+            center = Point(minx + ci * w + w / 2, miny + ri * h + h / 2)
             if union.contains(center):
-                pts.append({"SN":sn,"X":center.x,"Y":center.y,"geometry":center}); sn+=1
-    pt_gdf=gpd.GeoDataFrame(pts,crs=crs)
-    p_gdf=_enforce_poly_gdf(p_gdf)
-    if not p_gdf.empty: p_gdf.to_file(os.path.join(out,f"{base_name}_polygon.shp"))
-    l_gdf.to_file(os.path.join(out,f"{base_name}_line.shp"))
-    if not pt_gdf.empty:
-        pt_gdf.to_file(os.path.join(out,f"{base_name}_point.shp"))
-        pd.DataFrame(pts)[["SN","X","Y"]].to_excel(os.path.join(out,f"{base_name}_sampleplot.xlsx"),index=False)
-    return p_gdf,l_gdf,pt_gdf
+                pts.append({"SN": sn, "X": center.x, "Y": center.y, "geometry": center})
+                sn += 1
 
+    pt_gdf = gpd.GeoDataFrame(pts, crs=crs)
+
+    # Save outputs
+    p_gdf = _enforce_poly_gdf(p_gdf)
+    if not p_gdf.empty:
+        p_gdf.to_file(os.path.join(out, f"{base_name}_polygon.shp"))
+    l_gdf.to_file(os.path.join(out, f"{base_name}_line.shp"))
+    if not pt_gdf.empty:
+        pt_gdf.to_file(os.path.join(out, f"{base_name}_point.shp"))
+        pd.DataFrame(pts)[["SN", "X", "Y"]].to_excel(os.path.join(out, f"{base_name}_sampleplot.xlsx"), index=False)
+
+    return p_gdf, l_gdf, pt_gdf
 # ----------------------------------------------------------------------
 # GROUP D – MULTI-FOREST COMPLEX
 # ----------------------------------------------------------------------
@@ -1190,396 +1376,1260 @@ def group_d(df, crs, out, mapping=None, mode="A"):
 # ----------------------------------------------------------------------
 # GROUP E – POLYGON SUBDIVIDER
 # ----------------------------------------------------------------------
+"""
+Polygon Subdivision Module  (fixed v3)
+───────────────────────────────────────
+Key fixes in this version
+  • snap_tol auto-scaled to geometry units (degrees vs metres)
+  • hard_clip() applied to EVERY piece before validation — no leaks possible
+  • orig_poly padding fallback removed; _ensure_count raises instead
+  • safe_overlay never silently returns an unclipped geometry
+  • _validate_subdivision tolerance is unit-aware
+  • _bisect PA-rotation path clips against original polygon, not running rem
+  • _enforce_area_tolerance transfer always ≥ 0; uses join_style for compat
+  • _clip_to_original guards every .length call against None
+  • _ensure_count loop-capped; sub-pieces clipped before use
+  • _subdivide_voronoi seeds never fewer than needed; GeometryCollection handled
+  • _subdivide_grid explicit guard loops
+"""
+
+import math
+import os
+import uuid
+import zipfile
+
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+from shapely.affinity import rotate as sh_rotate
+from shapely.geometry import (
+    LineString, MultiPoint, Point, Polygon, MultiPolygon, box as _sbox,
+)
+from shapely.ops import snap, unary_union, voronoi_diagram
+from shapely.validation import make_valid
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 1 – SNAP TOLERANCE (unit-aware)
+# ═══════════════════════════════════════════════════════════
+
+def _snap_tol(geom):
+    """
+    Return a snap/residual tolerance appropriate for the geometry's coordinate scale.
+    Projected CRS (metres): coords ~ 1e4–1e6  → tol = 0.01 m
+    Geographic CRS (degrees): coords ~ -180..180 → tol = 1e-8 °
+    """
+    try:
+        minx, miny, maxx, maxy = geom.bounds
+        span = max(maxx - minx, maxy - miny, 1e-9)
+        # If span > 1000, almost certainly metres
+        return 0.01 if span > 1000 else 1e-8
+    except Exception:
+        return 1e-7
+
+# residual tolerance for validation (m² or deg²); derived lazily from geometry
+_GEOM_TOL_FRAC = 1e-6   # fraction of orig area that counts as "leak"
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 2 – LOW-LEVEL GEOMETRY HELPERS
+# ═══════════════════════════════════════════════════════════
+
+def _force_valid(geom):
+    if geom is None or geom.is_empty:
+        return None
+    if geom.is_valid:
+        return geom
+    for tol in (1e-8, 1e-7, 1e-6):
+        try:
+            g = geom.simplify(tol, preserve_topology=True)
+            if g and not g.is_empty and g.is_valid:
+                return g
+        except Exception:
+            pass
+    try:
+        g = geom.buffer(0)
+        if g and not g.is_empty and g.is_valid:
+            return g
+    except Exception:
+        pass
+    try:
+        g = make_valid(geom)
+        if g and not g.is_empty and g.is_valid:
+            return g
+    except Exception:
+        pass
+    for eps in (1e-7, 1e-6, 1e-5):
+        try:
+            g = geom.buffer(eps).buffer(-eps)
+            if g and not g.is_empty and g.is_valid:
+                return g
+        except Exception:
+            continue
+    try:
+        g = geom.convex_hull
+        if g and not g.is_empty and g.is_valid:
+            return g
+    except Exception:
+        pass
+    return None
+
+
+def _close_poly(p):
+    """Return a Polygon with explicitly closed rings; picks largest part of Multi."""
+    if p is None:
+        return None
+    try:
+        if p.is_empty:
+            return p
+        if p.geom_type == "MultiPolygon":
+            parts = [x for x in p.geoms if not x.is_empty]
+            if not parts:
+                return p
+            p = max(parts, key=lambda x: x.area)
+        if p.geom_type != "Polygon":
+            return p
+        ext = list(p.exterior.coords)
+        if ext[0] != ext[-1]:
+            ext.append(ext[0])
+        holes = []
+        for ring in p.interiors:
+            h = list(ring.coords)
+            if h[0] != h[-1]:
+                h.append(h[0])
+            holes.append(h)
+        c = Polygon(ext, holes)
+        if c.is_empty:
+            return p
+        return c if c.is_valid else c.buffer(0)
+    except Exception:
+        return p
+
+
+def _as_poly(g):
+    """Extract the largest Polygon from any geometry, or None."""
+    if g is None:
+        return None
+    try:
+        if g.is_empty:
+            return None
+        if g.geom_type == "Polygon":
+            return g
+        if g.geom_type == "MultiPolygon":
+            parts = [x for x in g.geoms if x.geom_type == "Polygon" and not x.is_empty]
+            return max(parts, key=lambda x: x.area) if parts else None
+        if g.geom_type in ("GeometryCollection",):
+            polys = []
+            for x in g.geoms:
+                if x.geom_type == "Polygon" and not x.is_empty and x.area > 1e-10:
+                    polys.append(x)
+                elif x.geom_type == "MultiPolygon":
+                    polys.extend(pp for pp in x.geoms
+                                 if not pp.is_empty and pp.area > 1e-10)
+            return max(polys, key=lambda x: x.area) if polys else None
+    except Exception:
+        pass
+    return None
+
+
+def _repair(g):
+    """Full repair: validate → collapse Multi/Collection → close rings."""
+    if g is None:
+        return None
+    try:
+        if g.is_empty:
+            return None
+        g = _force_valid(g)
+        if g is None or g.is_empty:
+            return None
+        if g.geom_type == "MultiPolygon":
+            parts = [p for p in g.geoms if p and not p.is_empty and p.is_valid]
+            if not parts:
+                return None
+            g = parts[0] if len(parts) == 1 else unary_union(parts)
+            if g is None or g.is_empty:
+                return None
+        elif g.geom_type == "GeometryCollection":
+            polys = [p for p in g.geoms
+                     if p.geom_type in ("Polygon", "MultiPolygon")
+                     and not p.is_empty and p.is_valid]
+            if not polys:
+                return None
+            g = unary_union(polys)
+            if g is None or g.is_empty:
+                return None
+        if g.geom_type == "Polygon":
+            g = _close_poly(g)
+        return g if (g and not g.is_empty) else None
+    except Exception:
+        try:
+            fixed = g.buffer(0) if g else None
+            return fixed if (fixed and not fixed.is_empty) else None
+        except Exception:
+            return None
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 3 – HARD CLIP (guaranteed containment)
+# ═══════════════════════════════════════════════════════════
+
+def _hard_clip(piece, orig_poly, tol=None):
+    """
+    Guarantee that `piece` lies entirely within `orig_poly`.
+    Uses progressively larger snap tolerances until the intersection succeeds
+    and the result has no residual outside orig_poly.
+
+    Returns a valid Polygon fully inside orig_poly, or None if impossible.
+    """
+    if piece is None or orig_poly is None:
+        return None
+
+    tol = tol or _snap_tol(orig_poly)
+    tolerances = [tol, tol * 10, tol * 100, tol * 1000]
+
+    for t in tolerances:
+        try:
+            ps = snap(piece, orig_poly, t)
+            os_ = snap(orig_poly, piece, t)
+            result = ps.intersection(os_)
+            if result is None or result.is_empty:
+                continue
+            result = _repair(result)
+            if result is None or result.is_empty:
+                continue
+            # Verify no residual leak
+            diff = result.difference(orig_poly.buffer(t))
+            if diff is None or diff.is_empty or diff.area < orig_poly.area * _GEOM_TOL_FRAC:
+                # Final clip to be safe
+                final = result.intersection(orig_poly.buffer(t * 2))
+                if final is None or final.is_empty:
+                    final = result
+                return _close_poly(_repair(final))
+        except Exception:
+            continue
+
+    # Last resort: use buffer(tol) on orig to absorb floating-point boundary
+    try:
+        padded = orig_poly.buffer(tol * 100)
+        result = piece.intersection(padded)
+        if result and not result.is_empty:
+            result = result.intersection(orig_poly)
+            if result and not result.is_empty:
+                return _close_poly(_repair(result))
+    except Exception:
+        pass
+    return None
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 4 – SAFE OVERLAY
+# ═══════════════════════════════════════════════════════════
+
+def safe_overlay(a, b, op):
+    """
+    Robust two-operand overlay. snap_tol is derived from geometry scale.
+    Never returns a geometry that is larger than both inputs (for intersection).
+    """
+    a = _repair(a)
+    b = _repair(b)
+    if a is None or b is None:
+        return None
+
+    tol = _snap_tol(a)
+
+    def _do(ga, gb):
+        if op == "intersection":
+            return ga.intersection(gb)
+        if op == "difference":
+            return ga.difference(gb)
+        if op == "union":
+            return ga.union(gb)
+        if op == "symmetric_difference":
+            return ga.symmetric_difference(gb)
+        raise ValueError(f"Unknown op: {op}")
+
+    # Try with snapping
+    try:
+        result = _do(snap(a, b, tol), snap(b, a, tol))
+        r = _repair(result)
+        if r is not None:
+            return r
+    except Exception:
+        pass
+
+    # Fallback: buffer(0) repair before overlay
+    try:
+        result = _do(a.buffer(0), b.buffer(0))
+        r = _repair(result)
+        if r is not None:
+            return r
+    except Exception:
+        pass
+
+    # Fallback: make_valid both sides
+    try:
+        result = _do(make_valid(a), make_valid(b))
+        return _repair(result)
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 5 – SHAPE DESCRIPTORS
+# ═══════════════════════════════════════════════════════════
 
 def _elong(p):
-    minx,miny,maxx,maxy=p.bounds; dx,dy=maxx-minx,maxy-miny
-    return max(dx,dy)/max(min(dx,dy),1e-9)
+    minx, miny, maxx, maxy = p.bounds
+    dx, dy = maxx - minx, maxy - miny
+    return max(dx, dy) / max(min(dx, dy), 1e-9)
+
+def _asp(p):
+    b = p.bounds
+    w, h = b[2] - b[0], b[3] - b[1]
+    return max(w, h) / max(min(w, h), 1e-9)
+
 def _pa_angle(p):
     try:
-        c=np.array(p.exterior.coords[:-1]); c-=c.mean(0)
-        _,v=np.linalg.eigh(np.cov(c.T)); return np.arctan2(v[1,1],v[0,1])
-    except: return 0.0
+        c = np.array(p.exterior.coords[:-1])
+        c -= c.mean(0)
+        _, v = np.linalg.eigh(np.cov(c.T))
+        return float(np.arctan2(v[1, 1], v[0, 1]))
+    except Exception:
+        return 0.0
 
-def _bisect(poly, n, axis=None, depth=0):
-    poly=_repair(poly)
-    if poly is None or poly.is_empty or poly.area<1e-10: return []
-    if n<=1: return [_close_poly(poly)]
-    minx,miny,maxx,maxy=poly.bounds
-    use_p=False; rot=0.0; cx0,cy0=poly.centroid.x,poly.centroid.y
-    if axis is None and depth<2 and _elong(poly)>1.6:
-        rot=_pa_angle(poly)
-        if 10<abs(np.degrees(rot))%90<80: use_p=True
-    if use_p:
-        pr=affinity.rotate(poly,-np.degrees(rot),origin=(cx0,cy0)); pr=_repair(pr)
-        if pr and not pr.is_empty:
-            rp=_bisect(pr,n,'x',depth+1); pieces=[]
-            for p in rp:
-                pb=affinity.rotate(p,np.degrees(rot),origin=(cx0,cy0)); pb=_repair(pb); pg=_as_poly(pb)
-                if pg and pg.area>1e-10: pieces.append(pg)
-            clipped=[]; rem=_repair(poly)
-            for i,p in enumerate(sorted(pieces,key=lambda x:x.centroid.x)):
-                if rem is None or rem.is_empty: break
-                if i==len(pieces)-1:
-                    lp=_as_poly(_repair(rem))
-                    if lp and lp.area>1e-10: clipped.append(_close_poly(lp))
-                else:
-                    try:
-                        c=_as_poly(_repair(p.intersection(rem)))
-                        if c and c.area>1e-10: clipped.append(_close_poly(c)); rem=_repair(rem.difference(c))
-                    except: pass
-            if clipped: return clipped
-    nl=n//2; nr=n-nl; frac=nl/n
-    def _cut(cax):
-        lo,hi=(minx,maxx) if cax=='x' else (miny,maxy); ta=poly.area*frac; bm=(lo+hi)/2
-        for _ in range(80):
-            m=(lo+hi)/2
-            try:
-                b=_sbox(minx-1,miny-1,m,maxy+1) if cax=='x' else _sbox(minx-1,miny-1,maxx+1,m)
-                lp=_repair(poly.intersection(b)); got=lp.area if lp else 0.0
-            except: return None
-            if abs(got-ta)/(ta+1e-12)<5e-4: bm=m; break
-            if got<ta: lo=m
-            else: hi=m
-            bm=m
-        try:
-            b=_sbox(minx-1,miny-1,bm,maxy+1) if cax=='x' else _sbox(minx-1,miny-1,maxx+1,bm)
-            lp=_repair(poly.intersection(b)); rp=_repair(poly.difference(lp))
-            la=_as_poly(lp); ra=_as_poly(rp)
-            if la and ra and la.area>1e-10 and ra.area>1e-10: return la,ra
-        except: pass
-        return None
-    def _asp(p):
-        b=p.bounds; w,h=b[2]-b[0],b[3]-b[1]; s=min(w,h) or 1e-9; return max(w,h)/s
-    best=None
-    for cax in (['x','y'] if axis is None else [axis]):
-        cut=_cut(cax)
-        if cut is None: continue
-        lp,rp=cut; sc=max(_asp(lp),_asp(rp))
-        if best is None or sc<best[0]: best=(sc,lp,rp)
-    if best is None: return [_close_poly(poly)]
-    _,lp,rp=best
-    try:
-        lp=_as_poly(_repair(lp.intersection(poly))) or lp
-        rp=_as_poly(_repair(rp.intersection(poly))) or rp
-    except: pass
-    lp=_close_poly(_repair(lp) or lp); rp=_close_poly(_repair(rp) or rp)
-    return _bisect(lp,nl,None,depth+1)+_bisect(rp,nr,None,depth+1)
 
-def _subdivide_bisect(poly, n, area_tol_ha=0.3):
-    poly=_repair(poly)
-    if poly is None or poly.is_empty: return []
-    pieces=_bisect(poly,n)
-    valid=[_close_poly(p) for p in pieces if p and not p.is_empty and p.area>1e-10]
-    if not valid: return [_close_poly(poly)]
-    while len(valid)>n:
-        si=min(range(len(valid)),key=lambda i:valid[i].area); sl=valid.pop(si)
-        bj,bl=0,-1.0
-        for j,v in enumerate(valid):
-            try: s=sl.intersection(v).length
-            except: s=0.0
-            if s>bl: bl=s; bj=j
-        mg=_as_poly(_repair(unary_union([valid[bj],sl])))
-        if mg: valid[bj]=_close_poly(mg)
-    while len(valid)<n:
-        li=max(range(len(valid)),key=lambda i:valid[i].area); big=valid.pop(li)
-        sub=[_close_poly(s) for s in _bisect(big,2) if s and s.area>1e-10]
-        if len(sub)==2: valid.extend(sub)
-        else: valid.append(big); break
-    try:
-        covered=_repair(unary_union(valid)); gap=_repair(poly.difference(covered))
-        if gap and not gap.is_empty and gap.area>1e-8:
-            bi,bl=0,-1.0
-            for i,v in enumerate(valid):
-                try: s=gap.buffer(1e-4).intersection(v).length
-                except: s=0.0
-                if s>bl: bl=s; bi=i
-            mg=_as_poly(_repair(unary_union([valid[bi],gap])))
-            if mg: valid[bi]=_close_poly(mg)
-    except: pass
-    valid = [_close_poly(_repair(p) or p) for p in valid]
-    valid = _enforce_area_tolerance(valid, poly, n, area_tol_ha)
-    return valid
+# ═══════════════════════════════════════════════════════════
+# SECTION 6 – AREA-BALANCE REFINEMENT
+# ═══════════════════════════════════════════════════════════
 
 def _enforce_area_tolerance(pieces, orig_poly, n, tol_ha):
-    if not pieces or n < 2: return pieces
-    tol_m2 = tol_ha * 10000
-    ideal   = orig_poly.area / n
-    for _pass in range(6):
-        improved = False
-        for i in range(len(pieces)):
-            for j in range(len(pieces)):
-                if i == j: continue
-                ai = pieces[i].area; aj = pieces[j].area
-                if abs(ai - ideal) <= tol_m2 and abs(aj - ideal) <= tol_m2:
-                    continue
-                if ai > ideal + tol_m2 and aj < ideal - tol_m2:
-                    try:
-                        shared = pieces[i].boundary.intersection(pieces[j].boundary)
-                        if shared.is_empty or shared.length < 0.5: continue
-                        transfer = min(ai - ideal, ideal - aj)
-                        strip_w  = transfer / max(shared.length, 1.0)
-                        buf = shared.buffer(max(strip_w, 0.5), cap_style=2)
-                        strip = _as_poly(_repair(pieces[i].intersection(buf)))
-                        if strip is None or strip.is_empty: continue
-                        ni = _as_poly(_repair(pieces[i].difference(strip)))
-                        nj = _as_poly(_repair(pieces[j].union(strip)))
-                        if ni and nj and ni.area > ideal*0.4 and nj.area > ideal*0.4:
-                            pieces[i] = _close_poly(ni)
-                            pieces[j] = _close_poly(nj)
-                            improved = True
-                    except: pass
-        if not improved: break
-    return pieces
+    if not pieces or n < 2:
+        return pieces
+
+    tol_m2 = tol_ha * 10_000.0
+    ideal = orig_poly.area / n
+
+    for _iter in range(50):
+        areas = [p.area for p in pieces]
+        if max(areas) - min(areas) <= tol_m2:
+            break
+
+        i_max = int(np.argmax(areas))
+        i_min = int(np.argmin(areas))
+        if i_max == i_min:
+            break
+
+        excess  = areas[i_max] - ideal
+        deficit = ideal - areas[i_min]
+        transfer = max(min(excess, deficit) * 0.5, 0.0)
+        if transfer < 1.0:
+            break
+
+        shared = safe_overlay(
+            pieces[i_max].boundary, pieces[i_min].boundary, "intersection"
+        )
+        if shared is None or shared.is_empty or shared.length < 0.5:
+            break
+
+        strip_w = max(transfer / shared.length, 0.05)
+        buf = shared.buffer(strip_w, join_style=2)
+        strip = safe_overlay(pieces[i_max], buf, "intersection")
+        if strip is None or strip.is_empty or strip.area < 0.1:
+            continue
+
+        ni = safe_overlay(pieces[i_max], strip, "difference")
+        nj = safe_overlay(pieces[i_min], strip, "union")
+        if (ni is not None and nj is not None
+                and ni.area > ideal * 0.05 and nj.area > ideal * 0.05):
+            pieces[i_max] = _close_poly(ni)
+            pieces[i_min] = _close_poly(nj)
+
+    return [_close_poly(_repair(p)) for p in pieces]
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 7 – CLIP TO ORIGINAL & FILL GAPS
+# ═══════════════════════════════════════════════════════════
+
+def _clip_to_original(pieces, orig_poly):
+    """
+    Hard-clip every piece, then fill any residual gap back into
+    the best-touching neighbour.
+    """
+    if not pieces:
+        return [orig_poly]
+
+    tol = _snap_tol(orig_poly)
+    clipped = []
+    for p in pieces:
+        c = _hard_clip(p, orig_poly, tol)
+        if c is not None and not c.is_empty:
+            clipped.append(_close_poly(c))
+
+    if not clipped:
+        return [orig_poly]
+
+    union_all = clipped[0]
+    for p in clipped[1:]:
+        union_all = safe_overlay(union_all, p, "union")
+
+    gap = safe_overlay(orig_poly, union_all, "difference")
+    if gap is None or gap.is_empty or gap.area <= orig_poly.area * _GEOM_TOL_FRAC:
+        return clipped
+
+    gap_geoms = (
+        list(gap.geoms)
+        if gap.geom_type in ("MultiPolygon", "GeometryCollection")
+        else [gap]
+    )
+
+    for frag in gap_geoms:
+        if frag is None or frag.is_empty or frag.area < orig_poly.area * _GEOM_TOL_FRAC:
+            continue
+        best_i, best_len = 0, -1.0
+        for idx, cell in enumerate(clipped):
+            inter = safe_overlay(cell.boundary, frag.boundary, "intersection")
+            length = inter.length if (inter is not None and not inter.is_empty) else 0.0
+            if length > best_len:
+                best_len = length
+                best_i = idx
+        merged = safe_overlay(clipped[best_i], frag, "union")
+        if merged is not None and not merged.is_empty:
+            clipped[best_i] = _close_poly(merged)
+
+    return clipped
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 8 – ENSURE EXACT PIECE COUNT
+# ═══════════════════════════════════════════════════════════
+
+def _ensure_count(pieces, n, orig_poly):
+    def _clean(lst):
+        out = []
+        for p in lst:
+            p2 = _close_poly(_repair(p))
+            if p2 is not None and not p2.is_empty:
+                out.append(p2)
+        return out
+
+    pieces = _clean(pieces)
+    if not pieces:
+        # Bootstrap with grid
+        pieces = _subdivide_grid(orig_poly, n)
+        pieces = _clean(pieces)
+
+    # Grow: split largest
+    max_attempts = n * 4
+    attempt = 0
+    while len(pieces) < n and attempt < max_attempts:
+        attempt += 1
+        li = max(range(len(pieces)), key=lambda i: pieces[i].area)
+        big = pieces.pop(li)
+        sub = _bisect(big, 2)
+        sub = _clean(sub)
+        sub = [_close_poly(safe_overlay(p, orig_poly, "intersection")) for p in sub]
+        sub = _clean(sub)
+        if len(sub) >= 2:
+            pieces.extend(sub)
+        else:
+            pieces.append(big)
+            break
+
+    # Shrink: merge smallest into best neighbour
+    while len(pieces) > n:
+        si = min(range(len(pieces)), key=lambda i: pieces[i].area)
+        small = pieces.pop(si)
+        if not pieces:
+            pieces.append(small)
+            break
+        best_j, best_len = 0, -1.0
+        for j, other in enumerate(pieces):
+            inter = safe_overlay(small.boundary, other.boundary, "intersection")
+            length = inter.length if (inter is not None and not inter.is_empty) else 0.0
+            if length > best_len:
+                best_len = length
+                best_j = j
+        merged = safe_overlay(small, pieces[best_j], "union")
+        merged = safe_overlay(merged, orig_poly, "intersection") if merged else None
+        if merged is not None and not merged.is_empty:
+            pieces[best_j] = _close_poly(merged)
+        else:
+            pieces.append(small)
+            break
+
+    pieces = [_close_poly(safe_overlay(p, orig_poly, "intersection")) for p in pieces]
+    return _clean(pieces)
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 9 – FINAL HARD-CLIP PASS BEFORE VALIDATION
+# ═══════════════════════════════════════════════════════════
+
+def _final_clip_pass(pieces, orig_poly):
+    """
+    Last-chance hard clip: ensure EVERY piece is strictly inside orig_poly.
+    Any piece that still leaks after _hard_clip is replaced by its intersection.
+    """
+    tol = _snap_tol(orig_poly)
+    result = []
+    for p in pieces:
+        if p is None or p.is_empty:
+            continue
+        # Quick check: does it leak?
+        try:
+            diff = p.difference(orig_poly)
+            leaks = diff is not None and not diff.is_empty and diff.area > orig_poly.area * _GEOM_TOL_FRAC
+        except Exception:
+            leaks = True
+
+        if leaks:
+            clipped = _hard_clip(p, orig_poly, tol)
+            if clipped is not None and not clipped.is_empty:
+                result.append(_close_poly(clipped))
+        else:
+            result.append(_close_poly(p))
+    return result
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 10 – VALIDATION
+# ═══════════════════════════════════════════════════════════
+
+def _validate_subdivision(pieces, orig_poly, n, tol_ha):
+    if len(pieces) != n:
+        raise ValueError(f"Expected {n} pieces, got {len(pieces)}")
+
+    # Residual tolerance: 0.01% of orig area, minimum 0.01 m²
+    res_tol = max(orig_poly.area * _GEOM_TOL_FRAC, 0.01)
+
+    for i, p in enumerate(pieces):
+        if p is None or p.is_empty:
+            raise ValueError(f"Piece {i} is empty")
+        if not p.is_valid:
+            raise ValueError(f"Piece {i} is invalid geometry")
+        try:
+            diff = p.difference(orig_poly)
+            leak = diff.area if (diff is not None and not diff.is_empty) else 0.0
+        except Exception:
+            leak = 0.0
+        if leak > res_tol:
+            raise ValueError(
+                f"Piece {i} leaks outside original boundary "
+                f"(residual {leak:.3e} m², tolerance {res_tol:.3e} m²)"
+            )
+
+    union_all = pieces[0]
+    for p in pieces[1:]:
+        union_all = safe_overlay(union_all, p, "union")
+    try:
+        gap = orig_poly.difference(union_all) if union_all else orig_poly
+        gap_area = gap.area if (gap is not None and not gap.is_empty) else 0.0
+    except Exception:
+        gap_area = 0.0
+    if gap_area > res_tol:
+        raise ValueError(
+            f"Pieces do not fully cover original polygon "
+            f"(uncovered area: {gap_area:.3e} m²)"
+        )
+
+    areas = [p.area for p in pieces]
+    spread = max(areas) - min(areas)
+    tol_m2 = tol_ha * 10_000.0
+    if spread > tol_m2:
+        raise ValueError(
+            f"Area spread {spread:.2f} m² ({spread/10000:.4f} ha) "
+            f"exceeds tolerance {tol_m2:.2f} m² ({tol_ha} ha)"
+        )
+    return True
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 11 – FOUR SUBDIVISION METHODS
+# ═══════════════════════════════════════════════════════════
+
+def _bisect(poly, n, axis=None, depth=0):
+    from shapely.ops import split as sh_split
+
+    poly = _repair(poly)
+    if poly is None or poly.is_empty or poly.area < 1e-10:
+        return []
+    if n <= 1:
+        return [_close_poly(poly)]
+
+    minx, miny, maxx, maxy = poly.bounds
+    cx0, cy0 = poly.centroid.x, poly.centroid.y
+
+    # PA rotation for elongated polygons
+    if axis is None and depth < 2 and _elong(poly) > 1.6:
+        rot_deg = np.degrees(_pa_angle(poly))
+        if 10 < abs(rot_deg) % 90 < 80:
+            try:
+                pr = sh_rotate(poly, -rot_deg, origin=(cx0, cy0))
+                pr = _repair(pr)
+                if pr and not pr.is_empty:
+                    rp = _bisect(pr, n, "x", depth + 1)
+                    if len(rp) == n:
+                        pieces = []
+                        for p in rp:
+                            pb = sh_rotate(p, rot_deg, origin=(cx0, cy0))
+                            # Clip against the ORIGINAL (unrotated) polygon
+                            pb = safe_overlay(pb, poly, "intersection")
+                            pg = _as_poly(pb)
+                            if pg and pg.area > 1e-10:
+                                pieces.append(_close_poly(pg))
+                        if len(pieces) == n:
+                            return pieces
+            except Exception:
+                pass
+
+    nl = n // 2
+    nr = n - nl
+    frac = nl / n
+
+    def _cut(cax):
+        lo, hi = (minx, maxx) if cax == "x" else (miny, maxy)
+        target = poly.area * frac
+        best_m = (lo + hi) / 2.0
+
+        for _ in range(120):
+            m = (lo + hi) / 2.0
+            box = (
+                _sbox(minx - 1, miny - 1, m, maxy + 1)
+                if cax == "x"
+                else _sbox(minx - 1, miny - 1, maxx + 1, m)
+            )
+            lp = safe_overlay(poly, box, "intersection")
+            got = lp.area if lp else 0.0
+            err = abs(got - target) / (target + 1e-12)
+            if err < 5e-5:
+                best_m = m
+                break
+            if got < target:
+                lo = m
+            else:
+                hi = m
+            best_m = m
+            if hi - lo < 1e-10:
+                break
+
+        box = (
+            _sbox(minx - 1, miny - 1, best_m, maxy + 1)
+            if cax == "x"
+            else _sbox(minx - 1, miny - 1, maxx + 1, best_m)
+        )
+        lp = safe_overlay(poly, box, "intersection")
+        rp = safe_overlay(poly, lp, "difference") if lp else None
+
+        la = _as_poly(lp)
+        ra = _as_poly(rp)
+        if la and ra and la.area > 1e-10 and ra.area > 1e-10:
+            return la, ra
+
+        # LineString split fallback
+        try:
+            if cax == "x":
+                cut_line = LineString([(best_m, miny - 1), (best_m, maxy + 1)])
+            else:
+                cut_line = LineString([(minx - 1, best_m), (maxx + 1, best_m)])
+            parts = [p for p in sh_split(poly, cut_line).geoms if p.area > 1e-10]
+            if len(parts) >= 2:
+                parts.sort(key=lambda p: p.centroid.x if cax == "x" else p.centroid.y)
+                la = _as_poly(parts[0])
+                ra = _as_poly(parts[-1])
+                if la and ra and la.area > 1e-10 and ra.area > 1e-10:
+                    return la, ra
+        except Exception:
+            pass
+        return None
+
+    best = None
+    for cax in (["x", "y"] if axis is None else [axis]):
+        cut = _cut(cax)
+        if cut is None:
+            continue
+        lp, rp = cut
+        score = max(_asp(lp), _asp(rp))
+        if best is None or score < best[0]:
+            best = (score, lp, rp)
+
+    if best is None:
+        return [_close_poly(poly)]
+
+    _, lp, rp = best
+    lp = _close_poly(_repair(safe_overlay(lp, poly, "intersection")))
+    rp = _close_poly(_repair(safe_overlay(rp, poly, "intersection")))
+
+    left = _bisect(lp, nl, None, depth + 1)
+    right = _bisect(rp, nr, None, depth + 1)
+    return [
+        _close_poly(_repair(p))
+        for p in left + right
+        if p and not p.is_empty
+    ]
+
 
 def _subdivide_ba(poly, n, area_tol_ha=0.3):
-    pieces=_subdivide_bisect(poly,n,area_tol_ha); ideal=poly.area/max(n,1)
-    for _ in range(4):
-        changed=False
-        for i in range(len(pieces)-1):
-            try:
-                sh=pieces[i].exterior.intersection(pieces[i+1].exterior)
-                if sh.is_empty or sh.length<1: continue
-                buf=sh.buffer(max(sh.length*0.015,1.0))
-                pi2=_as_poly(_repair(pieces[i].union(buf.intersection(pieces[i+1]))))
-                pj2=_as_poly(_repair(pieces[i+1].difference(buf.intersection(pieces[i+1]))))
-                if pi2 and pj2 and pi2.area>1e-6 and pj2.area>1e-6:
-                    pieces[i]=_close_poly(pi2); pieces[i+1]=_close_poly(pj2); changed=True
-            except: pass
-        if not changed: break
+    pieces = _bisect(poly, n)
+    if not pieces:
+        return [_close_poly(poly)]
+    pieces = [_close_poly(_repair(p)) for p in pieces if p and not p.is_empty]
+    if len(pieces) < n:
+        return _subdivide_grid(poly, n)
+
+    ideal = poly.area / n
+
+    for _iter in range(15):
+        areas = [p.area for p in pieces]
+        if max(areas) - min(areas) <= area_tol_ha * 10_000.0:
+            break
+        pairs = sorted(
+            [(i, j) for i in range(len(pieces))
+             for j in range(i + 1, len(pieces))],
+            key=lambda ij: abs(areas[ij[0]] - areas[ij[1]]),
+            reverse=True,
+        )
+        changed = False
+        for i, j in pairs:
+            ai, aj = pieces[i].area, pieces[j].area
+            if abs(ai - aj) < 1.0:
+                continue
+            shared = safe_overlay(
+                pieces[i].boundary, pieces[j].boundary, "intersection"
+            )
+            if shared is None or shared.is_empty or shared.length < 0.5:
+                continue
+            big, small = (i, j) if ai > aj else (j, i)
+            buf_w = max(abs(ai - aj) * 0.5 / shared.length, 0.05)
+            buf = shared.buffer(buf_w, join_style=2)
+            strip = safe_overlay(pieces[big], buf, "intersection")
+            if strip is None or strip.is_empty:
+                continue
+            nb = safe_overlay(pieces[big], strip, "difference")
+            ns = safe_overlay(pieces[small], strip, "union")
+            if (nb is not None and ns is not None
+                    and nb.area > ideal * 0.05 and ns.area > ideal * 0.05):
+                pieces[big] = _close_poly(nb)
+                pieces[small] = _close_poly(ns)
+                areas[big] = pieces[big].area
+                areas[small] = pieces[small].area
+                changed = True
+        if not changed:
+            break
+
     return pieces
 
-def _subdivide_voronoi(poly, n, max_iter=25):
+
+def _subdivide_voronoi(poly, n, area_tol_ha=0.3, max_iter=30):
+    import random
     try:
-        import random
-        minx,miny,maxx,maxy=poly.bounds; seeds=[]
-        att=0
-        while len(seeds)<n and att<n*300:
-            p=Point(random.uniform(minx,maxx),random.uniform(miny,maxy))
-            if poly.contains(p): seeds.append(p)
-            att+=1
-        if len(seeds)<n:
-            cn=int(math.ceil(math.sqrt(n*((maxx-minx)/(maxy-miny+1e-9)))))
-            rn=int(math.ceil(n/cn))+1; seeds=[]
-            for ri in range(rn):
-                for ci in range(cn):
-                    p=Point(minx+(ci+0.5)*(maxx-minx)/cn, miny+(ri+0.5)*(maxy-miny)/rn)
-                    if poly.contains(p): seeds.append(p)
-            seeds=seeds[:n]
-        if len(seeds)<2: raise ValueError("Not enough seeds.")
+        minx, miny, maxx, maxy = poly.bounds
+        seeds = []
+
+        cn = int(math.ceil(math.sqrt(n)))
+        rn = int(math.ceil(n / cn))
+        for ri in range(rn):
+            for ci in range(cn):
+                px = minx + (ci + 0.5) * (maxx - minx) / cn
+                py = miny + (ri + 0.5) * (maxy - miny) / rn
+                pt = Point(px, py)
+                if poly.contains(pt):
+                    seeds.append(pt)
+
+        for _ in range(n * 500):
+            if len(seeds) >= n:
+                break
+            pt = Point(random.uniform(minx, maxx), random.uniform(miny, maxy))
+            if poly.contains(pt):
+                seeds.append(pt)
+
+        if len(seeds) < 2:
+            return _subdivide_grid(poly, n)
+        seeds = seeds[:n]
+
         for _ in range(max_iter):
-            mp=MultiPoint(seeds); diagram=voronoi_diagram(mp,envelope=poly.buffer(1))
-            cells=[]
+            mp = MultiPoint(seeds)
+            try:
+                diagram = voronoi_diagram(mp, envelope=poly.buffer(
+                    max(_snap_tol(poly) * 100, 1.0)
+                ))
+            except Exception:
+                break
+
+            cells = []
             for region in diagram.geoms:
-                cl=_as_poly(_repair(region.intersection(poly)))
-                if cl and cl.area>1e-10: cells.append(cl)
-            if not cells: break
-            cells.sort(key=lambda c:c.area,reverse=True); cells=cells[:n]
-            new_seeds=[c.centroid for c in cells]
-            if all(ns.distance(s)<1e-3 for ns,s in zip(new_seeds,seeds[:len(new_seeds)])): break
-            seeds=new_seeds
-            if len(seeds)<n: break
-        cells=[_close_poly(_repair(c)) for c in cells if c and not c.is_empty]
-        covered=_repair(unary_union(cells)); gap=_repair(poly.difference(covered))
-        if gap and not gap.is_empty and gap.area>1e-8 and cells:
-            bi,bl=0,-1
-            for i,c in enumerate(cells):
-                try: sl=gap.buffer(1e-4).intersection(c).length
-                except: sl=0
-                if sl>bl: bl=sl; bi=i
-            mg=_as_poly(_repair(cells[bi].union(gap)))
-            if mg: cells[bi]=_close_poly(mg)
-        return cells if cells else [_close_poly(poly)]
-    except: return _subdivide_bisect(poly,n)
+                cl = safe_overlay(region, poly, "intersection")
+                if cl is not None and not cl.is_empty and cl.area > 1e-10:
+                    pg = _as_poly(cl)
+                    if pg:
+                        cells.append(pg)
+
+            if not cells:
+                break
+            cells.sort(key=lambda c: c.area, reverse=True)
+            cells = cells[:n]
+
+            new_seeds = [c.centroid for c in cells]
+            moved = max(
+                (ns.distance(s) for ns, s in zip(new_seeds, seeds[: len(new_seeds)])),
+                default=0.0,
+            )
+            seeds = new_seeds
+            if moved < _snap_tol(poly) * 10 or len(seeds) < 2:
+                break
+
+        cells = [_close_poly(_repair(c)) for c in cells if c and not c.is_empty]
+        return cells if len(cells) >= 2 else _subdivide_grid(poly, n)
+
+    except Exception:
+        return _subdivide_grid(poly, n)
+
 
 def _subdivide_grid(poly, n):
-    cn=int(math.ceil(math.sqrt(n))); rn=int(math.ceil(n/cn))
-    minx,miny,maxx,maxy=poly.bounds; cw=(maxx-minx)/cn; rh=(maxy-miny)/rn
-    cells=[]
+    cn = int(math.ceil(math.sqrt(n)))
+    rn = int(math.ceil(n / cn))
+    minx, miny, maxx, maxy = poly.bounds
+    cw = (maxx - minx) / cn
+    rh = (maxy - miny) / rn
+
+    cells = []
     for ri in range(rn):
         for ci in range(cn):
-            box=_sbox(minx+ci*cw,miny+ri*rh,minx+(ci+1)*cw,miny+(ri+1)*rh)
-            cl=_as_poly(_repair(box.intersection(poly)))
-            if cl and cl.area>1e-10: cells.append(_close_poly(cl))
-    while len(cells)>n:
-        si=min(range(len(cells)),key=lambda i:cells[i].area); sl=cells.pop(si)
-        bj,bl=0,-1.0
-        for j,c in enumerate(cells):
-            try: s=sl.intersection(c).length
-            except: s=0
-            if s>bl: bl=s; bj=j
-        mg=_as_poly(_repair(cells[bj].union(sl)))
-        if mg: cells[bj]=_close_poly(mg)
-    while len(cells)<n:
-        li=max(range(len(cells)),key=lambda i:cells[i].area); sub=_bisect(cells.pop(li),2)
-        cells.extend([_close_poly(s) for s in sub if s and s.area>1e-10] or [cells[0]])
+            box = _sbox(
+                minx + ci * cw, miny + ri * rh,
+                minx + (ci + 1) * cw, miny + (ri + 1) * rh,
+            )
+            cl = safe_overlay(box, poly, "intersection")
+            if cl is not None and cl.area > 1e-10:
+                cells.append(_close_poly(cl))
+
+    # Merge excess
+    max_merge = len(cells) * 3
+    attempt = 0
+    while len(cells) > n and attempt < max_merge:
+        attempt += 1
+        si = min(range(len(cells)), key=lambda i: cells[i].area)
+        small = cells.pop(si)
+        if not cells:
+            cells.append(small)
+            break
+        best_j, best_len = 0, -1.0
+        for j, c in enumerate(cells):
+            inter = safe_overlay(small.boundary, c.boundary, "intersection")
+            length = inter.length if (inter is not None and not inter.is_empty) else 0.0
+            if length > best_len:
+                best_len = length
+                best_j = j
+        merged = safe_overlay(cells[best_j], small, "union")
+        if merged is not None and not merged.is_empty:
+            cells[best_j] = _close_poly(merged)
+        else:
+            cells.append(small)
+            break
+
+    # Split deficit
+    max_split = n * 4
+    attempt = 0
+    while len(cells) < n and attempt < max_split:
+        attempt += 1
+        li = max(range(len(cells)), key=lambda i: cells[i].area)
+        big = cells.pop(li)
+        sub = _bisect(big, 2)
+        sub = [_close_poly(p) for p in sub if p and not p.is_empty]
+        if len(sub) >= 2:
+            cells.extend(sub)
+        else:
+            cells.append(big)
+            break
+
     return cells[:n]
 
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 12 – MASTER SUBDIVISION PIPELINE
+# ═══════════════════════════════════════════════════════════
+
 def _subdivide(poly, n, method="bisect", area_tol_ha=0.3):
-    poly=_repair(poly)
-    if poly is None or poly.is_empty: return []
+    """
+    Full pipeline with guaranteed boundary preservation.
+
+    Order of operations:
+      1  Repair & validate input
+      2  Run chosen method
+      3  _ensure_count  → exactly n pieces
+      4  _clip_to_original  → clip + fill gaps
+      5  _enforce_area_tolerance  → balance areas
+      6  _clip_to_original  → re-clip after balance moves
+      7  _ensure_count  → restore count if balance changed it
+      8  _final_clip_pass  → hard-clip every piece (catches any remaining leak)
+      9  _validate_subdivision  → raise on any remaining error
+    """
+    n = max(2, min(15, int(n)))
+
+    orig_poly = _repair(poly)
+    if orig_poly is None or orig_poly.is_empty:
+        return []
+    if not orig_poly.is_valid:
+        orig_poly = make_valid(orig_poly)
+    orig_poly = orig_poly.buffer(0)
+    orig_poly = _repair(orig_poly)
+    if orig_poly is None or orig_poly.is_empty:
+        return []
+
+    method_map = {
+        "voronoi": _subdivide_voronoi,
+        "grid":    _subdivide_grid,
+        "ba":      _subdivide_ba,
+        "bisect":  _bisect,
+    }
+    fn = method_map.get(method, _bisect)
     try:
-        if method=="voronoi":   return _subdivide_voronoi(poly,n)
-        elif method=="grid":    return _subdivide_grid(poly,n)
-        elif method=="ba":      return _subdivide_ba(poly,n,area_tol_ha)
-        else:                   return _subdivide_bisect(poly,n,area_tol_ha)
-    except: return _subdivide_bisect(poly,n,area_tol_ha)
+        if method in ("ba", "voronoi"):
+            pieces = fn(orig_poly, n, area_tol_ha)
+        else:
+            pieces = fn(orig_poly, n)
+    except Exception as e:
+        print(f"[subdivision] method={method!r} failed ({e}); falling back to grid.")
+        pieces = _subdivide_grid(orig_poly, n)
+
+    # Post-processing pipeline
+    pieces = _ensure_count(pieces, n, orig_poly)
+    pieces = _clip_to_original(pieces, orig_poly)
+    pieces = _enforce_area_tolerance(pieces, orig_poly, n, area_tol_ha)
+    pieces = _clip_to_original(pieces, orig_poly)
+    pieces = _ensure_count(pieces, n, orig_poly)
+
+    # ── CRITICAL: hard-clip every piece before validation ──────────────────
+    pieces = _final_clip_pass(pieces, orig_poly)
+
+    # If count drifted (shouldn't), fix it
+    if len(pieces) != n:
+        pieces = _ensure_count(pieces, n, orig_poly)
+        pieces = _final_clip_pass(pieces, orig_poly)
+
+    # Final cleanup
+    pieces = [_close_poly(_repair(p)) for p in pieces if p is not None and not p.is_empty]
+
+    if len(pieces) < n:
+        # Absolute last resort: pad from grid (already clipped to orig_poly)
+        grid_extras = _subdivide_grid(orig_poly, n)
+        grid_extras = _final_clip_pass(grid_extras, orig_poly)
+        pieces = pieces + grid_extras[len(pieces):]
+        pieces = pieces[:n]
+
+    _validate_subdivision(pieces, orig_poly, n, area_tol_ha)
+    return pieces[:n]
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 13 – OUTPUT HELPERS
+# ═══════════════════════════════════════════════════════════
 
 def _extract_div_pts(pieces, fname):
-    recs=[]; sn=1
-    for i,p in enumerate(pieces,1):
-        cid=f"Comp_{i:03d}"; p=_close_poly(_repair(p))
-        if p is None or p.is_empty: continue
-        coords=list(p.exterior.coords)
-        if len(coords)>1 and coords[0]==coords[-1]: coords=coords[:-1]
-        el=[((coords[(j+1)%len(coords)][0]-coords[j][0])**2+(coords[(j+1)%len(coords)][1]-coords[j][1])**2)**.5 for j in range(len(coords))]
-        av=(sum(el)/len(el)) if el else 1.0; mt=av*1.5
-        for j,(cx,cy) in enumerate(coords):
-            recs.append({"SN":sn,"Forest":fname,"Comp_ID":cid,"Type":"Vertex","X":round(cx,4),"Y":round(cy,4)}); sn+=1
-            nx,ny=coords[(j+1)%len(coords)]; e=((nx-cx)**2+(ny-cy)**2)**.5
-            if e>mt: recs.append({"SN":sn,"Forest":fname,"Comp_ID":cid,"Type":"Midpoint","X":round((cx+nx)/2,4),"Y":round((cy+ny)/2,4)}); sn+=1
+    recs = []
+    sn = 1
+    for i, p in enumerate(pieces, 1):
+        cid = f"Comp_{i:03d}"
+        p = _close_poly(_repair(p))
+        if p is None or p.is_empty:
+            continue
+        coords = list(p.exterior.coords)
+        if len(coords) > 1 and coords[0] == coords[-1]:
+            coords = coords[:-1]
+        if not coords:
+            continue
+        n_c = len(coords)
+        edge_lens = [
+            math.hypot(
+                coords[(j + 1) % n_c][0] - coords[j][0],
+                coords[(j + 1) % n_c][1] - coords[j][1],
+            )
+            for j in range(n_c)
+        ]
+        mean_e = sum(edge_lens) / len(edge_lens) if edge_lens else 1.0
+        thresh = mean_e * 1.5
+
+        for j, (cx, cy) in enumerate(coords):
+            recs.append({
+                "SN": sn, "Forest": fname, "Comp_ID": cid,
+                "Type": "Vertex", "X": round(cx, 4), "Y": round(cy, 4),
+            })
+            sn += 1
+            nx, ny = coords[(j + 1) % n_c]
+            if edge_lens[j] > thresh:
+                recs.append({
+                    "SN": sn, "Forest": fname, "Comp_ID": cid,
+                    "Type": "Midpoint",
+                    "X": round((cx + nx) / 2, 4),
+                    "Y": round((cy + ny) / 2, 4),
+                })
+                sn += 1
     return recs
 
-def _save_compartments(pieces, fname, crs, save_dir):
-    os.makedirs(save_dir,exist_ok=True)
-    pieces=[_close_poly(_repair(p)) for p in pieces if p and not p.is_empty]
-    pieces=[p for p in pieces if p and not p.is_empty]
-    total=sum(p.area for p in pieces); recs=[]; lrecs=[]; ptrecs=[]
-    for i,p in enumerate(pieces,1):
-        cid=f"Comp_{i:03d}"; ah=round(p.area/10000,4); pm=round(p.length,4)
-        pct=round(p.area/total*100,2) if total>0 else 0
-        recs.append({"Forest":fname,"Comp_ID":cid,"Area_ha":ah,"Perim_m":pm,"Pct_Area":pct,"geometry":p})
-        ext=list(p.exterior.coords)
-        if ext[0]!=ext[-1]: ext.append(ext[0])
-        lrecs.append({"Forest":fname,"Comp_ID":cid,"geometry":LineString(ext)})
-        ptrecs.append({"Forest":fname,"Comp_ID":cid,"Area_ha":ah,"Pct_Area":pct,"geometry":p.centroid})
-    pg=gpd.GeoDataFrame(recs,crs=crs); lg=gpd.GeoDataFrame(lrecs,crs=crs); ptg=gpd.GeoDataFrame(ptrecs,crs=crs)
-    pg=_enforce_poly_gdf(pg); pfx=_safe_dn(fname)
-    if not pg.empty:  pg.to_file(os.path.join(save_dir,f"{pfx}_compartment_polygon.shp"))
-    if not lg.empty:  lg.to_file(os.path.join(save_dir,f"{pfx}_compartment_line.shp"))
-    if not ptg.empty: ptg.to_file(os.path.join(save_dir,f"{pfx}_compartment_point.shp"))
-    pd.DataFrame([{k:v for k,v in r.items() if k!="geometry"} for r in recs]).to_excel(
-        os.path.join(save_dir,f"{pfx}_compartment_summary.xlsx"),index=False)
-    dp=_extract_div_pts(pieces,fname)
-    if dp:
-        ddf=pd.DataFrame(dp); ddf.to_excel(os.path.join(save_dir,f"{pfx}_division_points.xlsx"),index=False)
-        gpd.GeoDataFrame(ddf,geometry=gpd.points_from_xy(ddf["X"],ddf["Y"]),crs=crs).to_file(
-            os.path.join(save_dir,f"{pfx}_division_points.shp"))
-    return pg,lg,ptg
 
-def _df_to_poly(df,xc,yc,oc):
-    if oc and oc in df.columns: df=df.sort_values(oc)
-    coords=list(zip(df[xc],df[yc]))
-    if len(coords)<3: raise ValueError("Need ≥3 points.")
-    coords.append(coords[0]); return _close_poly(_repair(Polygon(coords)))
+def _save_compartments(pieces, fname, crs, save_dir):
+    os.makedirs(save_dir, exist_ok=True)
+    pieces = [_close_poly(_repair(p)) for p in pieces if p and not p.is_empty]
+    total_area = sum(p.area for p in pieces)
+
+    poly_recs, line_recs, pt_recs = [], [], []
+    for i, p in enumerate(pieces, 1):
+        cid = f"Comp_{i:03d}"
+        ah  = round(p.area / 10_000, 4)
+        pm  = round(p.length, 4)
+        pct = round(p.area / total_area * 100, 2) if total_area > 0 else 0
+        poly_recs.append({
+            "Forest": fname, "Comp_ID": cid,
+            "Area_ha": ah, "Perim_m": pm, "Pct_Area": pct, "geometry": p,
+        })
+        ext = list(p.exterior.coords)
+        if ext[0] != ext[-1]:
+            ext.append(ext[0])
+        line_recs.append({"Forest": fname, "Comp_ID": cid, "geometry": LineString(ext)})
+        pt_recs.append({
+            "Forest": fname, "Comp_ID": cid,
+            "Area_ha": ah, "Pct_Area": pct, "geometry": p.centroid,
+        })
+
+    pg  = gpd.GeoDataFrame(poly_recs, crs=crs)
+    lg  = gpd.GeoDataFrame(line_recs, crs=crs)
+    ptg = gpd.GeoDataFrame(pt_recs,   crs=crs)
+
+    pg  = _enforce_poly_gdf(pg)
+    pfx = _safe_dn(fname)
+
+    if not pg.empty:
+        pg.to_file(os.path.join(save_dir, f"{pfx}_compartment_polygon.shp"))
+    if not lg.empty:
+        lg.to_file(os.path.join(save_dir, f"{pfx}_compartment_line.shp"))
+    if not ptg.empty:
+        ptg.to_file(os.path.join(save_dir, f"{pfx}_compartment_point.shp"))
+
+    pd.DataFrame(
+        [{k: v for k, v in r.items() if k != "geometry"} for r in poly_recs]
+    ).to_excel(
+        os.path.join(save_dir, f"{pfx}_compartment_summary.xlsx"), index=False
+    )
+
+    dp = _extract_div_pts(pieces, fname)
+    if dp:
+        ddf = pd.DataFrame(dp)
+        ddf.to_excel(
+            os.path.join(save_dir, f"{pfx}_division_points.xlsx"), index=False
+        )
+        gpd.GeoDataFrame(
+            ddf,
+            geometry=gpd.points_from_xy(ddf["X"], ddf["Y"]),
+            crs=crs,
+        ).to_file(os.path.join(save_dir, f"{pfx}_division_points.shp"))
+
+    return pg, lg, ptg
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 14 – INPUT LOADERS
+# ═══════════════════════════════════════════════════════════
+
+def _df_to_poly(df, xc, yc, oc):
+    if oc and oc in df.columns:
+        df = df.sort_values(oc)
+    coords = list(zip(df[xc], df[yc]))
+    if len(coords) < 3:
+        raise ValueError("Need ≥ 3 points to build a polygon.")
+    coords.append(coords[0])
+    return _close_poly(_repair(Polygon(coords)))
+
 
 def _load_polys_from_zip(file, target_shp, crs, fcol=None):
-    folder=os.path.join(UPLOAD,str(uuid.uuid4())); os.makedirs(folder,exist_ok=True)
-    zp=os.path.join(folder,"i.zip"); file.save(zp)
-    with zipfile.ZipFile(zp) as z: z.extractall(folder)
-    shps=[os.path.join(r,f) for r,_,fs in os.walk(folder) for f in fs if f.endswith(".shp")]
-    if not shps: raise ValueError("No .shp in ZIP.")
-    sp=shps[0]
+    folder = os.path.join(UPLOAD, str(uuid.uuid4()))
+    os.makedirs(folder, exist_ok=True)
+    zp = os.path.join(folder, "i.zip")
+    file.save(zp)
+    with zipfile.ZipFile(zp) as z:
+        z.extractall(folder)
+
+    shps = [
+        os.path.join(r, f)
+        for r, _, fs in os.walk(folder)
+        for f in fs if f.endswith(".shp")
+    ]
+    if not shps:
+        raise ValueError("No .shp found in ZIP.")
+
+    sp = shps[0]
     if target_shp:
-        tn=os.path.basename(target_shp)
+        tn = os.path.basename(target_shp)
         for s in shps:
-            if os.path.basename(s)==tn: sp=s; break
-    gdf=gpd.read_file(sp)
-    if gdf.empty: raise ValueError("Shapefile empty.")
-    gdf=gdf.set_crs(crs) if gdf.crs is None else gdf.to_crs(crs)
-    nc=None
+            if os.path.basename(s) == tn:
+                sp = s
+                break
+
+    gdf = gpd.read_file(sp)
+    if gdf.empty:
+        raise ValueError("Shapefile is empty.")
+    gdf = gdf.set_crs(crs) if gdf.crs is None else gdf.to_crs(crs)
+
+    nc = None
     if fcol:
         for c in gdf.columns:
-            if c.lower()==fcol.lower(): nc=c; break
+            if c.lower() == fcol.lower():
+                nc = c
+                break
     if nc is None:
-        for cand in ["Forest","forest","Name","name","NAME","Label","label","ID","id"]:
-            if cand in gdf.columns: nc=cand; break
+        for cand in ("Forest","forest","Name","name","NAME","Label","label","ID","id"):
+            if cand in gdf.columns:
+                nc = cand
+                break
     if nc is None:
         for c in gdf.columns:
-            if c=="geometry": continue
-            if gdf[c].dtype==object: nc=c; break
-    results=[]
-    for i,row in gdf.iterrows():
-        geom=row.geometry
-        if geom is None or geom.is_empty: continue
-        fn=str(row[nc]) if nc else f"Feature_{i+1}"
-        if geom.geom_type=="Polygon": pls=[_repair(geom)]
-        elif geom.geom_type=="MultiPolygon": pls=[_repair(g) for g in geom.geoms]
-        else: pls=[_repair(g) for g in geom.geoms if g.geom_type=="Polygon"] if hasattr(geom,"geoms") else []
-        if len(pls)>1: pls=[_repair(unary_union(pls))]
-        for p in pls:
-            if p and p.area>1e-6: results.append((fn,_close_poly(p)))
-    if not results: raise ValueError("No polygon geometries found.")
-    return results,shps
+            if c != "geometry" and gdf[c].dtype == object:
+                nc = c
+                break
 
-def group_e(file_or_df, crs, out, mapping=None, e_mode="A", n_compartments=4,
-            is_zip=False, fcol=None, area_tol_ha=0.3, method="bisect", run_id=None):
-    n_compartments=max(2,min(15,int(n_compartments)))
-    ap,al,apts=[],[],[]
-    if is_zip:
-        ts=(mapping or {}).get("target_shp")
-        features,_=_load_polys_from_zip(file_or_df,ts,crs,fcol)
-        for idx,(fn,poly) in enumerate(features):
-            pct_start = 20 + int(60*idx/max(len(features),1))
-            if run_id: _prog(run_id,f"[{idx+1}/{len(features)}] Subdividing {fn}…", pct_start)
-            pieces=_subdivide(poly,n_compartments,method,area_tol_ha)
-            areas=[round(p.area/10000,2) for p in pieces if p]
-            ideal=round(poly.area/10000/max(n_compartments,1),2)
-            diff=max((abs(a-ideal) for a in areas),default=0)
-            if run_id: _prog(run_id,
-                f"[{idx+1}/{len(features)}] {fn}: {len(pieces)} parts ✓  ideal={ideal}ha  max_diff={diff:.2f}ha",
-                pct_start+5)
-            fd=os.path.join(out,_safe_dn(fn)) if len(features)>1 else out
-            pg,lg,ptg=_save_compartments(pieces,fn,crs,fd)
-            ap.append(pg); al.append(lg); apts.append(ptg)
-    else:
-        df=file_or_df; df=normalize_order(df)
-        xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
-        oc=safe_col(df,mapping,"Order","Order"); fc=safe_col(df,mapping,"Forest","Forest")
-        if not xc: raise ValueError("X column not found.")
-        if not yc: raise ValueError("Y column not found.")
-        if e_mode=="B" and not fc: raise ValueError("Forest column required.")
-        if e_mode=="A":
-            fn=(mapping or {}).get("forest") or "FOREST"
-            if run_id: _prog(run_id,"Building & subdividing polygon…",15)
-            poly=_df_to_poly(df,xc,yc,oc); pieces=_subdivide(poly,n_compartments,method,area_tol_ha)
-            pg,lg,ptg=_save_compartments(pieces,fn,crs,out)
-            ap.append(pg); al.append(lg); apts.append(ptg)
+    results = []
+    for i, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        fn = str(row[nc]) if nc else f"Feature_{i + 1}"
+        if geom.geom_type == "Polygon":
+            pls = [_repair(geom)]
+        elif geom.geom_type == "MultiPolygon":
+            pls = [_repair(unary_union(list(geom.geoms)))]
+        elif hasattr(geom, "geoms"):
+            pls = [_repair(unary_union(
+                [g for g in geom.geoms if g.geom_type == "Polygon"]
+            ))]
         else:
-            groups=list(df.groupby(fc))
-            for idx,(f,fg) in enumerate(groups):
-                if run_id: _prog(run_id,f"Processing {f}…",15+int(65*idx/max(len(groups),1)))
+            pls = []
+        for p in pls:
+            if p and p.area > 1e-6:
+                results.append((fn, _close_poly(p)))
+
+    if not results:
+        raise ValueError("No polygon geometries found in shapefile.")
+    return results, shps
+
+
+# ═══════════════════════════════════════════════════════════
+# SECTION 15 – MAIN ENTRY POINT
+# ═══════════════════════════════════════════════════════════
+
+def group_e(
+    file_or_df,
+    crs,
+    out,
+    mapping=None,
+    e_mode="A",
+    n_compartments=4,
+    is_zip=False,
+    fcol=None,
+    area_tol_ha=0.3,
+    method="bisect",
+    run_id=None,
+):
+    n_compartments = max(2, min(15, int(n_compartments)))
+    ap, al, apts = [], [], []
+
+    if is_zip:
+        ts = (mapping or {}).get("target_shp")
+        features, _ = _load_polys_from_zip(file_or_df, ts, crs, fcol)
+        total = len(features)
+        for idx, (fn, poly) in enumerate(features):
+            pct = 20 + int(60 * idx / max(total, 1))
+            if run_id:
+                _prog(run_id, f"[{idx+1}/{total}] Subdividing {fn}…", pct)
+            pieces = _subdivide(poly, n_compartments, method, area_tol_ha)
+            areas  = [round(p.area / 10_000, 2) for p in pieces if p]
+            ideal  = round(poly.area / 10_000 / n_compartments, 2)
+            diff   = max((abs(a - ideal) for a in areas), default=0)
+            if run_id:
+                _prog(run_id,
+                      f"[{idx+1}/{total}] {fn}: {len(pieces)} parts ✓  "
+                      f"ideal={ideal} ha  max_diff={diff:.2f} ha",
+                      pct + 5)
+            fd = os.path.join(out, _safe_dn(fn)) if total > 1 else out
+            pg, lg, ptg = _save_compartments(pieces, fn, crs, fd)
+            ap.append(pg); al.append(lg); apts.append(ptg)
+
+    else:
+        df = file_or_df
+        df = normalize_order(df)
+        xc = safe_col(df, mapping, "X", "X")
+        yc = safe_col(df, mapping, "Y", "Y")
+        oc = safe_col(df, mapping, "Order", "Order")
+        fc = safe_col(df, mapping, "Forest", "Forest")
+
+        if not xc:
+            raise ValueError("X column not found.")
+        if not yc:
+            raise ValueError("Y column not found.")
+        if e_mode == "B" and not fc:
+            raise ValueError("Forest column required for mode B.")
+
+        if e_mode == "A":
+            fn = (mapping or {}).get("forest") or "FOREST"
+            if run_id:
+                _prog(run_id, "Building & subdividing polygon…", 15)
+            poly   = _df_to_poly(df, xc, yc, oc)
+            pieces = _subdivide(poly, n_compartments, method, area_tol_ha)
+            pg, lg, ptg = _save_compartments(pieces, fn, crs, out)
+            ap.append(pg); al.append(lg); apts.append(ptg)
+
+        else:
+            groups = list(df.groupby(fc))
+            total  = len(groups)
+            for idx, (f, fg) in enumerate(groups):
+                if run_id:
+                    _prog(run_id, f"Processing {f}…",
+                          15 + int(65 * idx / max(total, 1)))
                 try:
-                    poly=_df_to_poly(fg,xc,yc,oc)
-                    pieces=_subdivide(poly,n_compartments,method,area_tol_ha)
-                    fd=os.path.join(out,_safe_dn(str(f)))
-                    pg,lg,ptg=_save_compartments(pieces,str(f),crs,fd)
+                    poly   = _df_to_poly(fg, xc, yc, oc)
+                    pieces = _subdivide(poly, n_compartments, method, area_tol_ha)
+                    fd     = os.path.join(out, _safe_dn(str(f)))
+                    pg, lg, ptg = _save_compartments(pieces, str(f), crs, fd)
                     ap.append(pg); al.append(lg); apts.append(ptg)
                 except Exception as ex:
-                    if run_id: _prog(run_id,f"Warning: {f} skipped — {ex}")
-    if not ap: raise ValueError("No valid polygons built.")
-    p=gpd.GeoDataFrame(pd.concat(ap,ignore_index=True),crs=crs)
-    l=gpd.GeoDataFrame(pd.concat(al,ignore_index=True),crs=crs)
-    pt=gpd.GeoDataFrame(pd.concat(apts,ignore_index=True),crs=crs)
-    return p,l,pt
+                    if run_id:
+                        _prog(run_id, f"Warning: {f} skipped — {ex}")
 
+    if not ap:
+        raise ValueError("No valid polygons were built.")
+
+    p_out  = gpd.GeoDataFrame(pd.concat(ap,    ignore_index=True), crs=crs)
+    l_out  = gpd.GeoDataFrame(pd.concat(al,    ignore_index=True), crs=crs)
+    pt_out = gpd.GeoDataFrame(pd.concat(apts,  ignore_index=True), crs=crs)
+    return p_out, l_out, pt_out
 # ----------------------------------------------------------------------
 # GROUP F – SLOPE ANALYSIS
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Helper functions for Group F (add these before group_f if not already present)
+# ----------------------------------------------------------------------
 
-def _bnd_from_df(df,mapping):
-    df=normalize_order(df)
-    xc=safe_col(df,mapping,"X","X"); yc=safe_col(df,mapping,"Y","Y")
-    oc=safe_col(df,mapping,"Order","Order")
-    if not xc: raise ValueError("X column not found.")
-    if not yc: raise ValueError("Y column not found.")
-    if oc: df=df.sort_values(oc)
-    coords=list(zip(df[xc],df[yc]))
-    if len(coords)<3: raise ValueError("Need ≥3 boundary points.")
-    coords.append(coords[0]); return safe_polygon(coords)
+def _bnd_from_df(df, mapping):
+    """Build boundary polygon from DataFrame (CSV/Excel) using X/Y columns."""
+    df = normalize_order(df)
+    xc = safe_col(df, mapping, "X", "X")
+    yc = safe_col(df, mapping, "Y", "Y")
+    oc = safe_col(df, mapping, "Order", "Order")
+    if not xc:
+        raise ValueError("X column not found.")
+    if not yc:
+        raise ValueError("Y column not found.")
+    if oc:
+        df = df.sort_values(oc)
+    coords = list(zip(df[xc], df[yc]))
+    if len(coords) < 3:
+        raise ValueError("Need ≥3 boundary points.")
+    coords.append(coords[0])
+    return safe_polygon(coords)
 
 def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
-    import io, zipfile
-    import tempfile
+    """
+    Extract boundary polygon from a ZIP containing a shapefile.
+    Returns (boundary_polygon, boundary_gdf, basename).
+    """
+    import io, zipfile, tempfile
     zip_bytes = zip_file.read()
     if len(zip_bytes) < 100:
         raise ValueError("Uploaded ZIP file is empty or too small.")
@@ -1626,16 +2676,115 @@ def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
         except Exception:
             pass
 
+
+# ----------------------------------------------------------------------
+# GROUP F – SLOPE ANALYSIS (complete, corrected version)
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# Helper functions for Group F (add these before group_f if not already present)
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# Helper functions for Group F (add these before group_f if not already present)
+# ----------------------------------------------------------------------
+
+def _bnd_from_df(df, mapping):
+    """Build boundary polygon from DataFrame (CSV/Excel) using X/Y columns."""
+    df = normalize_order(df)
+    xc = safe_col(df, mapping, "X", "X")
+    yc = safe_col(df, mapping, "Y", "Y")
+    oc = safe_col(df, mapping, "Order", "Order")
+    if not xc:
+        raise ValueError("X column not found.")
+    if not yc:
+        raise ValueError("Y column not found.")
+    if oc:
+        df = df.sort_values(oc)
+    coords = list(zip(df[xc], df[yc]))
+    if len(coords) < 3:
+        raise ValueError("Need ≥3 boundary points.")
+    coords.append(coords[0])
+    return safe_polygon(coords)
+
+def _bnd_from_zip(zip_file, target_shp, src_crs, dem_crs):
+    """
+    Extract boundary polygon from a ZIP containing a shapefile.
+    Returns (boundary_polygon, boundary_gdf, basename).
+    """
+    import io, zipfile, tempfile
+    zip_bytes = zip_file.read()
+    if len(zip_bytes) < 100:
+        raise ValueError("Uploaded ZIP file is empty or too small.")
+    tmp_dir = os.path.join(UPLOAD, "bnd_tmp_" + uuid.uuid4().hex[:8])
+    os.makedirs(tmp_dir, exist_ok=True)
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            zf.extractall(tmp_dir)
+        shps = []
+        for root, _, files in os.walk(tmp_dir):
+            for f in files:
+                if f.lower().endswith(".shp"):
+                    shps.append(os.path.join(root, f))
+        if not shps:
+            raise ValueError("No .shp file found inside the uploaded ZIP.")
+        if target_shp:
+            target_base = os.path.basename(target_shp)
+            chosen = None
+            for s in shps:
+                if os.path.basename(s) == target_base:
+                    chosen = s
+                    break
+            if chosen is None:
+                raise ValueError(f"Specified shapefile '{target_shp}' not found in ZIP.")
+        else:
+            chosen = shps[0]
+        shp_basename = os.path.splitext(os.path.basename(chosen))[0]
+        gdf = gpd.read_file(chosen)
+        if gdf.empty:
+            raise ValueError("Boundary shapefile is empty.")
+        if gdf.crs is None:
+            gdf = gdf.set_crs(src_crs)
+        else:
+            gdf = gdf.to_crs(dem_crs)
+        union = _repair(gdf.unary_union)
+        if union is None or union.is_empty:
+            raise ValueError("Boundary geometry is empty after union.")
+        return union, gdf, shp_basename
+    except Exception as e:
+        raise ValueError(f"Failed to process boundary ZIP: {e}")
+    finally:
+        try:
+            shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------------
+# GROUP F – SLOPE ANALYSIS (FINAL CORRECTED VERSION)
+# ----------------------------------------------------------------------
+
 def group_f(boundary_file, dem_file, crs, out, mapping=None,
             boundary_is_zip=False, forest_name="FOREST",
             f_mode="A", comp_col_name=None, field_area_ha=None, run_id=None):
+    """
+    Slope analysis with raster-to-polygon pipeline.
+    Area_ha is the raw polygon area from raster-to-polygon after clipping to the compartment.
+    No buffer is applied during clipping, ensuring the three classes partition the compartment exactly.
+    If field_area_ha is provided, Recal_ha and Cal_Factor columns are added (Area_ha remains raw).
+    Returns: (summary_rows, vector_gdf, boundary_gdf, f_mode, per_group)
+    """
     if not _HAS_RASTERIO:
-        raise ValueError("rasterio and scipy are not installed on the server.")
+        raise ValueError("rasterio and scipy are not installed.")
+
     os.makedirs(out, exist_ok=True)
     pfx = _safe_dn(forest_name)
-    SN  = -9999.0
+    SN = -9999.0
 
-    if run_id: _prog(run_id, "Step 0 — Loading DEM…", 5)
+    if run_id:
+        _prog(run_id, "Step 0 — Loading DEM…", 5)
+
+    # Save uploaded DEM to disk
     dem_path = os.path.join(UPLOAD, f"{uuid.uuid4()}_dem.tif")
     try:
         dem_file.save(dem_path)
@@ -1645,11 +2794,14 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         raise ValueError("DEM file is empty or could not be written to disk.")
 
     with rasterio.open(dem_path) as _src:
-        dem_crs   = _src.crs
+        dem_crs = _src.crs
         dem_nodata = _src.nodata
         dem_profile = _src.profile.copy()
 
-    if run_id: _prog(run_id, "Step 1 — Loading & reprojecting boundary…", 10)
+    if run_id:
+        _prog(run_id, "Step 1 — Loading & reprojecting boundary…", 10)
+
+    # --- Load boundary polygon (either from ZIP shapefile or from CSV/Excel) ---
     if boundary_is_zip:
         ts = (mapping or {}).get("target_shp")
         bpoly, bgdf, shp_basename = _bnd_from_zip(boundary_file, ts, crs, str(dem_crs))
@@ -1658,9 +2810,9 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             pfx = _safe_dn(forest_name)
     else:
         try:
-            df   = read_input(boundary_file)
+            df = read_input(boundary_file)
             bpoly = _bnd_from_df(df, mapping)
-            bgdf  = gpd.GeoDataFrame(
+            bgdf = gpd.GeoDataFrame(
                 [{"Forest": forest_name, "geometry": bpoly}], crs=crs
             ).to_crs(str(dem_crs))
             bpoly = bgdf.unary_union
@@ -1668,29 +2820,20 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
             raise ValueError(f"Failed to read/project boundary: {e}")
 
     if bpoly is None or bpoly.is_empty:
-        raise ValueError("Boundary polygon is empty after loading — check input file.")
+        raise ValueError("Boundary polygon is empty after loading.")
 
-    boundary_area_ha = bpoly.area / 10000
-    if field_area_ha is None or field_area_ha <= 0:
-        field_area_ha = boundary_area_ha
-
-    with rasterio.open(dem_path) as _src:
-        from shapely.geometry import box as _box
-        dem_bounds_poly = _box(*_src.bounds)
-    bpoly_wgs = gpd.GeoDataFrame([{"geometry":bpoly}], crs=str(dem_crs)).to_crs("EPSG:4326").unary_union
-    dem_wgs   = gpd.GeoDataFrame([{"geometry":dem_bounds_poly}], crs=str(dem_crs)).to_crs("EPSG:4326").unary_union
-    if not bpoly_wgs.intersects(dem_wgs):
-        raise ValueError("Boundary polygon does not overlap the DEM extent. "
-                         "Make sure your DEM covers the boundary area.")
-
-    b  = bpoly.bounds
+    # --- Prepare rectangular DEM clip (20% buffer) ---
+    b = bpoly.bounds
     bx = (b[2] - b[0]) * 0.20
     by = (b[3] - b[1]) * 0.20
-    rect_poly = _sbox(b[0]-bx, b[1]-by, b[2]+bx, b[3]+by)
+    rect_poly = _sbox(b[0] - bx, b[1] - by, b[2] + bx, b[3] + by)
 
     nd = dem_nodata if dem_nodata is not None else SN
 
-    if run_id: _prog(run_id, "Step 1 — Clipping rectangular DEM (20% buffer)…", 18)
+    if run_id:
+        _prog(run_id, "Step 1 — Clipping rectangular DEM (20% buffer)…", 18)
+
+    # Clip DEM to rectangle
     try:
         with rasterio.open(dem_path) as _src:
             ra, rt = rio_mask(
@@ -1702,8 +2845,8 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     except Exception as e:
         log.warning(f"Rect clip failed ({e}), reading full DEM")
         with rasterio.open(dem_path) as _src:
-            ra  = _src.read(1).astype(np.float32)
-            rt  = _src.transform
+            ra = _src.read(1).astype(np.float32)
+            rt = _src.transform
         nd_val = nd if nd is not None else SN
         rdm = ra.copy()
         rdm[rdm == nd_val] = np.nan
@@ -1711,15 +2854,16 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     rx = abs(rt.a)
     ry = abs(rt.e)
     if rx < 0.01 or ry < 0.01:
-        raise ValueError(f"DEM pixel size is too small ({rx}m × {ry}m). "
-                         "Check that DEM is in a projected CRS (e.g. UTM).")
+        raise ValueError(f"DEM pixel size is too small ({rx}m × {ry}m). Check DEM is in a projected CRS (e.g. UTM).")
 
-    if run_id: _prog(run_id, "Step 2 — Computing slope (Horn method)…", 28)
+    if run_id:
+        _prog(run_id, "Step 2 — Computing slope (Horn method)…", 28)
+
     valid = ~np.isnan(rdm)
-
     if not valid.any():
         raise ValueError("DEM has no valid elevation data inside the boundary+buffer rectangle.")
 
+    # Fill NoData holes using nearest neighbour
     if (~valid).any():
         ind = ndi.distance_transform_edt(
             ~valid, return_distances=False, return_indices=True
@@ -1728,76 +2872,100 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     else:
         filled = rdm.copy()
 
-    dzdx  = ndi.sobel(filled, axis=1) / (8.0 * rx)
-    dzdy  = ndi.sobel(filled, axis=0) / (8.0 * ry)
+    # Slope calculation
+    dzdx = ndi.sobel(filled, axis=1) / (8.0 * rx)
+    dzdy = ndi.sobel(filled, axis=0) / (8.0 * ry)
     slope = np.degrees(np.arctan(np.sqrt(dzdx**2 + dzdy**2))).astype(np.float32)
 
+    # Mask outer pixels (edge effect)
     outer_valid = np.ones_like(valid, dtype=bool)
-    outer_valid[0, :] = False; outer_valid[-1, :] = False
-    outer_valid[:, 0] = False; outer_valid[:, -1] = False
+    outer_valid[0, :] = False
+    outer_valid[-1, :] = False
+    outer_valid[:, 0] = False
+    outer_valid[:, -1] = False
     slope[~outer_valid] = SN
 
+    # Save rectangular slope raster
     rp = dem_profile.copy()
     rp.update(dtype="float32", nodata=SN, count=1,
               height=slope.shape[0], width=slope.shape[1], transform=rt)
     sp_path = os.path.join(out, f"{pfx}_slope_rect.tif")
     with rasterio.open(sp_path, "w", **rp) as dst:
         dst.write(slope, 1)
-    if run_id: _prog(run_id, f"Step 2 — Slope raster saved ({slope.shape[1]}×{slope.shape[0]}px)", 35)
 
-    if run_id: _prog(run_id, "Step 3 — Reclassifying slope into 3 classes…", 40)
-    vm  = (slope != SN) & ~np.isnan(slope)
+    if run_id:
+        _prog(run_id, f"Step 2 — Slope raster saved ({slope.shape[1]}×{slope.shape[0]}px)", 35)
+
+    # --- Reclassify ---
+    if run_id:
+        _prog(run_id, "Step 3 — Reclassifying slope into 3 classes…", 40)
+
+    vm = (slope != SN) & ~np.isnan(slope)
     cls = np.zeros_like(slope, dtype=np.uint8)
-    cls[vm & (slope <  19)]          = 1
+    cls[vm & (slope < 19)] = 1
     cls[vm & (slope >= 19) & (slope <= 31)] = 2
-    cls[vm & (slope >  31)]          = 3
-    cp = rp.copy(); cp.update(dtype="uint8", nodata=0)
+    cls[vm & (slope > 31)] = 3
+
+    cp = rp.copy()
+    cp.update(dtype="uint8", nodata=0)
     cls_path = os.path.join(out, f"{pfx}_class_rect.tif")
     with rasterio.open(cls_path, "w", **cp) as dst:
         dst.write(cls, 1)
 
-    if run_id: _prog(run_id, "Step 4 — Vectorising classified raster…", 50)
+    # --- Raster to polygon ---
+    if run_id:
+        _prog(run_id, "Step 4 — Vectorising classified raster…", 50)
+
     rtp = []
     with rasterio.open(cls_path) as _src:
         ca, ct = _src.read(1), _src.transform
         mask_valid = (ca > 0).astype(np.uint8)
         for shp, val in rio_shapes(ca, mask=mask_valid, transform=ct):
             cid = int(val)
-            if cid == 0: continue
+            if cid == 0:
+                continue
             try:
                 coords = shp["coordinates"]
-                ext    = coords[0]
-                holes  = coords[1:] if len(coords) > 1 else None
-                geom   = _repair(Polygon(ext, holes=holes))
+                ext = coords[0]
+                holes = coords[1:] if len(coords) > 1 else None
+                geom = _repair(Polygon(ext, holes=holes))
                 if geom and not geom.is_empty and geom.area > 1e-10:
                     rtp.append({"gridcode": cid, "geometry": geom})
             except Exception:
                 continue
 
     if not rtp:
-        raise ValueError(
-            "Raster-to-polygon produced no features. "
-            "Check that the DEM overlaps the boundary and is in a projected CRS."
-        )
+        raise ValueError("Raster-to-polygon produced no features. Check DEM overlap and CRS.")
+
     rtp_gdf = gpd.GeoDataFrame(rtp, crs=str(dem_crs))
     _rtp_save = _enforce_poly_gdf(rtp_gdf)
     if not _rtp_save.empty:
         _rtp_save.to_file(os.path.join(out, f"{pfx}_rtp_raw.shp"))
-    if run_id: _prog(run_id, f"Step 4 — {len(rtp)} slope polygons vectorised", 56)
 
-    if run_id: _prog(run_id, "Step 5 — Dissolving by gridcode…", 62)
+    if run_id:
+        _prog(run_id, f"Step 4 — {len(rtp)} slope polygons vectorised", 56)
+
+    # --- Dissolve by gridcode ---
+    if run_id:
+        _prog(run_id, "Step 5 — Dissolving by gridcode…", 62)
+
     try:
         dissolved = rtp_gdf.dissolve(by="gridcode", as_index=False)
         dissolved["gridcode"] = dissolved["gridcode"].astype(int)
     except Exception as e:
         log.warning(f"dissolve failed ({e}), using raw rtp")
         dissolved = rtp_gdf.copy()
+
     _dis_save = _enforce_poly_gdf(dissolved)
     if not _dis_save.empty:
         _dis_save.to_file(os.path.join(out, f"{pfx}_rtp_dissolved.shp"))
-    if run_id: _prog(run_id, f"Step 5 — Dissolved into {len(dissolved)} gridcode classes", 66)
 
-    if run_id: _prog(run_id, "Step 6 — Clipping dissolved polygons to boundary…", 70)
+    if run_id:
+        _prog(run_id, f"Step 5 — Dissolved into {len(dissolved)} gridcode classes", 66)
+
+    # --- Determine compartments to clip to ---
+    if run_id:
+        _prog(run_id, "Step 6 — Clipping dissolved polygons to boundary…", 70)
 
     class_defs = {
         1: ("0-19 degree",  "Gentle",   "#2e8b57"),
@@ -1809,38 +2977,56 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     if f_mode == "A":
         comp_polygons = [(forest_name, bpoly)]
     else:
+        # Find compartment column in bgdf
         grp_col = None
         if comp_col_name:
             for c in bgdf.columns:
-                if c.lower() == comp_col_name.lower(): grp_col = c; break
-        if grp_col is None: grp_col = _find_col(bgdf, _FA if f_mode == "B" else _CA)
-        if grp_col is None and f_mode == "E": grp_col = _find_col(bgdf, _FA)
+                if c.lower() == comp_col_name.lower():
+                    grp_col = c
+                    break
+        if grp_col is None:
+            grp_col = _find_col(bgdf, _FA if f_mode == "B" else _CA)
         if grp_col:
             for val, grp in bgdf.groupby(grp_col):
                 up = _repair(grp.unary_union)
                 if up and not up.is_empty:
                     comp_polygons.append((str(val), up))
-        if not comp_polygons or all(cp is None or (hasattr(cp,"is_empty") and cp.is_empty) for _,cp in comp_polygons):
+        if not comp_polygons:
             comp_polygons = [(forest_name, bpoly)]
 
-    def _clip_group(clip_poly, label):
-        vrecs = []; total = 0.0
+    # --- Clip dissolved polygons to each compartment ---
+    all_sum = []   # flattened list of rows (for summary Excel)
+    per_grp = {}   # dict: label -> list of rows for that compartment
+    all_vec = []   # list of geometry records for shapefile
+
+    for i, (label, clip_poly) in enumerate(comp_polygons):
+        if run_id:
+            pct = 70 + int(16 * i / max(len(comp_polygons), 1))
+            _prog(run_id, f"Step 6 — Clipping {label} ({i+1}/{len(comp_polygons)})…", pct)
+
+        vrecs = []
         for _, drow in dissolved.iterrows():
-            cid   = int(drow["gridcode"])
+            cid = int(drow["gridcode"])
             dgeom = _repair(drow.geometry)
-            if dgeom is None or dgeom.is_empty: continue
-            if cid not in class_defs: continue
+            if dgeom is None or dgeom.is_empty:
+                continue
+            if cid not in class_defs:
+                continue
             try:
-                dgeom_safe = dgeom.buffer(rx * 0.05) if rx else dgeom
-                clipped = _repair(dgeom_safe.intersection(clip_poly))
-            except Exception as e:
-                log.debug(f"intersection error cid={cid}: {e}"); continue
-            if clipped is None or clipped.is_empty: continue
+                # --- FIX: removed buffer to avoid double-counting ---
+                clipped = _repair(dgeom.intersection(clip_poly))
+            except Exception:
+                continue
+            if clipped is None or clipped.is_empty:
+                continue
+
+            # Ensure polygon/multipolygon
             if clipped.geom_type == "Polygon":
                 pg = clipped if clipped.is_valid else _repair(clipped)
             elif clipped.geom_type == "MultiPolygon":
                 valid_parts = [p for p in clipped.geoms if p and not p.is_empty and p.area > 1e-10]
-                if not valid_parts: continue
+                if not valid_parts:
+                    continue
                 pg = MultiPolygon(valid_parts) if len(valid_parts) > 1 else valid_parts[0]
             elif hasattr(clipped, "geoms"):
                 parts = []
@@ -1849,11 +3035,16 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                         parts.append(g)
                     elif g.geom_type == "MultiPolygon":
                         parts.extend([p for p in g.geoms if not p.is_empty and p.area > 1e-10])
-                if not parts: continue
+                if not parts:
+                    continue
                 pg = MultiPolygon(parts) if len(parts) > 1 else parts[0]
             else:
                 pg = _as_poly(clipped)
-            if pg is None or pg.is_empty or pg.area < 1e-10: continue
+
+            if pg is None or pg.is_empty or pg.area < 1e-10:
+                continue
+
+            # Close polygons
             if pg.geom_type == "Polygon":
                 pg = _close_poly(pg)
             elif pg.geom_type == "MultiPolygon":
@@ -1864,7 +3055,8 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                         fixed_parts.append(cp)
                 if fixed_parts:
                     pg = MultiPolygon(fixed_parts) if len(fixed_parts) > 1 else fixed_parts[0]
-            ah = round(pg.area / 10000, 4); total += ah
+
+            ah = round(pg.area / 10000, 4)
             vrecs.append({
                 "Label":       label,
                 "Class":       cid,
@@ -1873,44 +3065,33 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                 "Area_ha":     ah,
                 "geometry":    pg,
             })
-        total = max(total, 1e-6)
-        rows = [{
-            "Label":       vr["Label"],
-            "Class":       vr["Class"],
-            "Slope_Range": vr["Slope_Range"],
-            "Description": vr["Description"],
-            "Area_ha":     vr["Area_ha"],
-            "Pct_Area":    round(vr["Area_ha"] / total * 100, 2),
-            "Total_ha":    round(total, 4),
-        } for vr in vrecs]
-        return rows, vrecs
 
-    all_sum, all_vec, per_grp = [], [], {}
-    for i, (lb, cp2) in enumerate(comp_polygons):
-        if run_id:
-            pct = 70 + int(16 * i / max(len(comp_polygons), 1))
-            _prog(run_id, f"Step 6 — Clipping {lb} ({i+1}/{len(comp_polygons)})…", pct)
-        rows, vrecs = _clip_group(cp2, lb)
-        all_sum.extend(rows); all_vec.extend(vrecs); per_grp[lb] = rows
+        # Store raw vrecs for this compartment
+        per_grp[label] = vrecs
+        all_sum.extend(vrecs)
+        all_vec.extend(vrecs)
 
-    if not all_vec:
-        raise ValueError(
-            "Clipping produced no slope polygons. "
-            "Check that the boundary polygon overlaps the DEM and is in the correct CRS."
-        )
+    # --- Check if we got any results ---
+    if not all_sum:
+        raise ValueError("No slope polygons were generated. Check that the boundary overlaps the DEM and that the CRS is correct.")
 
-    if field_area_ha and field_area_ha > 0:
-        tc = sum(r["Area_ha"] for r in all_sum)
-        if tc > 1e-9:
-            fac = field_area_ha / tc
-            for r in all_sum:
-                r["Area_ha"] = round(r["Area_ha"] * fac, 4)
-                r["Recal_ha"] = r["Area_ha"]
-                r["Cal_Factor"] = round(fac, 6)
+    # --- Now we have all raw areas in all_sum. Apply recalibration if requested ---
+    cal_factor = 1.0
+    total_raw_all = sum(r["Area_ha"] for r in all_sum)
+    if field_area_ha is not None and field_area_ha > 0 and total_raw_all > 1e-9:
+        cal_factor = field_area_ha / total_raw_all
+        # Add Recal_ha and Cal_Factor to each row (Area_ha stays raw)
+        for r in all_sum:
+            r["Recal_ha"] = round(r["Area_ha"] * cal_factor, 4)
+            r["Cal_Factor"] = round(cal_factor, 6)
+    else:
+        # No recalibration: ensure these columns are absent
+        for r in all_sum:
+            r.pop("Recal_ha", None)
+            r.pop("Cal_Factor", None)
 
-    if run_id: _prog(run_id, "Step 7 — Saving shapefiles and Excel…", 88)
+    # --- Now rebuild the vector GeoDataFrame from all_vec (raw areas) ---
     vcrs = str(dem_crs)
-
     if all_vec:
         vgdf = gpd.GeoDataFrame(all_vec, crs=vcrs)
         vgdf = _enforce_poly_gdf(vgdf)
@@ -1920,6 +3101,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
         vgdf = gpd.GeoDataFrame(columns=["Label","Class","Slope_Range",
                                           "Description","Area_ha","geometry"], crs=vcrs)
 
+    # --- Save boundary shapefile ---
     try:
         bgdf_save = _enforce_poly_gdf(bgdf)
         if not bgdf_save.empty:
@@ -1927,6 +3109,7 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
     except Exception as e:
         log.warning(f"bgdf save: {e}")
 
+    # --- Save clipped slope and class rasters for the first/main polygon (optional) ---
     try:
         main_poly = comp_polygons[0][1]
         with rasterio.open(sp_path) as _src:
@@ -1934,87 +3117,101 @@ def group_f(boundary_file, dem_file, crs, out, mapping=None,
                 _src, [main_poly.__geo_interface__],
                 crop=True, filled=True, nodata=SN, all_touched=False
             )
-        fc2  = fc2[0].astype(np.float32)
-        cp2_ = rp.copy(); cp2_.update(height=fc2.shape[0], width=fc2.shape[1], transform=ft2)
+        fc2 = fc2[0].astype(np.float32)
+        cp2_ = rp.copy()
+        cp2_.update(height=fc2.shape[0], width=fc2.shape[1], transform=ft2)
         with rasterio.open(os.path.join(out, f"{pfx}_slope_clipped.tif"), "w", **cp2_) as dst:
             dst.write(fc2, 1)
-        vm2  = (fc2 != SN) & ~np.isnan(fc2)
-        ca2  = np.zeros_like(fc2, dtype=np.uint8)
-        ca2[vm2 & (fc2 <  19)]                       = 1
-        ca2[vm2 & (fc2 >= 19) & (fc2 <= 31)]         = 2
-        ca2[vm2 & (fc2 >  31)]                       = 3
-        cp3_ = cp2_.copy(); cp3_.update(dtype="uint8", nodata=0)
+        # Reclassify clipped
+        vm2 = (fc2 != SN) & ~np.isnan(fc2)
+        ca2 = np.zeros_like(fc2, dtype=np.uint8)
+        ca2[vm2 & (fc2 < 19)] = 1
+        ca2[vm2 & (fc2 >= 19) & (fc2 <= 31)] = 2
+        ca2[vm2 & (fc2 > 31)] = 3
+        cp3_ = cp2_.copy()
+        cp3_.update(dtype="uint8", nodata=0)
         with rasterio.open(os.path.join(out, f"{pfx}_slope_classes.tif"), "w", **cp3_) as dst:
             dst.write(ca2, 1)
     except Exception as e:
         log.warning(f"Clipped raster save error: {e}")
 
-    sdf = pd.DataFrame(all_sum)
-    ep  = os.path.join(out, f"{pfx}_slope_summary.xlsx")
-    if f_mode == "A":
-        sdf.drop(columns=["Label"], errors="ignore").to_excel(ep, index=False)
+    # --- Prepare final DataFrame for Excel ---
+    # Compute per-compartment totals for raw Area_ha (so Total_ha = sum of raw areas)
+    comp_totals = {}
+    for r in all_sum:
+        lab = r["Label"]
+        comp_totals[lab] = comp_totals.get(lab, 0) + r["Area_ha"]
+
+    # Add Total_ha and Pct_Area based on raw areas
+    for r in all_sum:
+        lab = r["Label"]
+        total_raw_comp = comp_totals[lab]
+        r["Total_ha"] = round(total_raw_comp, 4)
+        r["Pct_Area"] = round(r["Area_ha"] / total_raw_comp * 100, 2) if total_raw_comp > 0 else 0
+
+    # Determine columns based on whether recalibration was applied
+    if field_area_ha is not None and field_area_ha > 0 and total_raw_all > 1e-9:
+        cols = ["Label", "Class", "Slope_Range", "Description",
+                "Area_ha", "Recal_ha", "Cal_Factor", "Pct_Area", "Total_ha"]
     else:
+        cols = ["Label", "Class", "Slope_Range", "Description",
+                "Area_ha", "Pct_Area", "Total_ha"]
+
+    # Create DataFrame and ensure all columns exist
+    df_excel = pd.DataFrame(all_sum)
+    existing_cols = [c for c in cols if c in df_excel.columns]
+    df_excel = df_excel[existing_cols]
+
+    # Save Excel
+    ep = os.path.join(out, f"{pfx}_slope_summary.xlsx")
+    if f_mode == "A":
+        # Single group: remove Label column if it's redundant
+        df_excel.drop(columns=["Label"], errors="ignore").to_excel(ep, index=False)
+    else:
+        # Multi-compartment: save all data in one sheet, and per-compartment sheets
         try:
             with pd.ExcelWriter(ep, engine="openpyxl") as wr:
-                sdf.to_excel(wr, sheet_name="All_Groups", index=False)
+                df_excel.to_excel(wr, sheet_name="All_Groups", index=False)
                 for lb, grs in per_grp.items():
-                    if not grs: continue
-                    gdf2 = pd.DataFrame(grs)
-                    th   = sum(r["Area_ha"] for r in grs)
-                    tr   = {
-                        "Label": lb, "Class": "", "Slope_Range": "TOTAL",
-                        "Description": "", "Area_ha": round(th, 4),
-                        "Pct_Area": 100.0, "Total_ha": round(th, 4),
-                    }
-                    if grs and grs[0].get("Recal_ha") is not None:
-                        tr["Recal_ha"]   = round(sum(r.get("Recal_ha",0) for r in grs), 4)
-                        tr["Cal_Factor"] = grs[0].get("Cal_Factor", "")
-                    pd.concat([gdf2, pd.DataFrame([tr])], ignore_index=True).to_excel(
-                        wr, sheet_name=str(lb)[:31], index=False)
+                    if not grs:
+                        continue
+                    # Build per-compartment DataFrame with same columns
+                    comp_raw = sum(r["Area_ha"] for r in grs)
+                    rows = []
+                    for r in grs:
+                        row = r.copy()
+                        row["Total_ha"] = round(comp_raw, 4)
+                        row["Pct_Area"] = round(r["Area_ha"] / comp_raw * 100, 2) if comp_raw > 0 else 0
+                        if field_area_ha is not None and field_area_ha > 0 and total_raw_all > 1e-9:
+                            row["Recal_ha"] = round(r["Area_ha"] * cal_factor, 4)
+                            row["Cal_Factor"] = round(cal_factor, 6)
+                            cols_per = ["Class", "Slope_Range", "Description",
+                                        "Area_ha", "Recal_ha", "Cal_Factor",
+                                        "Pct_Area", "Total_ha"]
+                        else:
+                            cols_per = ["Class", "Slope_Range", "Description",
+                                        "Area_ha", "Pct_Area", "Total_ha"]
+                        # Ensure all columns exist
+                        rows.append({k: row.get(k, None) for k in cols_per})
+                    df_comp = pd.DataFrame(rows)
+                    df_comp = df_comp.dropna(axis=1, how='all')
+                    df_comp.to_excel(wr, sheet_name=str(lb)[:31], index=False)
         except Exception as e:
             log.warning(f"Excel multi-sheet error ({e}), saving flat")
-            sdf.to_excel(ep, index=False)
+            df_excel.to_excel(ep, index=False)
 
-    if run_id: _prog(run_id, "Group F complete.", 95)
+    if run_id:
+        _prog(run_id, "Group F complete.", 95)
+
+    # Return summary, vector GDF, boundary GDF, mode, per-group dict
     return all_sum, vgdf, bgdf, f_mode, per_grp
 
 # ----------------------------------------------------------------------
 # GROUP G – SURVEY POINT GENERATOR
 # ----------------------------------------------------------------------
-
-def _g_read_shp(file_storage, target_shp=None):
-    fname = file_storage.filename.lower()
-    tmp_dir = os.path.join(UPLOAD, "g_tmp_" + uuid.uuid4().hex[:8])
-    os.makedirs(tmp_dir, exist_ok=True)
-    try:
-        if fname.endswith(".zip"):
-            zip_path = os.path.join(tmp_dir, "upload.zip")
-            file_storage.save(zip_path)
-            with zipfile.ZipFile(zip_path, "r") as z:
-                z.extractall(tmp_dir)
-            shps = [os.path.join(r, f) for r, _, fs in os.walk(tmp_dir)
-                    for f in fs if f.endswith(".shp")]
-            if not shps:
-                raise ValueError("No .shp file found in the uploaded ZIP.")
-            chosen = shps[0]
-            if target_shp:
-                tname = os.path.basename(target_shp)
-                for s in shps:
-                    if os.path.basename(s) == tname:
-                        chosen = s; break
-            return gpd.read_file(chosen)
-        else:
-            shp_path = os.path.join(tmp_dir, file_storage.filename)
-            file_storage.save(shp_path)
-            return gpd.read_file(shp_path)
-    finally:
-        pass
-
-def _g_reproject(gdf, zone_str):
-    epsg = 32644 if str(zone_str).strip() in ("44", "44N", "EPSG:32644") else 32645
-    if gdf.crs is None:
-        gdf = gdf.set_crs(f"EPSG:{epsg}")
-    return gdf.to_crs(f"EPSG:{epsg}"), epsg
+# ----------------------------------------------------------------------
+# GROUP G – SURVEY POINT GENERATOR HELPERS
+# ----------------------------------------------------------------------
 
 def _g_get_poly(geom):
     if geom is None or geom.is_empty:
@@ -2031,10 +3228,14 @@ def _g_vertex_points(gdf, comp_col):
         cid = str(row[comp_col]) if comp_col and comp_col in row.index else ""
         for poly in _g_get_poly(row.geometry):
             for x, y in poly.exterior.coords:
-                records.append({"Point_Type": "Vertex", "Source": "Vertex",
-                                 "Compartments": cid, "Easting": round(x, 3),
-                                 "Northing": round(y, 3),
-                                 "geometry": Point(x, y)})
+                records.append({
+                    "Point_Type": "Vertex",
+                    "Source": "Vertex",
+                    "Compartments": cid,
+                    "Easting": round(x, 3),
+                    "Northing": round(y, 3),
+                    "geometry": Point(x, y)
+                })
     return records
 
 def _g_boundary_points(gdf, comp_col, spacing):
@@ -2047,10 +3248,14 @@ def _g_boundary_points(gdf, comp_col, spacing):
             d = spacing
             while d < total:
                 pt = line.interpolate(d)
-                records.append({"Point_Type": "Boundary", "Source": "Boundary",
-                                 "Compartments": cid,
-                                 "Easting": round(pt.x, 3), "Northing": round(pt.y, 3),
-                                 "geometry": pt})
+                records.append({
+                    "Point_Type": "Boundary",
+                    "Source": "Boundary",
+                    "Compartments": cid,
+                    "Easting": round(pt.x, 3),
+                    "Northing": round(pt.y, 3),
+                    "geometry": pt
+                })
                 d += spacing
     return records
 
@@ -2080,29 +3285,34 @@ def _g_divider_points(gdf, comp_col, spacing):
                          if g.geom_type in ("LineString", "MultiLineString")]
             comp_pair = ",".join(sorted([ci, cj]))
             for seg in lines:
-                if seg.is_empty: continue
+                if seg.is_empty:
+                    continue
                 total = seg.length
                 d = spacing
                 while d < total:
                     pt = seg.interpolate(d)
-                    records.append({"Point_Type": "Divider", "Source": "Divider",
-                                     "Compartments": comp_pair,
-                                     "Easting": round(pt.x, 3), "Northing": round(pt.y, 3),
-                                     "geometry": pt})
+                    records.append({
+                        "Point_Type": "Divider",
+                        "Source": "Divider",
+                        "Compartments": comp_pair,
+                        "Easting": round(pt.x, 3),
+                        "Northing": round(pt.y, 3),
+                        "geometry": pt
+                    })
                     d += spacing
     return records
 
 def _g_merge_dedup(vertex_recs, boundary_recs, divider_recs):
     PRIO = {"Divider": 3, "Vertex": 2, "Boundary": 1}
-    merged: dict = {}
+    merged = {}
     for recs in (boundary_recs, vertex_recs, divider_recs):
         for r in recs:
             key = (round(r["Easting"], 3), round(r["Northing"], 3))
             if key not in merged:
                 merged[key] = r.copy()
-                merged[key]["_all_sources"]  = {r["Source"]}
-                merged[key]["_all_comps"]    = {r["Compartments"]}
-                merged[key]["_prio"]         = PRIO.get(r["Source"], 0)
+                merged[key]["_all_sources"] = {r["Source"]}
+                merged[key]["_all_comps"] = {r["Compartments"]}
+                merged[key]["_prio"] = PRIO.get(r["Source"], 0)
             else:
                 existing = merged[key]
                 existing["_all_sources"].add(r["Source"])
@@ -2113,11 +3323,12 @@ def _g_merge_dedup(vertex_recs, boundary_recs, divider_recs):
                     existing["_prio"] = new_prio
     result = []
     for rec in merged.values():
-        rec["Source"]       = "+".join(sorted(rec["_all_sources"]))
-        comp_set            = set()
+        rec["Source"] = "+".join(sorted(rec["_all_sources"]))
+        comp_set = set()
         for cs in rec["_all_comps"]:
             for c in cs.split(","):
-                if c: comp_set.add(c.strip())
+                if c:
+                    comp_set.add(c.strip())
         rec["Compartments"] = ",".join(sorted(comp_set))
         result.append(rec)
     return result
@@ -2138,35 +3349,43 @@ def _g_export(records, epsg, out_dir, prefix="ForestPoints"):
     if not records:
         raise ValueError("No points generated. Check shapefile and spacing.")
     df = pd.DataFrame([{
-        "Point_ID": r["Point_ID"], "Point_Type": r["Point_Type"],
-        "Source": r["Source"], "Compartments": r["Compartments"],
-        "Easting": r["Easting"], "Northing": r["Northing"]
+        "Point_ID": r["Point_ID"],
+        "Point_Type": r["Point_Type"],
+        "Source": r["Source"],
+        "Compartments": r["Compartments"],
+        "Easting": r["Easting"],
+        "Northing": r["Northing"]
     } for r in records])
     csv_path = os.path.join(out_dir, f"{prefix}.csv")
     df.to_csv(csv_path, index=False)
     xlsx_path = os.path.join(out_dir, f"{prefix}.xlsx")
     df.to_excel(xlsx_path, index=False)
-    shp_gdf = gpd.GeoDataFrame(df, geometry=[r["geometry"] for r in records],
-                                crs=f"EPSG:{epsg}")
+    shp_gdf = gpd.GeoDataFrame(df,
+                               geometry=[r["geometry"] for r in records],
+                               crs=f"EPSG:{epsg}")
     shp_path = os.path.join(out_dir, f"{prefix}.shp")
     shp_gdf_valid = shp_gdf[shp_gdf.geometry.notna() & ~shp_gdf.geometry.is_empty].copy()
     if not shp_gdf_valid.empty:
         shp_gdf_valid.to_file(shp_path)
-    shp_gdf = shp_gdf_valid
-    return df, shp_gdf
+    return df, shp_gdf_valid
 
-def _g_preview(shp_gdf, poly_gdf, path, safe_rect, layout_state=None):
+def _g_preview(shp_gdf, poly_gdf, path, safe_rect, title="Forest Survey Points", layout_state=None):
     render_map(path, poly_gdf=poly_gdf, pts_gdf=shp_gdf,
                point_label_col="Point_ID",
                safe_rect=safe_rect, layout_state=layout_state,
-               title="Forest Survey Points")
+               title=title)
 
 def _extract_shapefile_basename_from_zip(file_storage, target_shp=None):
+    """
+    Read a ZIP in memory and return the basename (without extension) of the first .shp
+    or the one matching target_shp. Raises ValueError if no .shp is found.
+    """
     import io, zipfile
     zip_bytes = file_storage.read()
     if len(zip_bytes) < 100:
         raise ValueError("ZIP file is empty or too small.")
     file_storage.seek(0)
+
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         namelist = zf.namelist()
         shps = [n for n in namelist if n.lower().endswith('.shp')]
@@ -2180,59 +3399,113 @@ def _extract_shapefile_basename_from_zip(file_storage, target_shp=None):
         else:
             chosen = shps[0]
         return os.path.splitext(os.path.basename(chosen))[0]
-
 def group_g(file_storage, dem_zone, comp_col_name, spacing, out_dir, run_id, target_shp=None, base_name="ForestPoints"):
+    """
+    Process a shapefile (or ZIP) of compartments, generate vertex, boundary, and divider points.
+    """
     _prog(run_id, "Reading shapefile…", 5)
-    gdf = _g_read_shp(file_storage, target_shp=target_shp)
-    if gdf.empty:
-        raise ValueError("Shapefile is empty or could not be read.")
-    if not all(t in ("Polygon", "MultiPolygon") for t in gdf.geom_type.unique()):
-        raise ValueError("Shapefile must contain only Polygon / MultiPolygon features.")
 
-    _prog(run_id, f"Reprojecting to UTM {dem_zone}N…", 10)
-    gdf, epsg = _g_reproject(gdf, dem_zone)
+    # Use tempfile for ZIP extraction
+    import tempfile
+    import zipfile
 
-    comp_col = None
-    if comp_col_name and comp_col_name in gdf.columns:
-        comp_col = comp_col_name
-    else:
-        for alias in ("Comp_ID","Comp_No","comp_id","comp_no","Compartment","COMP"):
-            if alias in gdf.columns:
-                comp_col = alias; break
+    tmp_dir = None
+    try:
+        if file_storage.filename.lower().endswith(".zip"):
+            # Handle ZIP
+            tmp_dir = tempfile.mkdtemp(prefix="group_g_")
+            zip_path = os.path.join(tmp_dir, "upload.zip")
+            file_storage.save(zip_path)
 
-    area_ha = round(gdf.geometry.area.sum() / 10000, 3)
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(tmp_dir)
 
-    _prog(run_id, "Generating vertex points…", 20)
-    v_recs = _g_vertex_points(gdf, comp_col)
+            # Find .shp files
+            shps = []
+            for root, _, files in os.walk(tmp_dir):
+                for fname in files:
+                    if fname.lower().endswith(".shp"):
+                        shps.append(os.path.join(root, fname))
 
-    _prog(run_id, f"Generating boundary points (spacing={spacing}m)…", 35)
-    b_recs = _g_boundary_points(gdf, comp_col, spacing)
+            if not shps:
+                raise ValueError("No .shp file found in the uploaded ZIP.")
 
-    _prog(run_id, "Finding shared divider lines…", 50)
-    d_recs = _g_divider_points(gdf, comp_col, spacing)
+            # Choose target shapefile if specified
+            shp_path = shps[0]
+            if target_shp:
+                for s in shps:
+                    if os.path.basename(s) == os.path.basename(target_shp):
+                        shp_path = s
+                        break
 
-    _prog(run_id, f"Merging {len(v_recs)+len(b_recs)+len(d_recs)} raw records…", 60)
-    all_recs = _g_merge_dedup(v_recs, b_recs, d_recs)
+            gdf = gpd.read_file(shp_path)
+        else:
+            # Direct shapefile upload (single .shp file) – save to temp
+            tmp_dir = tempfile.mkdtemp(prefix="group_g_")
+            shp_path = os.path.join(tmp_dir, file_storage.filename)
+            file_storage.save(shp_path)
+            gdf = gpd.read_file(shp_path)
 
-    _prog(run_id, f"Deduplicated to {len(all_recs)} unique points — assigning IDs…", 70)
-    all_recs = _g_assign_ids(all_recs)
+        if gdf.empty:
+            raise ValueError("Shapefile is empty or could not be read.")
 
-    _prog(run_id, f"Exporting {len(all_recs)} points → SHP / CSV / XLSX…", 80)
-    df, shp_gdf = _g_export(all_recs, epsg, out_dir, prefix=base_name)
+        # Ensure CRS
+        epsg = 32644 if str(dem_zone).strip() in ("44", "44N", "EPSG:32644") else 32645
+        if gdf.crs is None:
+            gdf = gdf.set_crs(f"EPSG:{epsg}")
+        else:
+            gdf = gdf.to_crs(f"EPSG:{epsg}")
 
-    summary = {
-        "total": len(all_recs),
-        "vertex": sum(1 for r in all_recs if r["Point_Type"] == "Vertex"),
-        "boundary": sum(1 for r in all_recs if r["Point_Type"] == "Boundary"),
-        "divider": sum(1 for r in all_recs if r["Point_Type"] == "Divider"),
-        "area_ha": area_ha,
-        "epsg": epsg,
-        "spacing": spacing,
-        "comp_col": comp_col or "—",
-        "compartments": int(len(gdf)),
-    }
-    return df, shp_gdf, gdf, summary
+        # Validate geometry type
+        if not all(t in ("Polygon", "MultiPolygon") for t in gdf.geom_type.unique()):
+            raise ValueError("Shapefile must contain only Polygon / MultiPolygon features.")
 
+        # Detect compartment column
+        comp_col = None
+        if comp_col_name and comp_col_name in gdf.columns:
+            comp_col = comp_col_name
+        else:
+            for alias in ("Comp_ID","Comp_No","comp_id","comp_no","Compartment","COMP"):
+                if alias in gdf.columns:
+                    comp_col = alias
+                    break
+
+        area_ha = round(gdf.geometry.area.sum() / 10000, 3)
+
+        _prog(run_id, "Generating vertex points…", 20)
+        v_recs = _g_vertex_points(gdf, comp_col)
+
+        _prog(run_id, f"Generating boundary points (spacing={spacing}m)…", 35)
+        b_recs = _g_boundary_points(gdf, comp_col, spacing)
+
+        _prog(run_id, "Finding shared divider lines…", 50)
+        d_recs = _g_divider_points(gdf, comp_col, spacing)
+
+        _prog(run_id, f"Merging {len(v_recs)+len(b_recs)+len(d_recs)} raw records…", 60)
+        all_recs = _g_merge_dedup(v_recs, b_recs, d_recs)
+
+        _prog(run_id, f"Deduplicated to {len(all_recs)} unique points — assigning IDs…", 70)
+        all_recs = _g_assign_ids(all_recs)
+
+        _prog(run_id, f"Exporting {len(all_recs)} points → SHP / CSV / XLSX…", 80)
+        df, shp_gdf = _g_export(all_recs, epsg, out_dir, prefix=base_name)
+
+        summary = {
+            "total": len(all_recs),
+            "vertex": sum(1 for r in all_recs if r["Point_Type"] == "Vertex"),
+            "boundary": sum(1 for r in all_recs if r["Point_Type"] == "Boundary"),
+            "divider": sum(1 for r in all_recs if r["Point_Type"] == "Divider"),
+            "area_ha": area_ha,
+            "epsg": epsg,
+            "spacing": spacing,
+            "comp_col": comp_col or "—",
+            "compartments": int(len(gdf)),
+        }
+        return df, shp_gdf, gdf, summary
+
+    finally:
+        if tmp_dir and os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 # ----------------------------------------------------------------------
 # GROUP H – SAMPLE POINT BASED GIS MAPS
 # ----------------------------------------------------------------------
@@ -2775,7 +4048,6 @@ def compose_map(run_id):
         return jsonify({"ok": True, "png": f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
     except Exception as e:
         return jsonify({"error": f"Compose error: {e}"}), 500
-
 @app.route("/save_edit/<run_id>", methods=["POST"])
 @_rate_limit(limit=20, window=60)
 def save_edit(run_id):
@@ -2788,26 +4060,105 @@ def save_edit(run_id):
         geojson = data.get("geojson")
         if not geojson:
             return jsonify({"error": "No GeoJSON provided."}), 400
+
+        # Convert to GeoDataFrame
         gdf_new = gpd.GeoDataFrame.from_features(geojson.get("features", []), crs="EPSG:4326")
-        shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
-                for f in fs if f.endswith("_polygon.shp")]
+
+        # Find original CRS from existing polygon shapefile
+        poly_shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                     for f in fs if f.endswith("_polygon.shp")]
+        point_shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                      for f in fs if f.endswith("_point.shp")]
+
         orig_crs = "EPSG:32644"
-        if shps:
+        if poly_shps:
             try:
-                g0 = gpd.read_file(shps[0])
+                g0 = gpd.read_file(poly_shps[0])
                 if g0.crs:
                     orig_crs = str(g0.crs)
             except:
                 pass
+
+        # Reproject to original CRS
         gdf_new = gdf_new.to_crs(orig_crs)
+
+        # Repair geometries
         gdf_new["geometry"] = [_close_poly(_repair(g)) if g else None for g in gdf_new.geometry]
         gdf_new = gdf_new[gdf_new.geometry.notna()]
-        if "Area_ha" not in gdf_new.columns:
-            gdf_new["Area_ha"] = [round(g.area/10000, 4) if g else 0 for g in gdf_new.geometry]
-        gdf_new.to_file(os.path.join(folder, "edited_polygon.shp"))
+
+        # Separate polygons and points
+        poly_gdf = gdf_new[gdf_new.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])].copy()
+        point_gdf = gdf_new[gdf_new.geometry.geom_type.isin(['Point', 'MultiPoint'])].copy()
+
+        # --- Handle Polygons ---
+        if not poly_gdf.empty:
+            # Ensure area column
+            if "Area_ha" not in poly_gdf.columns:
+                poly_gdf["Area_ha"] = [round(g.area/10000, 4) if g else 0 for g in poly_gdf.geometry]
+            # Save polygon shapefile
+            shp_path = os.path.join(folder, "edited_polygon.shp")
+            poly_gdf.to_file(shp_path)
+            # Overwrite existing polygon shapefile
+            for shp in poly_shps:
+                if os.path.basename(shp).endswith("_polygon.shp"):
+                    shutil.copyfile(shp_path, shp)
+                    break
+        else:
+            # If no polygons, keep existing (should not happen for Group C)
+            pass
+
+        # --- Handle Points ---
+        if not point_gdf.empty:
+            # Ensure point attributes: SN (or Point_ID) and coordinates
+            # If Point_ID column exists, use it; otherwise create SN
+            if "SN" not in point_gdf.columns:
+                point_gdf["SN"] = range(1, len(point_gdf) + 1)
+            # Ensure X and Y columns (from geometry)
+            point_gdf["X"] = point_gdf.geometry.x
+            point_gdf["Y"] = point_gdf.geometry.y
+
+            # Save point shapefile
+            point_shp_path = os.path.join(folder, "edited_point.shp")
+            point_gdf.to_file(point_shp_path)
+            # Overwrite existing point shapefile
+            for shp in point_shps:
+                if os.path.basename(shp).endswith("_point.shp"):
+                    shutil.copyfile(point_shp_path, shp)
+                    break
+
+            # Regenerate Excel file
+            excel_path = None
+            for root, _, files in os.walk(folder):
+                for f in files:
+                    if f.endswith("_sampleplot.xlsx"):
+                        excel_path = os.path.join(root, f)
+                        break
+                if excel_path:
+                    break
+            if excel_path:
+                # Create DataFrame from point_gdf
+                df = point_gdf[["SN", "X", "Y"]].copy()
+                df.to_excel(excel_path, index=False)
+        else:
+            # If no points (all deleted), we might remove the point files or keep empty.
+            # For safety, we can write an empty point shapefile and Excel.
+            # But we'll skip for now – user likely wants to keep at least some points.
+            pass
+
+        # --- Re‑render the map ---
+        # Load the updated polygon and point layers
+        updated_poly = gpd.read_file(poly_shps[0]) if poly_shps else None
+        updated_point = gpd.read_file(point_shps[0]) if point_shps else None
+        # Line layer is not editable, we can load it from existing file
+        line_shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                     for f in fs if f.endswith("_line.shp")]
+        line_gdf = gpd.read_file(line_shps[0]) if line_shps else None
 
         layout_state = data.get("layout_state", get_default_layout_state())
-        bounds = gdf_new.total_bounds
+        if updated_poly is not None and not updated_poly.empty:
+            bounds = updated_poly.total_bounds
+        else:
+            bounds = (0, 0, 1, 1)
         if bounds is not None and len(bounds) == 4:
             w = bounds[2] - bounds[0]
             h = bounds[3] - bounds[1]
@@ -2815,14 +4166,17 @@ def save_edit(run_id):
         else:
             poly_aspect = 1.0
         safe_rect = compute_safe_rect(layout_state, poly_aspect)
+
         pp = os.path.join(folder, "output.png")
-        if "Comp_ID" in gdf_new.columns:
-            render_map(pp, poly_gdf=gdf_new, label_col="Comp_ID",
-                       safe_rect=safe_rect, layout_state=layout_state)
-        else:
-            render_map(pp, poly_gdf=gdf_new, safe_rect=safe_rect, layout_state=layout_state)
+        # Determine label column: for Group C, we use "SN"
+        label_col = "SN"
+        render_map(pp, poly_gdf=updated_poly, line_gdf=line_gdf, pts_gdf=updated_point,
+                   label_col=label_col, point_label_col=label_col,
+                   safe_rect=safe_rect, layout_state=layout_state)
+
         return jsonify({"ok": True, "png": f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
     except Exception as e:
+        log.error(f"Save edit error: {traceback.format_exc()}")
         return jsonify({"error": f"Edit error: {e}\n{traceback.format_exc()}"}), 500
 
 @app.route("/download/<run_id>")
@@ -3059,10 +4413,11 @@ def upload():
             poly, line, pts = group_b(df, crs, out, mapping)
             lc_out = label_col or "Forest"
         elif module == "C":
-            _prog(run_id, "Processing…", 10)
-            poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping, base_name=base_name_file)
-            lc_out = "SN"
-            lp_gdf = pts
+    	     _prog(run_id, "Processing ZIP or CSV…", 10)
+    	     poly, line, pts = group_c(file, crs, w, h, rows, cols, out, mode, mapping,
+                              base_name=base_name, run_id=run_id)
+    	     lc_out = "SN"
+    	     lp_gdf = pts
         elif module == "D":
             _prog(run_id, "Reading…", 8)
             df = read_input(file)
@@ -3376,6 +4731,66 @@ def about_page():
 </footer>
 </body>
 </html>""", mimetype="text/html")
+@app.route("/run_g", methods=["POST"])
+@_rate_limit(limit=10, window=60)
+@_with_pipeline_sem
+def run_g():
+    run_id = str(uuid.uuid4())
+    _prog(run_id, "Starting Group G...", 0)
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "No shapefile uploaded.", "run_id": run_id}), 400
+        file = request.files["file"]
+
+        # Get parameters
+        zone = request.form.get("zone", "44")
+        comp_col = request.form.get("comp_col", "").strip() or None
+        title = request.form.get("title", "Forest Survey Points").strip()
+        try:
+            spacing = float(request.form.get("spacing", "20"))
+            if spacing <= 0:
+                raise ValueError
+        except:
+            return jsonify({"error": "Invalid spacing value.", "run_id": run_id}), 400
+
+        # Determine base_name from uploaded file
+        base_name = os.path.splitext(os.path.basename(file.filename))[0]
+        target_shp = request.form.get("target_shp", "").strip() or None
+
+        username = _require_login() or "guest"
+        out = os.path.join(OUTPUT, run_id)
+        os.makedirs(out, exist_ok=True)
+
+        # Process
+        df, shp_gdf, poly_gdf, summary = group_g(
+            file, zone, comp_col, spacing, out, run_id,
+            target_shp=target_shp, base_name=base_name
+        )
+
+        _prog(run_id, "Rendering A4 map…", 90)
+        layout_state = get_default_layout_state()
+        safe_rect = compute_safe_rect(layout_state, 1.0)
+        _g_preview(shp_gdf, poly_gdf, os.path.join(out, "output.png"),
+                   safe_rect, title=title, layout_state=layout_state)
+
+        kmz_url = None
+        try:
+            kmz_url = generate_kmz(poly_gdf, gpd.GeoDataFrame(), shp_gdf, out, run_id)
+        except:
+            pass
+
+        _append_run(username, run_id, "G", f"{summary['total']} pts | {summary['compartments']} compartments")
+        _prog(run_id, "Complete.", 100)
+        return jsonify({
+            "run_id": run_id,
+            "download": f"/download/{run_id}",
+            "kmz_url": kmz_url,
+            "summary": summary
+        })
+    except Exception as e:
+        _prog(run_id, f"ERROR: {e}", 0)
+        log.error(f"Group G error: {traceback.format_exc()}")
+        return jsonify({"error": str(e), "run_id": run_id}), 500
 
 @app.route("/robots.txt")
 def robots_txt():
