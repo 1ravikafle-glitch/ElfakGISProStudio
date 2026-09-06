@@ -1,0 +1,14 @@
+flask
+gunicorn
+pandas
+geopandas
+shapely
+matplotlib
+openpyxl
+fiona
+xlrd
+streamlit
+pyproj
+rtree
+rasterio
+scipy
