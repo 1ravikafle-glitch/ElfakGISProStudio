@@ -3268,6 +3268,17 @@
                                 <div class="ov-rotate-handle"></div>
                             </div>
 
+                            <div id="ov-slope-table" class="ov-item ov-slope-table" data-ov-type="slope-table" style="left:4%;top:55%;width:160px;height:auto;min-width:80px;min-height:40px;z-index:10;display:none;">
+                                <div class="ov-drag-area" style="font-size:10px;font-family:var(--mono);color:var(--txt2);padding:6px 8px;border-radius:4px;background:var(--panel-elevated);border:1px solid var(--panel-border);backdrop-filter:blur(8px);box-shadow:var(--shadow-xs);cursor:text;user-select:text;outline:none;white-space:pre;line-height:1.6;" contenteditable="true" spellcheck="false">0-19° | 0.00 ha
+19-31° | 0.00 ha
+>31° | 0.00 ha
+Total | 0.00 ha</div>
+                                <div class="ov-resize-handle nw"></div><div class="ov-resize-handle n"></div><div class="ov-resize-handle ne"></div>
+                                <div class="ov-resize-handle e"></div><div class="ov-resize-handle se"></div><div class="ov-resize-handle s"></div>
+                                <div class="ov-resize-handle sw"></div><div class="ov-resize-handle w"></div>
+                                <div class="ov-rotate-handle"></div>
+                            </div>
+
                             <div id="ov-logo" class="ov-item ov-logo" data-ov-type="logo" style="left:4%;top:2%;width:44px;height:44px;min-width:30px;min-height:30px;z-index:11;pointer-events:none;">
                                 <div class="ov-drag-area" style="display:flex;align-items:center;justify-content:center;border-radius:4px;background:transparent;cursor:default;">
                                     <svg viewBox="0 0 24 24" fill="none" style="width:100%;height:100%;max-width:44px;max-height:44px;filter:drop-shadow(0 1px 4px rgba(0,0,0,.1));">
@@ -5853,6 +5864,10 @@
                 if (id === 'ov-scale') {
                     const span = el.querySelector('.ov-drag-area span');
                     if (span) state[id].text = span.textContent;
+                }
+                if (id === 'ov-slope-table') {
+                    const area = el.querySelector('.ov-drag-area');
+                    if (area) state[id].text = area.textContent;
                 }
             });
             return state;

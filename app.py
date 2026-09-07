@@ -71,6 +71,7 @@ for _d in (UPLOAD, OUTPUT, DEM_CATALOG_DIR, DEM_CACHE_DIR):
 FIG_W, FIG_H, DPI = 8.27, 11.69, 300  # A4 portrait, 300 DPI
 EPS = 1e-6
 DEFAULT_PADDING = 0.02
+OUTPUT_TTL_HOURS = int(os.environ.get("OUTPUT_TTL_HOURS", "168"))  # 7 days default
 
 # ── Export map style constants ──────────────────────────────
 MAP_BG     = "white"
@@ -83,6 +84,45 @@ LABEL_COL  = "#000000"
 GRID_COL   = "#aaaaaa"
 GRID_LW    = 0.4
 TICK_FS    = 7
+
+# ----------------------------------------------------------------------
+# Output Cleanup (TTL-based)
+# ----------------------------------------------------------------------
+
+def _cleanup_old_outputs():
+    """Remove output directories older than OUTPUT_TTL_HOURS."""
+    if OUTPUT_TTL_HOURS <= 0:
+        return
+    cutoff = time.time() - (OUTPUT_TTL_HOURS * 3600)
+    removed = 0
+    try:
+        for name in os.listdir(OUTPUT):
+            folder = os.path.join(OUTPUT, name)
+            if not os.path.isdir(folder):
+                continue
+            # Use the most recent file mtime as the folder's "age"
+            try:
+                newest = max(
+                    os.path.getmtime(os.path.join(r, f))
+                    for r, _, fs in os.walk(folder)
+                    for f in fs
+                )
+            except (ValueError, OSError):
+                newest = os.path.getmtime(folder)
+            if newest < cutoff:
+                shutil.rmtree(folder, ignore_errors=True)
+                removed += 1
+    except Exception as e:
+        log.warning(f"Output cleanup failed: {e}")
+    if removed:
+        log.info(f"Cleaned up {removed} expired output(s) (TTL={OUTPUT_TTL_HOURS}h)")
+
+
+# Run cleanup once on startup
+try:
+    _cleanup_old_outputs()
+except Exception:
+    pass
 
 # ----------------------------------------------------------------------
 # Helper: Human-readable Run ID
@@ -1127,11 +1167,309 @@ def _label_points_export(ax, pts_gdf, sn_col):
             path_effects=[pe.Stroke(linewidth=1.5, foreground="white"), pe.Normal()], zorder=8)
 
 
+# ----------------------------------------------------------------------
+# EXPORT LAYOUT: overlay rendering for /export_layout
+# ----------------------------------------------------------------------
+
+def _parse_legend_html(html_str):
+    """Parse legend HTML from frontend into a list of {color, label, type} dicts."""
+    items = []
+    # Match rows: content between <div class="ov-legend-row"> and the closing </div>
+    # before the next row or end of string (handles nested divs inside swatch)
+    row_re = re.compile(
+        r'<div\s+class="ov-legend-row"[^>]*>(.+?)</div>\s*(?=<div\s+class="ov-legend-row"|<div\s+class="ov-legend-title"|$)',
+        re.DOTALL)
+    swatch_re = re.compile(r'background:\s*([^;"\']+)', re.I)
+    label_re = re.compile(r'<span[^>]*>(.*?)</span>', re.DOTALL)
+
+    for row_m in row_re.finditer(html_str):
+        row_html = row_m.group(1)
+        color = ''
+        label = ''
+        typ = 'polygon'
+
+        sw_m = swatch_re.search(row_html)
+        if sw_m:
+            color = sw_m.group(1).strip()
+            if 'border-radius:50%' in row_html or 'border-radius: 50%' in row_html or 'circle' in row_html:
+                typ = 'circle'
+            elif 'border-bottom' in row_html or 'line' in row_html:
+                typ = 'line'
+            else:
+                typ = 'polygon'
+        else:
+            typ = 'text'
+
+        lbl_m = label_re.search(row_html)
+        if lbl_m:
+            label = re.sub(r'<[^>]+>', '', lbl_m.group(1)).strip()
+
+        if label:
+            items.append({'color': color, 'label': label, 'type': typ})
+    return items
+
+
+def _render_overlay_slope_table(ax_ov, ov_state, fig):
+    """Render slope area table overlay from layout_state."""
+    # Parse the editable text rows from frontend
+    text = ov_state.get('text', '')
+    # Also check for slope_areas dict passed via layout_state
+    slope_areas = ov_state.get('slope_areas', {})
+
+    # Build table data from slope_areas or parse from text
+    table_data = []
+    total = 0
+    if slope_areas:
+        for cls, info in SLOPE_CLASSES.items():
+            area = slope_areas.get(info['range'], 0)
+            table_data.append([info['range'], f"{area:.2f} ha"])
+            total += area
+        table_data.append(["Total", f"{total:.2f} ha"])
+    elif text:
+        # Parse editable text rows (format: "0-19° | 12.34 ha\n19-31° | 5.67 ha\n...")
+        for line in text.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split('|')]
+            if len(parts) == 2:
+                table_data.append(parts)
+            elif len(parts) == 1:
+                # Single column — just range label
+                table_data.append([parts[0], ""])
+
+    if not table_data:
+        return
+
+    # Background box
+    n_rows = len(table_data) + 1  # +1 for header
+    row_h = 0.12
+    box_h = n_rows * row_h + 0.08
+    box_w = 0.92
+    ax_ov.add_patch(mpatches.FancyBboxPatch(
+        (0.04, 1.0 - box_h - 0.02), box_w, box_h,
+        boxstyle="round,pad=0.015", facecolor="white", edgecolor="#333333",
+        linewidth=1.0, transform=ax_ov.transAxes, zorder=18))
+
+    # Header
+    ax_ov.text(0.25, 1.0 - 0.04, "Slope", transform=ax_ov.transAxes,
+        ha="center", va="top", fontsize=7, fontweight="bold", color="white", zorder=19)
+    ax_ov.text(0.75, 1.0 - 0.04, "Area", transform=ax_ov.transAxes,
+        ha="center", va="top", fontsize=7, fontweight="bold", color="white", zorder=19)
+    # Header background
+    ax_ov.add_patch(mpatches.Rectangle(
+        (0.04, 1.0 - 0.06 - row_h), box_w - 0.08, row_h,
+        facecolor="#1a5276", edgecolor="none",
+        transform=ax_ov.transAxes, zorder=18))
+
+    y = 1.0 - 0.06 - row_h
+    for i, row in enumerate(table_data):
+        bg = '#f8f9fa' if i % 2 == 0 else '#ffffff'
+        ax_ov.add_patch(mpatches.Rectangle(
+            (0.04, y - row_h + 0.02), box_w - 0.08, row_h,
+            facecolor=bg, edgecolor="none",
+            transform=ax_ov.transAxes, zorder=18))
+        ax_ov.text(0.25, y - row_h/2 + 0.02, row[0], transform=ax_ov.transAxes,
+            ha="center", va="center", fontsize=6.5, color="#333333", zorder=19)
+        ax_ov.text(0.75, y - row_h/2 + 0.02, row[1], transform=ax_ov.transAxes,
+            ha="center", va="center", fontsize=6.5, color="#333333", zorder=19)
+        y -= row_h
+
+
+def _render_overlay_legend(ax_ov, legend_state, fig):
+    """Render legend overlay from layout_state using parsed legend HTML."""
+    legend_html = legend_state.get('legendHtml', '')
+    legend_title = legend_state.get('legendTitle', 'Legend')
+    items = _parse_legend_html(legend_html)
+    if not items and not legend_title:
+        return
+
+    n = max(len(items), 1)
+    row_h = 0.065
+    title_h = 0.10
+    box_h = title_h + n * row_h + 0.04
+    box_w = 0.92
+
+    # Background box
+    ax_ov.add_patch(mpatches.FancyBboxPatch(
+        (0.04, 1.0 - box_h - 0.03), box_w, box_h,
+        boxstyle="round,pad=0.015", facecolor="white", edgecolor="#333333",
+        linewidth=1.2, transform=ax_ov.transAxes, zorder=18))
+
+    # Title
+    ax_ov.text(0.5, 1.0 - 0.04, legend_title, transform=ax_ov.transAxes,
+        ha="center", va="top", fontsize=7.5, fontweight="bold", color="#1a1a1a", zorder=19)
+
+    y = 1.0 - title_h - 0.04
+    for item in items:
+        swatch_y = y - 0.01
+        if item['type'] == 'text':
+            ax_ov.text(0.08, y, item['label'], transform=ax_ov.transAxes,
+                ha="left", va="center", fontsize=6.5, color="#333333", zorder=19)
+        elif item['type'] == 'circle':
+            circle = plt.Circle((0.10, swatch_y), 0.022, color=item['color'],
+                transform=ax_ov.transAxes, zorder=19)
+            ax_ov.add_patch(circle)
+            ax_ov.text(0.16, y, item['label'], transform=ax_ov.transAxes,
+                ha="left", va="center", fontsize=6.5, color="#333333", zorder=19)
+        elif item['type'] == 'line':
+            ax_ov.plot([0.05, 0.15], [swatch_y, swatch_y], color=item['color'],
+                linewidth=2.0, transform=ax_ov.transAxes, zorder=19)
+            ax_ov.text(0.18, y, item['label'], transform=ax_ov.transAxes,
+                ha="left", va="center", fontsize=6.5, color="#333333", zorder=19)
+        else:  # polygon
+            rect = mpatches.FancyBboxPatch(
+                (0.05, swatch_y - 0.018), 0.10, 0.036,
+                boxstyle="round,pad=0.003", facecolor=item['color'],
+                edgecolor="#555555", linewidth=0.6,
+                transform=ax_ov.transAxes, zorder=19)
+            ax_ov.add_patch(rect)
+            ax_ov.text(0.18, y, item['label'], transform=ax_ov.transAxes,
+                ha="left", va="center", fontsize=6.5, color="#333333", zorder=19)
+        y -= row_h
+
+
+def _render_north_arrow_on_ax(ax_ov, pos_x=0.5, pos_y=0.5, size=0.045):
+    """Render a north arrow at the given normalized position on ax_ov."""
+    x, y = pos_x, pos_y
+    hw = size * 0.35
+    # Upper black triangle
+    tri_up = plt.Polygon(
+        [[x, y], [x - hw, y - size * 0.6], [x + hw, y - size * 0.6]],
+        closed=True, facecolor="black", edgecolor="black", linewidth=0.8,
+        transform=ax_ov.transAxes, zorder=21)
+    ax_ov.add_patch(tri_up)
+    # Lower white triangle
+    tri_dn = plt.Polygon(
+        [[x, y - size * 1.6], [x - hw, y - size * 0.6], [x + hw, y - size * 0.6]],
+        closed=True, facecolor="white", edgecolor="black", linewidth=0.8,
+        transform=ax_ov.transAxes, zorder=21)
+    ax_ov.add_patch(tri_dn)
+    ax_ov.text(x, y + size * 0.35, "N", transform=ax_ov.transAxes,
+        ha="center", va="bottom", fontsize=10, fontweight="bold", color="black", zorder=22)
+
+
+def _render_scale_bar_on_ax(ax_ov, ax_map, n_segments=3, bar_h=0.06):
+    """Render a scale bar on ax_ov, computing distance from ax_map data."""
+    xlim = ax_map.get_xlim()
+    map_span_m = xlim[1] - xlim[0]
+    fig_w_in = ax_map.figure.get_figwidth()
+    ax_pos = ax_map.get_position()
+    ax_w_in = max(ax_pos.width * fig_w_in, 1.0)
+    m_per_in = map_span_m / ax_w_in
+    seg_m = ax_w_in * 0.06 * m_per_in
+    mag = 10 ** math.floor(math.log10(max(seg_m, 1)))
+    for mult in [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000]:
+        if mag * mult >= seg_m * 0.7:
+            seg_m = mag * mult
+            break
+    total_frac = (seg_m * n_segments) / m_per_in / fig_w_in
+    x = 0.5 - total_frac / 2
+    y = 0.25
+    seg_frac = total_frac / n_segments
+    colors = ["black", "white"] * (n_segments // 2 + 1)
+
+    # Full white fill to mask any UTM labels behind this overlay
+    ax_ov.add_patch(mpatches.Rectangle(
+        (0, 0), 1, 1, facecolor="white", edgecolor="none",
+        transform=ax_ov.transAxes, zorder=19))
+
+    # Bordered box around the scale bar area
+    ax_ov.add_patch(mpatches.FancyBboxPatch(
+        (x - 0.03, 0.08), total_frac + 0.06, bar_h + 0.18,
+        boxstyle="round,pad=0.012", facecolor="white", edgecolor="#aaaaaa",
+        linewidth=0.7, transform=ax_ov.transAxes, zorder=20))
+
+    for i in range(n_segments):
+        ax_ov.add_patch(mpatches.FancyBboxPatch(
+            (x + i * seg_frac, y), seg_frac, bar_h,
+            boxstyle="square,pad=0", facecolor=colors[i], edgecolor="black",
+            linewidth=1.0, transform=ax_ov.transAxes, zorder=21))
+
+    def _fmt(m):
+        if m == 0:
+            return "0"
+        return f"{int(m // 1000)} km" if m >= 1000 and m % 1000 == 0 else f"{int(m)} m"
+
+    for i in range(n_segments + 1):
+        ax_ov.text(x + i * seg_frac, y + bar_h + 0.03, _fmt(i * seg_m),
+            transform=ax_ov.transAxes, ha="center", va="bottom",
+            fontsize=7, fontweight="bold", color="black", zorder=22)
+
+
+def _render_export_layout(fig, ax_map, layout_state, title=None):
+    """Render all overlays (title, area, legend, north arrow, scale bar) on fig
+    at positions defined by layout_state. ax_map is the main map axes."""
+    if not layout_state:
+        return
+
+    for ov_id, ov in layout_state.items():
+        if not ov.get('visible', True):
+            continue
+
+        left_pct = ov.get('left', 50) / 100.0
+        # Convert "top" from CSS-like (0=top) to matplotlib (0=bottom)
+        top_pct = 1.0 - (ov.get('top', 50) / 100.0)
+        width_pct = ov.get('width', 20) / 100.0
+        height_pct = ov.get('height', 10) / 100.0
+
+        # Ensure axes stay within figure bounds
+        left_pct = max(0.01, min(left_pct, 0.95))
+        top_pct = max(0.05, min(top_pct, 0.98))
+        width_pct = max(0.03, min(width_pct, 0.5))
+        height_pct = max(0.03, min(height_pct, 0.4))
+
+        bottom_pct = top_pct - height_pct
+        bottom_pct = max(0.01, bottom_pct)
+
+        ax_ov = fig.add_axes([left_pct, bottom_pct, width_pct, height_pct],
+                             frameon=False, zorder=15)
+        ax_ov.set_xlim(0, 1)
+        ax_ov.set_ylim(0, 1)
+        ax_ov.axis("off")
+
+        if ov_id == 'ov-title':
+            title_text = ov.get('text', title or 'Forest Map')
+            ax_ov.text(0.5, 0.5, title_text, transform=ax_ov.transAxes,
+                ha="center", va="center", fontsize=13, fontweight="bold",
+                color="#1a1a1a", zorder=20)
+
+        elif ov_id == 'ov-area':
+            area_text = ov.get('text', '')
+            if area_text:
+                ax_ov.text(0.5, 0.5, area_text, transform=ax_ov.transAxes,
+                    ha="center", va="center", fontsize=9, color="#333333", zorder=20)
+
+        elif ov_id == 'ov-legend':
+            # Auto-size legend height based on item count
+            legend_html = ov.get('legendHtml', '')
+            legend_title = ov.get('legendTitle', '')
+            items = _parse_legend_html(legend_html)
+            n_items = max(len(items), 1)
+            row_h_units = 0.065
+            title_h_units = 0.10
+            needed_h = title_h_units + n_items * row_h_units + 0.06
+            if needed_h > height_pct:
+                # Resize axes to fit content
+                new_bottom = max(0.01, top_pct - needed_h)
+                ax_ov.set_position([left_pct, new_bottom, width_pct, needed_h])
+            _render_overlay_legend(ax_ov, ov, fig)
+
+        elif ov_id == 'ov-north':
+            _render_north_arrow_on_ax(ax_ov, pos_x=0.5, pos_y=0.55, size=0.12)
+
+        elif ov_id == 'ov-scale':
+            _render_scale_bar_on_ax(ax_ov, ax_map, n_segments=3, bar_h=0.08)
+
+        elif ov_id == 'ov-slope-table':
+            _render_overlay_slope_table(ax_ov, ov, fig)
+
+
 def render_map(path, poly_gdf=None, line_gdf=None, pts_gdf=None,
                label_col=None, point_label_col=None,
                safe_rect=None, layout_state=None,
                title=None, slope_mode=False, summary_rows=None,
-               slope_areas=None):
+               slope_areas=None, slope_poly_gdf=None):
     """
     Export-ready map renderer.
 
@@ -1172,49 +1510,92 @@ def render_map(path, poly_gdf=None, line_gdf=None, pts_gdf=None,
         plt.close(fig); gc.collect(); return
 
     # ── STANDARD EXPORT MAP ─────────────────────────────────────────────
-    fig, ax = plt.subplots(1, 1, figsize=(FIG_W, FIG_H), dpi=DPI)
-    fig.patch.set_facecolor(MAP_BG); ax.set_facecolor(MAP_BG)
-
     all_gdfs = [g for g in [poly_gdf, line_gdf, pts_gdf] if g is not None and not g.empty]
     if not all_gdfs:
+        fig, ax = plt.subplots(1, 1, figsize=(FIG_W, FIG_H), dpi=DPI)
+        fig.patch.set_facecolor(MAP_BG); ax.set_facecolor(MAP_BG)
         ax.text(0.5, 0.5, "No geometry to display",
                 transform=ax.transAxes, ha="center", va="center", fontsize=14)
         fig.savefig(path, dpi=DPI, bbox_inches='tight', facecolor=MAP_BG)
         plt.close(fig); gc.collect(); return
 
-    minx = min(g.total_bounds[0] for g in all_gdfs)
-    miny = min(g.total_bounds[1] for g in all_gdfs)
-    maxx = max(g.total_bounds[2] for g in all_gdfs)
-    maxy = max(g.total_bounds[3] for g in all_gdfs)
-    data_w = maxx - minx; data_h = maxy - miny
+    # Compute polygon aspect ratio for safe_rect
+    bounds = _get_combined_bounds(all_gdfs)
+    data_w = bounds[2] - bounds[0]
+    data_h = bounds[3] - bounds[1]
+    poly_aspect = data_w / data_h if data_h > EPS else 1.0
 
-    # Polygon at ~70% of frame (margin ≈ 21.4% of max extent on each side)
-    _FILL_TARGET = 0.70
-    margin = max(data_w, data_h) * (1.0 - _FILL_TARGET) / (2.0 * _FILL_TARGET)
+    # When layout_state is provided, use safe_rect for map placement + overlays
+    if layout_state:
+        sr = compute_safe_rect(layout_state, poly_aspect)
+        fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI)
+        fig.patch.set_facecolor(MAP_BG)
+        ax = fig.add_axes([sr[0], sr[1], sr[2], sr[3]])
+        ax.set_facecolor(MAP_BG)
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=(FIG_W, FIG_H), dpi=DPI)
+        fig.patch.set_facecolor(MAP_BG); ax.set_facecolor(MAP_BG)
+        sr = None
 
-    ax_aspect = (FIG_W * 0.82) / (FIG_H * 0.82)
-    dw = data_w + 2*margin; dh = data_h + 2*margin
-    if dw / max(dh, 1e-9) > ax_aspect: dh = dw / ax_aspect
-    else: dw = dh * ax_aspect
-    cx = (minx + maxx) / 2; cy = (miny + maxy) / 2
-    ax.set_xlim(cx - dw/2, cx + dw/2)
-    ax.set_ylim(cy - dh/2, cy + dh/2)
+    cx = (bounds[0] + bounds[2]) / 2
+    cy = (bounds[1] + bounds[3]) / 2
 
-    _setup_utm_grid(ax, cx-dw/2, cx+dw/2, cy-dh/2, cy+dh/2)
+    if sr:
+        # Use safe_rect dimensions for extent
+        fig_w_in = FIG_W
+        fig_h_in = FIG_H
+        ax_pos = ax.get_position()
+        ax_w_in = ax_pos.width * fig_w_in
+        ax_h_in = ax_pos.height * fig_h_in
+        ax_aspect = ax_w_in / ax_h_in if ax_h_in > EPS else 1.0
+    else:
+        _FILL_TARGET = 0.70
+        margin = max(data_w, data_h) * (1.0 - _FILL_TARGET) / (2.0 * _FILL_TARGET)
+        ax_aspect = (FIG_W * 0.82) / (FIG_H * 0.82)
+        dw = data_w + 2 * margin
+        dh = data_h + 2 * margin
+
+    if sr:
+        extent = max(data_w, data_h)
+        margin = 0.05 * extent
+        dw = data_w + 2 * margin
+        dh = data_h + 2 * margin
+        if dw / max(dh, 1e-9) > ax_aspect:
+            dh = dw / ax_aspect
+        else:
+            dw = dh * ax_aspect
+
+    ax.set_xlim(cx - dw / 2, cx + dw / 2)
+    ax.set_ylim(cy - dh / 2, cy + dh / 2)
+
+    _setup_utm_grid(ax, cx - dw / 2, cx + dw / 2, cy - dh / 2, cy + dh / 2)
     for spine in ax.spines.values():
-        spine.set_edgecolor('black'); spine.set_linewidth(1.2)
+        spine.set_edgecolor('black')
+        spine.set_linewidth(1.2)
 
     # Plot boundary polygon
     if poly_gdf is not None and not poly_gdf.empty:
         if "Comp_ID" in poly_gdf.columns:
             comps = poly_gdf["Comp_ID"].unique()
-            cmap = {c: _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)] for i,c in enumerate(comps)}
-            pg2 = poly_gdf.copy(); pg2["_col"] = pg2["Comp_ID"].map(cmap)
+            cmap = {c: _COMP_COLORS_RICH[i % len(_COMP_COLORS_RICH)] for i, c in enumerate(comps)}
+            pg2 = poly_gdf.copy()
+            pg2["_col"] = pg2["Comp_ID"].map(cmap)
             pg2.plot(ax=ax, column="_col", categorical=True, edgecolor="#111111", linewidth=1.6)
             if label_col and label_col in poly_gdf.columns:
                 _place_labels(ax, poly_gdf, label_col, [], fig, fontsize=8, color="#1565C0", offset=6)
         else:
             poly_gdf.plot(ax=ax, facecolor="none", edgecolor=POLY_COLOR, linewidth=POLY_LW, zorder=3)
+
+    # Plot slope-colored polygons (overlaid on boundary)
+    if slope_poly_gdf is not None and not slope_poly_gdf.empty:
+        for cls, info in SLOPE_CLASSES.items():
+            sub = slope_poly_gdf[slope_poly_gdf['Class'] == cls]
+            if not sub.empty:
+                sub.plot(ax=ax, facecolor=info['color'], edgecolor='#333333',
+                         linewidth=0.4, alpha=0.75, zorder=2)
+        # Also plot boundary outline on top
+        if poly_gdf is not None and not poly_gdf.empty:
+            poly_gdf.boundary.plot(ax=ax, color='#111111', linewidth=1.8, zorder=4)
 
     if line_gdf is not None and not line_gdf.empty:
         line_gdf.plot(ax=ax, color=POLY_COLOR, linewidth=POLY_LW, zorder=3)
@@ -1223,12 +1604,20 @@ def render_map(path, poly_gdf=None, line_gdf=None, pts_gdf=None,
         pts_gdf.plot(ax=ax, color=POINT_COL, markersize=POINT_SZ, marker="o", zorder=5)
         lbl = point_label_col
         if lbl is None:
-            for cand in ["SN","sn","Order","Point_ID","ID"]:
-                if cand in pts_gdf.columns: lbl = cand; break
-        if lbl: _label_points_export(ax, pts_gdf, lbl)
+            for cand in ["SN", "sn", "Order", "Point_ID", "ID"]:
+                if cand in pts_gdf.columns:
+                    lbl = cand
+                    break
+        if lbl:
+            _label_points_export(ax, pts_gdf, lbl)
 
-    fig.subplots_adjust(left=0.10, right=0.97, bottom=0.07, top=0.97)
-    fig.savefig(path, dpi=DPI, bbox_inches='tight', facecolor=MAP_BG, edgecolor='none')
+    # Render overlay layout if layout_state provided
+    if layout_state:
+        _render_export_layout(fig, ax, layout_state, title=title)
+        fig.savefig(path, dpi=DPI, bbox_inches='tight', facecolor=MAP_BG, edgecolor='none')
+    else:
+        fig.subplots_adjust(left=0.10, right=0.97, bottom=0.07, top=0.97)
+        fig.savefig(path, dpi=DPI, bbox_inches='tight', facecolor=MAP_BG, edgecolor='none')
     plt.close(fig); gc.collect()
 
 # ----------------------------------------------------------------------
@@ -3978,7 +4367,7 @@ def _save_run_meta(out_dir, forest_name, area_ha=None, **extra):
 @app.route("/map_editor/<run_id>")
 @_rate_limit(limit=60, window=60)
 def map_editor(run_id):
-    """Standalone map editor page (opened from history or directly)."""
+    """Redirect to the SPA overlay editor with this run loaded."""
     run_id = _safe_runid(run_id)
     folder = os.path.join(OUTPUT, run_id)
     if not os.path.exists(folder):
@@ -3986,21 +4375,12 @@ def map_editor(run_id):
     map_file = os.path.join(folder, "output.png")
     if not os.path.exists(map_file):
         abort(404, "Map image not found for this run.")
-    meta_path = os.path.join(folder, "meta.json")
-    meta = {}
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            pass
-    return render_template(
-        "map_result.html",
-        map_url=f"/outputs/{run_id}/output.png",
-        run_id=run_id,
-        forest_name=meta.get("forest_name", "Forest Boundary"),
-        area_ha=meta.get("area_ha"),
-    )
+    return render_template("index.html", auto_run_id=run_id)
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
 
 
 # ----------------------------------------------------------------------
@@ -4201,6 +4581,141 @@ def compose_map(run_id):
         return jsonify({"ok": True, "png": f"/outputs/{run_id}/output.png?t={uuid.uuid4().hex[:8]}"})
     except Exception as e:
         return jsonify({"error": f"Compose error: {e}"}), 500
+
+
+@app.route("/export_layout", methods=["POST"])
+@_rate_limit(limit=20, window=60)
+def export_layout():
+    """Export a cartographic layout PNG with all overlays rendered by matplotlib."""
+    try:
+        data = request.get_json(silent=True) or {}
+        run_id = data.get("run_id", "").strip()
+        if not run_id:
+            return jsonify({"error": "Missing run_id"}), 400
+        run_id = _safe_runid(run_id)
+
+        folder = os.path.join(OUTPUT, run_id)
+        if not os.path.exists(folder):
+            return jsonify({"error": "Run not found"}), 404
+
+        layout_state = data.get("layout_state") or get_default_layout_state()
+        fmt = data.get("format", "png")
+        dpi = int(data.get("dpi", 300))
+        page_w = float(data.get("page_width", 8.27))
+        page_h = float(data.get("page_height", 11.69))
+
+        # Load polygon shapefiles
+        shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                for f in fs if f.endswith("_polygon.shp")]
+        gdfs = []
+        crs0 = None
+        for shp in shps:
+            try:
+                g = gpd.read_file(shp)
+                crs0 = crs0 or g.crs
+                gdfs.append(g)
+            except Exception:
+                pass
+
+        # Load point shapefiles
+        pt_shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                   for f in fs if f.endswith("_point.shp")]
+        pt_gdfs = []
+        for shp in pt_shps:
+            try:
+                g = gpd.read_file(shp)
+                pt_gdfs.append(g)
+            except Exception:
+                pass
+
+        poly_gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=crs0) if gdfs else None
+        pts_gdf = gpd.GeoDataFrame(pd.concat(pt_gdfs, ignore_index=True), crs=crs0) if pt_gdfs else None
+
+        # Detect slope run: look for *_slope_polygon.shp
+        slope_poly_gdf = None
+        slope_areas = {}
+        slope_shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                      for f in fs if f.endswith("_slope_polygon.shp")]
+        for shp in slope_shps:
+            try:
+                sg = gpd.read_file(shp)
+                if sg is not None and not sg.empty:
+                    slope_poly_gdf = sg
+                    # Compute slope_areas from the loaded data
+                    for cls, info in SLOPE_CLASSES.items():
+                        if 'Class' in sg.columns:
+                            sub = sg[sg['Class'] == cls]
+                        else:
+                            sub = gpd.GeoDataFrame()
+                        slope_areas[info['range']] = sub.geometry.area.sum() / 10000 if not sub.empty else 0
+                    # Inject slope_areas into layout_state for ov-slope-table
+                    if 'ov-slope-table' in layout_state:
+                        layout_state['ov-slope-table']['slope_areas'] = slope_areas
+                    break
+            except Exception:
+                pass
+
+        # For slope runs, also try loading boundary polygon for outline
+        if slope_poly_gdf is not None:
+            bnd_shps = [os.path.join(r, f) for r, _, fs in os.walk(folder)
+                        for f in fs if f.endswith("_boundary_polygon.shp")]
+            for shp in bnd_shps:
+                try:
+                    bg = gpd.read_file(shp)
+                    if bg is not None and not bg.empty:
+                        poly_gdf = bg
+                        break
+                except Exception:
+                    pass
+
+        # Determine label column
+        label_col = None
+        if poly_gdf is not None and "Comp_ID" in poly_gdf.columns:
+            label_col = "Comp_ID"
+
+        # Get title from layout_state or meta
+        title = None
+        if 'ov-title' in layout_state:
+            title = layout_state['ov-title'].get('text', '')
+        if not title:
+            meta_path = os.path.join(folder, "meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    title = meta.get("forest_name", "Forest Map")
+                except Exception:
+                    pass
+        if not title:
+            title = "Forest Map"
+
+        # Render to temp file
+        ext = fmt.lower().strip('.')
+        if ext not in ('png', 'pdf', 'svg'):
+            ext = 'png'
+        out_path = os.path.join(folder, f"layout_export.{ext}")
+
+        render_map(
+            out_path,
+            poly_gdf=poly_gdf,
+            pts_gdf=pts_gdf,
+            label_col=label_col,
+            layout_state=layout_state,
+            title=title,
+            slope_poly_gdf=slope_poly_gdf,
+            slope_areas=slope_areas,
+        )
+
+        mimetype = {'png': 'image/png', 'pdf': 'application/pdf', 'svg': 'image/svg+xml'}.get(ext, 'image/png')
+        return send_file(out_path, mimetype=mimetype,
+                         as_attachment=True,
+                         download_name=f"elfakgis_layout_{run_id[:20]}.{ext}")
+
+    except Exception as e:
+        log.error(f"export_layout error: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Export failed: {e}"}), 500
+
+
 @app.route("/save_edit/<run_id>", methods=["POST"])
 @_rate_limit(limit=20, window=60)
 def save_edit(run_id):
