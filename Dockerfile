@@ -1,29 +1,22 @@
-FROM python:3.11-slim
+FROM osgeo/gdal:ubuntu-small-3.6.2
 
-# Install system dependencies for GIS packages
+USER root
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgdal-dev \
-    gdal-bin \
-    libgeos-dev \
-    libproj-dev \
+    python3-pip \
+    python3-dev \
     libspatialindex-dev \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Set GDAL version env
-ENV GDAL_VERSION=$(gdal-config --version)
+RUN pip3 install --break-system-packages --no-cache-dir --upgrade pip setuptools wheel
 
 WORKDIR /app
 
-# Copy and install Python deps
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
-# Copy app
 COPY . .
 
-# Create runtime dirs
 RUN mkdir -p uploads outputs dem_catalog uploads/dem_cache
 
 EXPOSE 8000
