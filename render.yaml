@@ -1,12 +1,8 @@
 services:
   - type: web
     name: ElfakGISProStudio
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: apt-get update -qq && apt-get install -y -qq --no-install-recommends libgdal-dev gdal-bin libgeos-dev libproj-dev libspatialindex-dev > /dev/null 2>&1 && pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: gunicorn app:app
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
       - key: SECRET_KEY
         generateValue: true
